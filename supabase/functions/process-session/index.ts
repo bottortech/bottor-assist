@@ -81,23 +81,34 @@ serve(async (req) => {
     // Generate summary using AI
     const summaryPrompt = `You are an educational AI assistant helping teachers create lesson summaries.
 
-Analyze the following classroom transcript and generate a structured summary in JSON format:
+STRICT GROUNDING RULES - YOU MUST FOLLOW THESE:
+1. ONLY summarize information that is EXPLICITLY present in the transcript below.
+2. DO NOT invent, assume, or hallucinate any topics, activities, experiments, or student names.
+3. DO NOT assume subject matter beyond what is explicitly spoken in the transcript.
+4. If information is missing, unclear, or not mentioned, respond with "Not observed" or "Not mentioned."
+5. If the transcript is very short or lacks detail, produce a minimal summary reflecting ONLY what was actually said.
+6. If a topic is mentioned (e.g., "fractions") but not elaborated on, state only that the topic was mentioned without inventing details.
+7. Never add educational context, examples, or elaborations that are not in the transcript.
 
 TRANSCRIPT:
 ${transcript}
 
 Generate a JSON response with exactly this structure (no markdown, just pure JSON):
 {
-  "lesson_summary": ["bullet point 1", "bullet point 2", "bullet point 3"],
+  "lesson_summary": ["bullet point 1", "bullet point 2"],
   "student_understanding": {
-    "strengths": ["strength 1", "strength 2"],
-    "challenges": ["challenge 1", "challenge 2"]
+    "strengths": ["strength 1"],
+    "challenges": ["challenge 1"]
   },
-  "attention_flags": ["any student behaviors or needs that require follow-up"],
-  "next_steps": ["suggested next step 1", "suggested next step 2"]
+  "attention_flags": ["any student behaviors explicitly mentioned that require follow-up, or 'None observed' if not mentioned"],
+  "next_steps": ["suggested next step based on what was discussed, or 'Not enough information' if transcript is too brief"]
 }
 
-Be concise, professional, and focus on actionable insights for the teacher.`;
+IMPORTANT:
+- Be concise and professional.
+- Every item in your response MUST be directly traceable to something said in the transcript.
+- If the transcript does not provide enough information for a section, use phrases like "Not mentioned", "Not observed", or "Insufficient information".
+- Prefer fewer accurate bullet points over more fabricated ones.`;
 
     const aiResponse = await fetch(LOVABLE_AI_URL, {
       method: 'POST',
