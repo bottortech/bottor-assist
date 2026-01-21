@@ -1,0 +1,170 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
+import { ArrowLeft, Search, Mic, ChevronRight } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+
+interface SessionItem {
+  id: string;
+  title: string | null;
+  snippet: string | null;
+  created_at: string;
+  duration_seconds: number | null;
+  status: string;
+}
+
+export default function Summaries() {
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
+
+  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/auth', { replace: true });
+    }
+  }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchSessions = async () => {
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('id, title, snippet, created_at, duration_seconds, status')
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setSessions(data);
+      }
+      setLoading(false);
+    };
+
+    fetchSessions();
+  }, [user]);
+
+  const filteredSessions = sessions.filter(session => {
+    const searchLower = search.toLowerCase();
+    return (
+      session.title?.toLowerCase().includes(searchLower) ||
+      session.snippet?.toLowerCase().includes(searchLower)
+    );
+  });
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      return `Today at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    } else if (diffDays === 1) {
+      return `Yesterday at ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    } else if (diffDays < 7) {
+      return date.toLocaleDateString('en-US', { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+    }
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-bottor-gradient flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-bottor-gradient">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-4 mb-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/')}
+              className="text-muted-foreground"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Home
+            </Button>
+          </div>
+          <h1 className="text-xl font-bold text-foreground mb-3">Your Summaries</h1>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search summaries..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-2xl mx-auto px-4 py-6">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : filteredSessions.length === 0 ? (
+          <div className="text-center py-16 animate-fade-in">
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+              <Mic className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h2 className="text-lg font-semibold text-foreground mb-2">
+              {search ? 'No results found' : 'No summaries yet'}
+            </h2>
+            <p className="text-muted-foreground mb-6">
+              {search 
+                ? 'Try a different search term' 
+                : 'Record your first lesson to get started'}
+            </p>
+            {!search && (
+              <Button onClick={() => navigate('/')}>
+                Start Listening
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredSessions.map((session, index) => (
+              <Card
+                key={session.id}
+                className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer bg-card-gradient animate-slide-up"
+                style={{ animationDelay: `${index * 0.05}s` }}
+                onClick={() => navigate(`/summary/${session.id}`)}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-foreground mb-1 truncate">
+                        {session.title || 'Untitled Lesson'}
+                      </h3>
+                      <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
+                        {session.snippet || 'No preview available'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDate(session.created_at)}
+                        {session.duration_seconds && ` · ${Math.floor(session.duration_seconds / 60)} min`}
+                      </p>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0 mt-1" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
