@@ -2,9 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Mic, Square, ArrowLeft } from 'lucide-react';
+import { Mic, Square, ArrowLeft, AlertCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+
+type RecordingState = 'inactive' | 'recording' | 'paused';
 
 export default function Listen() {
   const [searchParams] = useSearchParams();
@@ -13,13 +16,19 @@ export default function Listen() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [isRecording, setIsRecording] = useState(false);
+  const [recorderState, setRecorderState] = useState<RecordingState>('inactive');
   const [duration, setDuration] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
+
+  // Derived state: only true when MediaRecorder is actually recording
+  const isRecording = recorderState === 'recording';
 
   useEffect(() => {
     if (!loading && !user) {
@@ -30,16 +39,20 @@ export default function Listen() {
     }
   }, [user, loading, sessionId, navigate]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
-      if (mediaRecorderRef.current && isRecording) {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
     };
-  }, [isRecording]);
+  }, []);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -48,55 +61,144 @@ export default function Listen() {
   };
 
   const startRecording = async () => {
+    setAudioError(null);
+    
     try {
+      // Check if getUserMedia is available (not in iframe restrictions)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Audio recording is not supported in this browser or context.');
+      }
+
+      console.log('[Audio] Requesting microphone access...');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-      
+      streamRef.current = stream;
+      console.log('[Audio] Microphone access granted, stream active:', stream.active);
+
+      // Check for supported MIME types
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = ''; // Let browser choose
+          }
+        }
+      }
+      console.log('[Audio] Using MIME type:', mimeType || 'browser default');
+
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
+      // Log state changes for debugging
+      mediaRecorder.onstart = () => {
+        console.log('[Audio] MediaRecorder.state changed to:', mediaRecorder.state);
+        setRecorderState('recording');
+        
+        // Start timer based on actual elapsed time
+        startTimeRef.current = Date.now();
+        setDuration(0);
+        
+        timerRef.current = window.setInterval(() => {
+          if (startTimeRef.current) {
+            const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+            setDuration(elapsed);
+          }
+        }, 100); // Update more frequently for accuracy
+      };
+
       mediaRecorder.ondataavailable = (event) => {
+        console.log('[Audio] Data available, size:', event.data.size);
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-        await handleUpload();
+        console.log('[Audio] MediaRecorder.state changed to:', mediaRecorder.state);
+        setRecorderState('inactive');
+        
+        // Stop timer
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        
+        // Calculate final duration
+        const finalDuration = startTimeRef.current 
+          ? Math.floor((Date.now() - startTimeRef.current) / 1000)
+          : duration;
+        
+        // Stop all tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        
+        await handleUpload(finalDuration);
       };
 
-      mediaRecorder.start(1000); // Collect data every second
-      setIsRecording(true);
-      setDuration(0);
+      mediaRecorder.onerror = (event) => {
+        console.error('[Audio] MediaRecorder error:', event);
+        setAudioError('Recording error occurred. Please try again.');
+        setRecorderState('inactive');
+        
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+      };
 
-      timerRef.current = window.setInterval(() => {
-        setDuration(prev => prev + 1);
-      }, 1000);
+      // Actually start recording
+      console.log('[Audio] Calling MediaRecorder.start()...');
+      mediaRecorder.start(1000); // Collect data every second
+      console.log('[Audio] MediaRecorder.start() called, state:', mediaRecorder.state);
 
     } catch (error) {
+      console.error('[Audio] Failed to start recording:', error);
+      
+      let errorMessage = 'Please allow microphone access to record your lesson.';
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          errorMessage = 'Microphone access was denied. Please enable it in your browser settings.';
+        } else if (error.name === 'NotFoundError') {
+          errorMessage = 'No microphone found. Please connect a microphone and try again.';
+        } else if (error.name === 'NotSupportedError' || error.message.includes('not supported')) {
+          errorMessage = 'Audio recording is not supported in this browser context. Try opening in a new tab.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      setAudioError(errorMessage);
       toast({
-        title: 'Microphone Access Required',
-        description: 'Please allow microphone access to record your lesson.',
+        title: 'Recording Failed',
+        description: errorMessage,
         variant: 'destructive',
       });
     }
   };
 
   const stopRecording = () => {
+    console.log('[Audio] Stop recording requested, current state:', mediaRecorderRef.current?.state);
+    
     if (timerRef.current) {
       clearInterval(timerRef.current);
+      timerRef.current = null;
     }
-    if (mediaRecorderRef.current && isRecording) {
+    
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      console.log('[Audio] Calling MediaRecorder.stop()...');
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
     }
   };
 
-  const handleUpload = async () => {
+  const handleUpload = async (finalDuration: number) => {
     if (!sessionId || !user || chunksRef.current.length === 0) return;
 
     setIsUploading(true);
@@ -117,7 +219,7 @@ export default function Listen() {
         .from('sessions')
         .update({
           status: 'processing',
-          duration_seconds: duration,
+          duration_seconds: finalDuration,
           audio_path: audioPath,
         })
         .eq('id', sessionId);
@@ -167,6 +269,14 @@ export default function Listen() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20">
         <div className="text-center max-w-md mx-auto animate-fade-in">
+          {/* Error Display */}
+          {audioError && (
+            <Alert variant="destructive" className="mb-6 text-left">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{audioError}</AlertDescription>
+            </Alert>
+          )}
+
           {/* Status Text */}
           <h1 className="text-2xl font-semibold mb-2 text-foreground">
             {isUploading 
@@ -215,7 +325,7 @@ export default function Listen() {
             </Button>
           </div>
 
-          {/* Helper text */}
+          {/* Helper text - only show when MediaRecorder is actually recording */}
           {isRecording && (
             <p className="mt-8 text-sm text-muted-foreground animate-fade-in">
               Recording in progress...
