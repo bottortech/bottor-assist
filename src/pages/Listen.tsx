@@ -2,12 +2,26 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Mic, Square, ArrowLeft, AlertCircle, AlertTriangle } from 'lucide-react';
+import { Mic, Square, ArrowLeft, AlertCircle, AlertTriangle, ChevronDown } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 type RecordingState = 'inactive' | 'recording' | 'paused';
+
+interface AudioDevice {
+  deviceId: string;
+  label: string;
+}
+
+const STORAGE_KEY = 'bottor-preferred-microphone';
 
 export default function Listen() {
   const [searchParams] = useSearchParams();
@@ -22,6 +36,8 @@ export default function Listen() {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [lowAudioWarning, setLowAudioWarning] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -35,6 +51,55 @@ export default function Listen() {
 
   // Derived state: only true when MediaRecorder is actually recording
   const isRecording = recorderState === 'recording';
+
+  // Load available audio devices
+  const loadAudioDevices = useCallback(async () => {
+    try {
+      // Request permission first to get labeled devices
+      await navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        stream.getTracks().forEach(track => track.stop());
+      });
+      
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices
+        .filter(device => device.kind === 'audioinput')
+        .map(device => ({
+          deviceId: device.deviceId,
+          label: device.label || `Microphone ${device.deviceId.slice(0, 5)}`,
+        }));
+      
+      setAudioDevices(audioInputs);
+      
+      // Load saved preference
+      const savedDeviceId = localStorage.getItem(STORAGE_KEY);
+      if (savedDeviceId && audioInputs.some(d => d.deviceId === savedDeviceId)) {
+        setSelectedDeviceId(savedDeviceId);
+        console.log('[Audio] Restored saved microphone:', savedDeviceId);
+      } else if (audioInputs.length > 0) {
+        setSelectedDeviceId(audioInputs[0].deviceId);
+      }
+    } catch (error) {
+      console.error('[Audio] Failed to load devices:', error);
+    }
+  }, []);
+
+  // Load devices on mount
+  useEffect(() => {
+    loadAudioDevices();
+    
+    // Listen for device changes
+    navigator.mediaDevices.addEventListener('devicechange', loadAudioDevices);
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', loadAudioDevices);
+    };
+  }, [loadAudioDevices]);
+
+  // Save device preference when changed
+  const handleDeviceChange = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    localStorage.setItem(STORAGE_KEY, deviceId);
+    console.log('[Audio] Saved microphone preference:', deviceId);
+  };
 
   // Audio level monitoring
   const updateAudioLevel = useCallback(() => {
@@ -108,10 +173,18 @@ export default function Listen() {
         throw new Error('Audio recording is not supported in this browser or context.');
       }
 
-      console.log('[Audio] Requesting microphone access...');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Build audio constraints with selected device
+      const audioConstraints: boolean | MediaTrackConstraints = selectedDeviceId
+        ? { deviceId: { exact: selectedDeviceId } }
+        : true;
+
+      console.log('[Audio] Requesting microphone access...', selectedDeviceId ? `Device: ${selectedDeviceId}` : 'Default');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       streamRef.current = stream;
-      console.log('[Audio] Microphone access granted, stream active:', stream.active);
+      
+      // Log which device was actually selected
+      const audioTrack = stream.getAudioTracks()[0];
+      console.log('[Audio] Microphone access granted:', audioTrack?.label, 'stream active:', stream.active);
 
       // Set up audio level monitoring with Web Audio API
       const audioContext = new AudioContext();
@@ -362,13 +435,32 @@ export default function Listen() {
                 ? 'Bottor is listening…' 
                 : 'Ready to record'}
           </h1>
-          <p className="text-muted-foreground mb-12">
+          <p className="text-muted-foreground mb-8">
             {isUploading
               ? 'Please wait while we process your audio'
               : isRecording
                 ? 'Tap to stop when your lesson is complete'
                 : 'Tap the microphone to begin'}
           </p>
+
+          {/* Microphone Selector - only show when not recording */}
+          {!isRecording && !isUploading && audioDevices.length > 1 && (
+            <div className="mb-8 w-full max-w-xs">
+              <label className="text-xs text-muted-foreground mb-2 block">Microphone</label>
+              <Select value={selectedDeviceId} onValueChange={handleDeviceChange}>
+                <SelectTrigger className="w-full bg-background/50">
+                  <SelectValue placeholder="Select microphone" />
+                </SelectTrigger>
+                <SelectContent>
+                  {audioDevices.map(device => (
+                    <SelectItem key={device.deviceId} value={device.deviceId}>
+                      {device.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* Timer */}
           <div className="text-5xl font-mono font-bold mb-8 text-foreground tabular-nums">
