@@ -63,17 +63,35 @@ serve(async (req) => {
       );
     }
 
-    console.log('Audio downloaded, transcribing...');
+    // Get file size for debugging
+    const audioArrayBuffer = await audioData.arrayBuffer();
+    const fileSizeKB = Math.round(audioArrayBuffer.byteLength / 1024);
+    console.log(`Audio downloaded: ${fileSizeKB}KB, transcribing...`);
+
+    // Check minimum file size (very small files are likely silent/corrupted)
+    if (audioArrayBuffer.byteLength < 1000) {
+      console.error('Audio file too small:', audioArrayBuffer.byteLength, 'bytes');
+      await supabase
+        .from('sessions')
+        .update({ 
+          status: 'failed', 
+          error_message: 'Audio file is too small or empty. Please record again with a working microphone.',
+        })
+        .eq('id', sessionId);
+      return new Response(
+        JSON.stringify({ error: 'Audio file too small' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Convert audio to base64 for transcription
-    const audioArrayBuffer = await audioData.arrayBuffer();
     const audioBase64 = btoa(
       new Uint8Array(audioArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
     );
 
     // Determine audio mime type from path
     const audioExtension = session.audio_path.split('.').pop()?.toLowerCase() || 'webm';
-    const mimeType = audioExtension === 'wav' ? 'audio/wav' : 'audio/webm';
+    console.log(`Audio format: ${audioExtension}, base64 length: ${audioBase64.length}`);
 
     // Transcribe audio using Lovable AI with audio input
     const transcribeResponse = await fetch(LOVABLE_AI_URL, {
@@ -90,7 +108,7 @@ serve(async (req) => {
             content: [
               {
                 type: 'text',
-                text: 'Transcribe this audio recording exactly as spoken. Include all dialogue, pauses noted as [...], and any background context if audible. Do not summarize or interpret - provide a verbatim transcription only. If the audio is unclear or silent, respond with "Audio unclear or no speech detected."'
+                text: 'Please transcribe this audio recording. Provide a verbatim transcription of all spoken words. If parts are unclear, indicate with [inaudible]. If there is no speech or only silence/noise, respond with exactly: NO_SPEECH_DETECTED'
               },
               {
                 type: 'input_audio',
@@ -108,20 +126,33 @@ serve(async (req) => {
 
     if (!transcribeResponse.ok) {
       const errorText = await transcribeResponse.text();
-      console.error('Transcription API error:', errorText);
-      throw new Error('Audio transcription failed');
+      console.error('Transcription API error:', transcribeResponse.status, errorText);
+      await supabase
+        .from('sessions')
+        .update({ 
+          status: 'failed', 
+          error_message: 'Audio transcription service error. Please try again.',
+        })
+        .eq('id', sessionId);
+      return new Response(
+        JSON.stringify({ error: 'Transcription failed' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const transcribeData = await transcribeResponse.json();
     const transcript = transcribeData.choices?.[0]?.message?.content?.trim() || '';
+    
+    console.log('Transcription result:', transcript.substring(0, 100) + (transcript.length > 100 ? '...' : ''));
 
-    if (!transcript || transcript === 'Audio unclear or no speech detected.') {
+    // Check for no speech - be more lenient with the check
+    if (!transcript || transcript === 'NO_SPEECH_DETECTED' || transcript.toLowerCase().includes('no speech') || transcript.toLowerCase().includes('no audio')) {
       console.log('No speech detected in audio');
       await supabase
         .from('sessions')
         .update({ 
           status: 'failed', 
-          error_message: 'No speech detected in the recording. Please try again with a clearer recording.',
+          error_message: 'No speech was detected in the recording. Please ensure your microphone is working and speak clearly.',
           transcript: transcript || null
         })
         .eq('id', sessionId);
