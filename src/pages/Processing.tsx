@@ -1,3 +1,22 @@
+/**
+ * =============================================================================
+ * PROCESSING PAGE (/processing/:sessionId)
+ * =============================================================================
+ * 
+ * NEXT.JS MIGRATION: app/processing/[sessionId]/page.tsx
+ * 
+ * PURPOSE: Display audio processing status with polling.
+ * 
+ * DATA FLOW:
+ * 1. [POLL] Check session status every 2 seconds
+ * 2. [REDIRECT] Navigate to /session/:id on completion
+ * 3. [ERROR] Show retry button on failure
+ * 
+ * This page is part of the AUDIO FLOW (beta):
+ * Listen → Processing → Session
+ * =============================================================================
+ */
+
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -15,6 +34,7 @@ export default function Processing() {
   const [status, setStatus] = useState<string>('processing');
   const [error, setError] = useState<string | null>(null);
 
+  // [AUTH GUARD] Redirect unauthenticated users
   useEffect(() => {
     if (!authLoading && !user) {
       navigate('/auth', { replace: true });
@@ -24,10 +44,12 @@ export default function Processing() {
     }
   }, [user, authLoading, sessionId, navigate]);
 
+  // [POLL] Check session status periodically
   useEffect(() => {
     if (!sessionId || !user) return;
 
     const pollStatus = async () => {
+      // [MIGRATION POINT: Status Polling]
       const { data, error } = await supabase
         .from('sessions')
         .select('status, error_message')
@@ -41,8 +63,9 @@ export default function Processing() {
 
       setStatus(data.status);
 
+      // [REDIRECT] Navigate to session page on completion
       if (data.status === 'completed') {
-        navigate(`/summary/${sessionId}`);
+        navigate(`/session/${sessionId}`);
       } else if (data.status === 'failed') {
         setError(data.error_message || 'Processing failed. Please try again.');
       }
@@ -54,6 +77,7 @@ export default function Processing() {
     return () => clearInterval(interval);
   }, [sessionId, user, navigate]);
 
+  // [RETRY] Reset status and re-trigger processing
   const handleRetry = async () => {
     if (!sessionId) return;
 
@@ -61,11 +85,14 @@ export default function Processing() {
     setStatus('processing');
 
     try {
+      // [MIGRATION POINT: Session Status Reset]
       await supabase
         .from('sessions')
         .update({ status: 'processing', error_message: null })
         .eq('id', sessionId);
 
+      // [MIGRATION POINT: AI Processing Trigger]
+      // In Next.js, replace with server action
       await supabase.functions.invoke('process-session', {
         body: { sessionId }
       });

@@ -1,3 +1,22 @@
+/**
+ * =============================================================================
+ * HISTORY PAGE (/history)
+ * =============================================================================
+ * 
+ * NEXT.JS MIGRATION: app/history/page.tsx
+ * 
+ * PURPOSE: Display list of all sessions with search/filter.
+ * 
+ * DATA FLOW:
+ * 1. [FETCH] Load sessions from database on mount
+ * 2. [DISPLAY] Render session cards with status badges
+ * 3. [NAVIGATE] Click session → /session/:id
+ * 
+ * UI ONLY: This component only handles display. All data operations
+ * are through the session service layer.
+ * =============================================================================
+ */
+
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -6,34 +25,29 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft, Search, Mic, ChevronRight } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import type { SessionListItem, SessionStatus } from '@/types/session';
 
-interface SessionItem {
-  id: string;
-  title: string | null;
-  snippet: string | null;
-  created_at: string;
-  duration_seconds: number | null;
-  status: string;
-}
-
-export default function Summaries() {
+export default function History() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
-  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
+  // [AUTH GUARD] Redirect unauthenticated users
   useEffect(() => {
     if (!authLoading && !user) {
       navigate('/auth', { replace: true });
     }
   }, [user, authLoading, navigate]);
 
+  // [DATA FETCH] Load sessions on mount
   useEffect(() => {
     if (!user) return;
 
     const fetchSessions = async () => {
+      // [MIGRATION POINT: Session List Query]
       const { data, error } = await supabase
         .from('sessions')
         .select('id, title, snippet, created_at, duration_seconds, status')
@@ -41,7 +55,10 @@ export default function Summaries() {
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        setSessions(data);
+        setSessions(data.map(row => ({
+          ...row,
+          status: row.status as SessionStatus,
+        })));
       }
       setLoading(false);
     };
@@ -49,6 +66,7 @@ export default function Summaries() {
     fetchSessions();
   }, [user]);
 
+  // [FILTER] Client-side search
   const filteredSessions = sessions.filter(session => {
     const searchLower = search.toLowerCase();
     return (
@@ -57,6 +75,7 @@ export default function Summaries() {
     );
   });
 
+  // [FORMAT] Relative date display
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -141,7 +160,7 @@ export default function Summaries() {
                 key={session.id}
                 className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer bg-card-gradient animate-slide-up"
                 style={{ animationDelay: `${index * 0.05}s` }}
-                onClick={() => navigate(`/summary/${session.id}`)}
+                onClick={() => navigate(`/session/${session.id}`)}
               >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3">

@@ -1,3 +1,24 @@
+/**
+ * =============================================================================
+ * SESSION DETAIL PAGE (/session/:sessionId)
+ * =============================================================================
+ * 
+ * NEXT.JS MIGRATION: app/session/[sessionId]/page.tsx
+ * 
+ * PURPOSE: Display session details including transcript, summary, and parent messages.
+ * 
+ * DATA FLOW:
+ * 1. [FETCH] Load session from database by ID
+ * 2. [PARSE] Validate and parse summary_json
+ * 3. [DISPLAY] Render transcript, summary sections, teacher notes
+ * 4. [AI CALL] Generate parent message on demand
+ * 5. [SAVE] Persist teacher notes and parent message
+ * 
+ * UI ONLY: This component handles display and form state.
+ * AI calls go through edge functions via supabase.functions.invoke.
+ * =============================================================================
+ */
+
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -8,31 +29,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { ArrowLeft, Save, MessageSquare, Copy, Check, Loader2, AlertTriangle, Lightbulb, Users, Flag, FileText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { parseSummaryJson, type SummaryJson } from '@/types/session';
 
-interface SummaryData {
-  lesson_summary: string[];
-  student_understanding: {
-    strengths: string[];
-    challenges: string[];
-  };
-  attention_flags: string[];
-  next_steps: string[];
-  brief_recording?: boolean;
-  brief_reason?: string;
-}
-
+// [TYPE] Session data structure for this page
 interface SessionData {
   id: string;
   title: string;
   created_at: string;
   duration_seconds: number | null;
-  summary_json: SummaryData | null;
+  summary_json: SummaryJson | null;
   teacher_notes: string | null;
-  parent_message_draft: string | null;
-  transcript: string | null;
+  parent_message_draft: string | null;  // Legacy field for parent_message_teacher
+  transcript: string | null;            // Legacy field for transcript_text
 }
 
-export default function Summary() {
+export default function Session() {
   const { sessionId } = useParams();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -47,6 +58,7 @@ export default function Summary() {
   const [parentMessage, setParentMessage] = useState('');
   const [copied, setCopied] = useState(false);
 
+  // [AUTH GUARD] Redirect unauthenticated users
   useEffect(() => {
     if (!authLoading && !user) {
       navigate('/auth', { replace: true });
@@ -56,10 +68,12 @@ export default function Summary() {
     }
   }, [user, authLoading, sessionId, navigate]);
 
+  // [DATA FETCH] Load session on mount
   useEffect(() => {
     if (!sessionId || !user) return;
 
     const fetchSession = async () => {
+      // [MIGRATION POINT: Session Detail Query]
       const { data, error } = await supabase
         .from('sessions')
         .select('*')
@@ -72,16 +86,14 @@ export default function Summary() {
           description: 'Failed to load session.',
           variant: 'destructive',
         });
-        navigate('/summaries');
+        navigate('/history');
         return;
       }
 
-      // Parse summary_json if needed
-      const summaryJson = typeof data.summary_json === 'string' 
-        ? JSON.parse(data.summary_json) 
-        : data.summary_json;
+      // [PARSE] Validate and parse summary_json using type-safe helper
+      const summaryJson = parseSummaryJson(data.summary_json);
 
-      setSession({ ...data, summary_json: summaryJson as SummaryData });
+      setSession({ ...data, summary_json: summaryJson });
       setTeacherNotes(data.teacher_notes || '');
       setParentMessage(data.parent_message_draft || '');
       setLoading(false);
@@ -90,11 +102,13 @@ export default function Summary() {
     fetchSession();
   }, [sessionId, user, navigate, toast]);
 
+  // [SAVE] Persist teacher notes
   const handleSave = async () => {
     if (!sessionId) return;
     setIsSaving(true);
 
     try {
+      // [MIGRATION POINT: Teacher Notes Update]
       await supabase
         .from('sessions')
         .update({ teacher_notes: teacherNotes })
@@ -115,11 +129,14 @@ export default function Summary() {
     }
   };
 
+  // [AI CALL] Generate parent message via edge function
   const handleGenerateParentMessage = async () => {
     if (!sessionId) return;
     setIsGeneratingMessage(true);
 
     try {
+      // [MIGRATION POINT: AI Parent Message Generation]
+      // In Next.js, replace with server action calling Lovable AI directly
       const { data, error } = await supabase.functions.invoke('generate-parent-message', {
         body: { sessionId }
       });
@@ -139,16 +156,19 @@ export default function Summary() {
     }
   };
 
+  // [COPY] Copy parent message to clipboard
   const handleCopyMessage = async () => {
     await navigator.clipboard.writeText(parentMessage);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // [SAVE] Persist parent message
   const handleSaveMessage = async () => {
     if (!sessionId) return;
 
     try {
+      // [MIGRATION POINT: Parent Message Update]
       await supabase
         .from('sessions')
         .update({ parent_message_draft: parentMessage })
@@ -168,6 +188,7 @@ export default function Summary() {
     }
   };
 
+  // [FORMAT] Date display
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       weekday: 'long',
@@ -192,7 +213,7 @@ export default function Summary() {
       <div className="min-h-screen bg-bottor-gradient flex items-center justify-center p-4">
         <div className="text-center">
           <p className="text-muted-foreground mb-4">No summary available for this session.</p>
-          <Button onClick={() => navigate('/summaries')}>View All Summaries</Button>
+          <Button onClick={() => navigate('/history')}>View All Sessions</Button>
         </div>
       </div>
     );
@@ -200,12 +221,12 @@ export default function Summary() {
 
   const summary = session.summary_json;
 
-  // Safe access helpers for potentially missing/non-array fields
-  const lessonSummary = Array.isArray(summary.lesson_summary) ? summary.lesson_summary : [];
-  const strengths = Array.isArray(summary.student_understanding?.strengths) ? summary.student_understanding.strengths : [];
-  const challenges = Array.isArray(summary.student_understanding?.challenges) ? summary.student_understanding.challenges : [];
-  const attentionFlags = Array.isArray(summary.attention_flags) ? summary.attention_flags : [];
-  const nextSteps = Array.isArray(summary.next_steps) ? summary.next_steps : [];
+  // [SAFE ACCESS] Validated arrays from parseSummaryJson
+  const lessonSummary = summary.lesson_summary;
+  const strengths = summary.student_understanding.strengths;
+  const challenges = summary.student_understanding.challenges;
+  const attentionFlags = summary.attention_flags;
+  const nextSteps = summary.next_steps;
 
   // Check if this is a brief/empty recording
   const isBriefRecording = summary.brief_recording || lessonSummary.length === 0;
@@ -218,11 +239,11 @@ export default function Summary() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate('/summaries')}
+            onClick={() => navigate('/history')}
             className="text-muted-foreground"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Summaries
+            History
           </Button>
           <Button
             variant="subtle"
@@ -266,7 +287,7 @@ export default function Summary() {
               </div>
             ) : (
               <div className="flex items-center gap-2 text-muted-foreground">
-                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                <AlertTriangle className="w-4 h-4 text-warning" />
                 <span className="text-sm italic">
                   {summary.brief_reason || 'No speech detected'}
                 </span>
@@ -313,11 +334,11 @@ export default function Summary() {
             <CardContent className="space-y-4">
               {strengths.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium text-bottor-success mb-2">Strengths</h4>
+                  <h4 className="text-sm font-medium text-success mb-2">Strengths</h4>
                   <ul className="space-y-1">
                     {strengths.map((s, i) => (
                       <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                        <span className="text-bottor-success">✓</span>
+                        <span className="text-success">✓</span>
                         {s}
                       </li>
                     ))}
@@ -326,11 +347,11 @@ export default function Summary() {
               )}
               {challenges.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium text-bottor-warning mb-2">Challenges</h4>
+                  <h4 className="text-sm font-medium text-warning mb-2">Challenges</h4>
                   <ul className="space-y-1">
                     {challenges.map((c, i) => (
                       <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                        <span className="text-bottor-warning">!</span>
+                        <span className="text-warning">!</span>
                         {c}
                       </li>
                     ))}
