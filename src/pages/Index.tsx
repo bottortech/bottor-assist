@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Mic, ListChecks, LogOut } from 'lucide-react';
+import { Mic, ListChecks, LogOut, FileText, History } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -90,11 +90,21 @@ export default function Index() {
             <Button
               variant="hero"
               size="xl"
+              onClick={() => navigate('/quick-notes')}
+              className="w-full"
+            >
+              <FileText className="w-5 h-5 mr-2" />
+              Quick Notes (Recommended)
+            </Button>
+
+            <Button
+              variant="outline"
+              size="lg"
               onClick={handleStartListening}
               className="w-full"
             >
               <Mic className="w-5 h-5 mr-2" />
-              Start Listening
+              Start Listening (Beta)
             </Button>
 
             <Button
@@ -103,8 +113,8 @@ export default function Index() {
               onClick={() => navigate('/summaries')}
               className="w-full"
             >
-              <ListChecks className="w-5 h-5 mr-2" />
-              View Summaries
+              <History className="w-5 h-5 mr-2" />
+              History
             </Button>
           </div>
         </div>

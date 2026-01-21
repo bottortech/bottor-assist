@@ -10,6 +10,7 @@ import Listen from "./pages/Listen";
 import Processing from "./pages/Processing";
 import Summary from "./pages/Summary";
 import Summaries from "./pages/Summaries";
+import QuickNotes from "./pages/QuickNotes";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,6 +26,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/listen" element={<Listen />} />
+            <Route path="/quick-notes" element={<QuickNotes />} />
             <Route path="/processing/:sessionId" element={<Processing />} />
             <Route path="/summary/:sessionId" element={<Summary />} />
             <Route path="/summaries" element={<Summaries />} />
