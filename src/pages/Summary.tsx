@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { ArrowLeft, Save, MessageSquare, Copy, Check, Loader2, AlertTriangle, Lightbulb, Users, Flag } from 'lucide-react';
+import { ArrowLeft, Save, MessageSquare, Copy, Check, Loader2, AlertTriangle, Lightbulb, Users, Flag, FileText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -27,6 +27,7 @@ interface SessionData {
   summary_json: SummaryData | null;
   teacher_notes: string | null;
   parent_message_draft: string | null;
+  transcript: string | null;
 }
 
 export default function Summary() {
@@ -336,6 +337,27 @@ export default function Summary() {
             </CardContent>
           </Card>
         )}
+
+        {/* Raw Transcript */}
+        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.45s' }}>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" />
+              Transcript
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {session.transcript ? (
+              <div className="bg-muted/50 rounded-lg p-4 max-h-64 overflow-y-auto">
+                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                  {session.transcript}
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">Transcript not available.</p>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Teacher Notes */}
         <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.5s' }}>
