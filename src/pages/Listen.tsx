@@ -467,6 +467,15 @@ export default function Listen() {
             {formatDuration(duration)}
           </div>
 
+          {/* Recording Prompt */}
+          {isRecording && duration < 10 && (
+            <div className="mb-4 animate-fade-in">
+              <p className="text-sm text-bottor-warning font-medium">
+                🎤 Speak for at least 10 seconds for best results
+              </p>
+            </div>
+          )}
+
           {/* Audio Level Indicator */}
           {isRecording && (
             <div className="mb-8 w-full max-w-xs animate-fade-in">
