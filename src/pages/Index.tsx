@@ -1,8 +1,25 @@
+/**
+ * =============================================================================
+ * HOME PAGE (/)
+ * =============================================================================
+ * 
+ * NEXT.JS MIGRATION: app/page.tsx
+ * 
+ * PURPOSE: Entry point with navigation to Quick Notes, Listen, and History.
+ * 
+ * DATA FLOW:
+ * 1. [SESSION CREATE] Create recording session when user clicks "Start Listening"
+ * 2. [NAVIGATE] Route to appropriate page based on action
+ * 
+ * This is the main hub for all user flows.
+ * =============================================================================
+ */
+
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Mic, ListChecks, LogOut, FileText, History } from 'lucide-react';
+import { Mic, LogOut, FileText, History } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -11,20 +28,25 @@ export default function Index() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // [AUTH GUARD] Redirect unauthenticated users
   useEffect(() => {
     if (!loading && !user) {
       navigate('/auth', { replace: true });
     }
   }, [user, loading, navigate]);
 
+  // [SESSION CREATE] Create new recording session for audio flow
   const handleStartListening = async () => {
     try {
-      // Create a new session
+      // [MIGRATION POINT: Session Creation]
+      // In Next.js, replace with server action
       const { data, error } = await supabase
         .from('sessions')
         .insert({
           user_id: user?.id,
           status: 'recording',
+          // NOTE: Add input_mode after migration
+          // input_mode: 'audio',
         })
         .select()
         .single();
@@ -41,6 +63,7 @@ export default function Index() {
     }
   };
 
+  // [AUTH] Sign out user
   const handleSignOut = async () => {
     await signOut();
     navigate('/auth');
@@ -87,6 +110,7 @@ export default function Index() {
 
           {/* Actions */}
           <div className="space-y-4">
+            {/* [ROUTE: /quick-notes] Primary action - Quick Notes */}
             <Button
               variant="hero"
               size="xl"
@@ -97,6 +121,7 @@ export default function Index() {
               Quick Notes (Recommended)
             </Button>
 
+            {/* [ROUTE: /listen] Secondary action - Audio Recording (Beta) */}
             <Button
               variant="outline"
               size="lg"
@@ -107,10 +132,11 @@ export default function Index() {
               Start Listening (Beta)
             </Button>
 
+            {/* [ROUTE: /history] Tertiary action - View History */}
             <Button
               variant="subtle"
               size="lg"
-              onClick={() => navigate('/summaries')}
+              onClick={() => navigate('/history')}
               className="w-full"
             >
               <History className="w-5 h-5 mr-2" />

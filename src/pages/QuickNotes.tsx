@@ -1,3 +1,29 @@
+/**
+ * =============================================================================
+ * QUICK NOTES PAGE (/quick-notes)
+ * =============================================================================
+ * 
+ * NEXT.JS MIGRATION: app/quick-notes/page.tsx
+ * 
+ * PURPOSE: Manual lesson notes entry with AI summary and parent message generation.
+ * 
+ * DATA FLOW:
+ * 1. [INPUT] User fills form with lesson details
+ * 2. [AI CALL] Generate summary via edge function
+ * 3. [AI CALL] Generate parent messages via edge function
+ * 4. [SAVE] Persist session with all generated content
+ * 
+ * FIELD MAPPING (form → database):
+ * - subject → notes_json.subject
+ * - grade → notes_json.grade  
+ * - topic → notes_json.topic
+ * - whatWeDid → notes_json.activities
+ * - struggles → notes_json.struggles
+ * - attentionNeeded → notes_json.attention_needed
+ * - nextSteps → notes_json.next_steps
+ * =============================================================================
+ */
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
