@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { convertToWav, validateAudioBlob } from '@/lib/audio-utils';
+import { MicTest } from '@/components/MicTest';
 
 type RecordingState = 'inactive' | 'recording' | 'paused';
 
@@ -24,6 +25,7 @@ interface AudioDevice {
 }
 
 const STORAGE_KEY = 'bottor-preferred-microphone';
+const MIC_TEST_COMPLETED_KEY = 'bottor-mic-test-completed';
 
 export default function Listen() {
   const [searchParams] = useSearchParams();
@@ -40,6 +42,10 @@ export default function Listen() {
   const [lowAudioWarning, setLowAudioWarning] = useState(false);
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [showMicTest, setShowMicTest] = useState(() => {
+    // Show mic test if not completed before
+    return !localStorage.getItem(MIC_TEST_COMPLETED_KEY);
+  });
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -473,6 +479,22 @@ export default function Listen() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20">
+        {/* Mic Test */}
+        {showMicTest && !isRecording && !isUploading && (
+          <MicTest
+            selectedDeviceId={selectedDeviceId}
+            onComplete={() => {
+              localStorage.setItem(MIC_TEST_COMPLETED_KEY, 'true');
+              setShowMicTest(false);
+            }}
+            onSkip={() => {
+              setShowMicTest(false);
+            }}
+          />
+        )}
+
+        {/* Recording UI - only show when mic test is complete */}
+        {!showMicTest && (
         <div className="text-center max-w-md mx-auto animate-fade-in">
           {/* Error Display */}
           {audioError && (
@@ -620,6 +642,7 @@ export default function Listen() {
             </p>
           )}
         </div>
+        )}
       </main>
     </div>
   );
