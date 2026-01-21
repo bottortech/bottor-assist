@@ -200,6 +200,16 @@ export default function Summary() {
 
   const summary = session.summary_json;
 
+  // Safe access helpers for potentially missing/non-array fields
+  const lessonSummary = Array.isArray(summary.lesson_summary) ? summary.lesson_summary : [];
+  const strengths = Array.isArray(summary.student_understanding?.strengths) ? summary.student_understanding.strengths : [];
+  const challenges = Array.isArray(summary.student_understanding?.challenges) ? summary.student_understanding.challenges : [];
+  const attentionFlags = Array.isArray(summary.attention_flags) ? summary.attention_flags : [];
+  const nextSteps = Array.isArray(summary.next_steps) ? summary.next_steps : [];
+
+  // Check if this is a brief/empty recording
+  const isBriefRecording = summary.brief_recording || lessonSummary.length === 0;
+
   return (
     <div className="min-h-screen bg-bottor-gradient">
       {/* Header */}
@@ -274,57 +284,65 @@ export default function Summary() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-2">
-              {summary.lesson_summary.map((point, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary mt-2 shrink-0" />
-                  <span className="text-foreground">{point}</span>
-                </li>
-              ))}
-            </ul>
+            {lessonSummary.length > 0 ? (
+              <ul className="space-y-2">
+                {lessonSummary.map((point, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary mt-2 shrink-0" />
+                    <span className="text-foreground">{point}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">
+                {summary.brief_reason || 'No summary available for this recording.'}
+              </p>
+            )}
           </CardContent>
         </Card>
 
-        {/* Student Understanding */}
-        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.25s' }}>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Users className="w-5 h-5 text-primary" />
-              Student Understanding
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {summary.student_understanding.strengths.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-bottor-success mb-2">Strengths</h4>
-                <ul className="space-y-1">
-                  {summary.student_understanding.strengths.map((s, i) => (
-                    <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                      <span className="text-bottor-success">✓</span>
-                      {s}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {summary.student_understanding.challenges.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-bottor-warning mb-2">Challenges</h4>
-                <ul className="space-y-1">
-                  {summary.student_understanding.challenges.map((c, i) => (
-                    <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                      <span className="text-bottor-warning">!</span>
-                      {c}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Student Understanding - only show if we have data */}
+        {(strengths.length > 0 || challenges.length > 0) && (
+          <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.25s' }}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
+                Student Understanding
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {strengths.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-bottor-success mb-2">Strengths</h4>
+                  <ul className="space-y-1">
+                    {strengths.map((s, i) => (
+                      <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                        <span className="text-bottor-success">✓</span>
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {challenges.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-bottor-warning mb-2">Challenges</h4>
+                  <ul className="space-y-1">
+                    {challenges.map((c, i) => (
+                      <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
+                        <span className="text-bottor-warning">!</span>
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Attention Flags */}
-        {summary.attention_flags.length > 0 && (
+        {attentionFlags.length > 0 && (
           <Card className="animate-slide-up border-0 shadow-md bg-accent/5" style={{ animationDelay: '0.35s' }}>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg flex items-center gap-2">
@@ -334,7 +352,7 @@ export default function Summary() {
             </CardHeader>
             <CardContent>
               <ul className="space-y-2">
-                {summary.attention_flags.map((flag, i) => (
+                {attentionFlags.map((flag, i) => (
                   <li key={i} className="flex items-start gap-2 text-foreground">
                     <AlertTriangle className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                     {flag}
@@ -346,14 +364,14 @@ export default function Summary() {
         )}
 
         {/* Next Steps */}
-        {summary.next_steps.length > 0 && (
+        {nextSteps.length > 0 && (
           <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.45s' }}>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg">Suggested Next Steps</CardTitle>
             </CardHeader>
             <CardContent>
               <ul className="space-y-2">
-                {summary.next_steps.map((step, i) => (
+                {nextSteps.map((step, i) => (
                   <li key={i} className="flex items-start gap-2">
                     <span className="w-6 h-6 rounded-full bg-secondary text-secondary-foreground text-xs font-medium flex items-center justify-center shrink-0">
                       {i + 1}
