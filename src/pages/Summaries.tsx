@@ -37,7 +37,7 @@ export default function Summaries() {
       const { data, error } = await supabase
         .from('sessions')
         .select('id, title, snippet, created_at, duration_seconds, status')
-        .eq('status', 'completed')
+        .in('status', ['completed', 'recording', 'processing'])
         .order('created_at', { ascending: false });
 
       if (!error && data) {
@@ -96,7 +96,7 @@ export default function Summaries() {
               Home
             </Button>
           </div>
-          <h1 className="text-xl font-bold text-foreground mb-3">Your Summaries</h1>
+          <h1 className="text-xl font-bold text-foreground mb-3">Session History</h1>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -146,9 +146,20 @@ export default function Summaries() {
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-foreground mb-1 truncate">
-                        {session.title || 'Untitled Lesson'}
-                      </h3>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-medium text-foreground truncate">
+                          {session.title || 'Untitled Lesson'}
+                        </h3>
+                        {session.status !== 'completed' && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            session.status === 'recording' 
+                              ? 'bg-destructive/10 text-destructive' 
+                              : 'bg-primary/10 text-primary'
+                          }`}>
+                            {session.status === 'recording' ? 'Recording' : 'Processing'}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
                         {session.snippet || 'No preview available'}
                       </p>

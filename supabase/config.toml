@@ -1,1 +1,13 @@
 project_id = "bbgfenuwyaytocvjjpcs"
+
+[functions.process-session]
+verify_jwt = false
+
+[functions.generate-parent-message]
+verify_jwt = false
+
+[functions.generate-quick-notes-summary]
+verify_jwt = false
+
+[functions.generate-parent-messages]
+verify_jwt = false
