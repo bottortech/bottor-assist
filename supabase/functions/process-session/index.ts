@@ -162,6 +162,52 @@ serve(async (req) => {
       );
     }
 
+    // Count words in transcript
+    const wordCount = transcript.split(/\s+/).filter((word: string) => word.length > 0).length;
+    const durationSeconds = session.duration_seconds || 0;
+    
+    console.log(`Recording stats: duration=${durationSeconds}s, words=${wordCount}`);
+
+    // Check for brief recordings (< 5 seconds OR < 5 words)
+    const isBriefRecording = durationSeconds < 5 || wordCount < 5;
+
+    if (isBriefRecording) {
+      console.log('Brief recording detected, using minimal summary');
+      
+      const minimalSummary = {
+        lesson_summary: ["Brief audio captured."],
+        student_understanding: {
+          strengths: ["Not enough content to assess"],
+          challenges: ["Not enough content to assess"]
+        },
+        attention_flags: ["Recording was too short for detailed analysis"],
+        next_steps: ["Try recording for at least 30 seconds with clear speech for richer summaries"],
+        brief_recording: true,
+        recording_tip: "For best results, record lessons that are at least 30 seconds long with clear, continuous speech."
+      };
+
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({
+          status: 'completed',
+          transcript,
+          summary_json: minimalSummary,
+          title: 'Brief Recording',
+          snippet: 'Recording was too short for a detailed summary. Try recording longer for richer insights.',
+        })
+        .eq('id', sessionId);
+
+      if (updateError) {
+        console.error('Session update error:', updateError);
+        throw new Error('Failed to save summary');
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, sessionId, brief: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     console.log('Transcription complete, generating summary...');
 
     // Generate summary using AI
