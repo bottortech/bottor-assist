@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Mic, Square, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Mic, Square, ArrowLeft, AlertCircle, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -20,15 +20,48 @@ export default function Listen() {
   const [duration, setDuration] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [lowAudioWarning, setLowAudioWarning] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const lowLevelCountRef = useRef(0);
 
   // Derived state: only true when MediaRecorder is actually recording
   const isRecording = recorderState === 'recording';
+
+  // Audio level monitoring
+  const updateAudioLevel = useCallback(() => {
+    if (!analyserRef.current) return;
+    
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(dataArray);
+    
+    // Calculate average level (0-255 -> 0-100)
+    const average = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
+    const level = Math.min(100, Math.round((average / 255) * 100 * 2)); // Amplify for visibility
+    
+    setAudioLevel(level);
+    
+    // Track consecutive low levels (< 5%) for warning
+    if (level < 5) {
+      lowLevelCountRef.current++;
+      if (lowLevelCountRef.current > 50) { // ~1 second of flat audio
+        setLowAudioWarning(true);
+      }
+    } else {
+      lowLevelCountRef.current = 0;
+      setLowAudioWarning(false);
+    }
+    
+    animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
+  }, []);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -44,6 +77,12 @@ export default function Listen() {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
@@ -73,6 +112,24 @@ export default function Listen() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       console.log('[Audio] Microphone access granted, stream active:', stream.active);
+
+      // Set up audio level monitoring with Web Audio API
+      const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.5;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+      
+      // Reset warning state
+      lowLevelCountRef.current = 0;
+      setLowAudioWarning(false);
+      setAudioLevel(0);
+      
+      // Start monitoring audio levels
+      updateAudioLevel();
 
       // Check for supported MIME types
       let mimeType = 'audio/webm;codecs=opus';
@@ -130,6 +187,18 @@ export default function Listen() {
           ? Math.floor((Date.now() - startTimeRef.current) / 1000)
           : duration;
         
+        // Stop audio level monitoring
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+          audioContextRef.current = null;
+        }
+        setAudioLevel(0);
+        setLowAudioWarning(false);
+        
         // Stop all tracks
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
@@ -147,6 +216,14 @@ export default function Listen() {
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
+        }
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+          audioContextRef.current = null;
         }
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
@@ -294,9 +371,42 @@ export default function Listen() {
           </p>
 
           {/* Timer */}
-          <div className="text-5xl font-mono font-bold mb-12 text-foreground tabular-nums">
+          <div className="text-5xl font-mono font-bold mb-8 text-foreground tabular-nums">
             {formatDuration(duration)}
           </div>
+
+          {/* Audio Level Indicator */}
+          {isRecording && (
+            <div className="mb-8 w-full max-w-xs animate-fade-in">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Audio Level</span>
+                <span className="text-xs text-muted-foreground">{audioLevel}%</span>
+              </div>
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
+                <div 
+                  className="h-full transition-all duration-75 rounded-full"
+                  style={{ 
+                    width: `${audioLevel}%`,
+                    backgroundColor: audioLevel > 50 
+                      ? 'hsl(142, 71%, 45%)' 
+                      : audioLevel > 20 
+                        ? 'hsl(48, 96%, 53%)' 
+                        : audioLevel > 5 
+                          ? 'hsl(25, 95%, 53%)' 
+                          : 'hsl(0, 84%, 60%)'
+                  }}
+                />
+              </div>
+              
+              {/* Low audio warning */}
+              {lowAudioWarning && (
+                <div className="mt-3 flex items-center gap-2 text-accent animate-fade-in">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span className="text-xs">No audio detected. Check your microphone.</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Recording Button */}
           <div className="relative inline-flex items-center justify-center">
