@@ -8,6 +8,21 @@ const corsHeaders = {
 
 const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 8192;
+  let binary = "";
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    for (let j = 0; j < chunk.length; j++) {
+      binary += String.fromCharCode(chunk[j]);
+    }
+  }
+
+  return btoa(binary);
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -85,13 +100,18 @@ serve(async (req) => {
     }
 
     // Convert audio to base64 for transcription
-    const audioBase64 = btoa(
-      new Uint8Array(audioArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
+    const audioBase64 = arrayBufferToBase64(audioArrayBuffer);
 
     // Determine audio mime type from path
     const audioExtension = session.audio_path.split('.').pop()?.toLowerCase() || 'webm';
-    console.log(`Audio format: ${audioExtension}, base64 length: ${audioBase64.length}`);
+    const audioMimeType =
+      audioExtension === 'wav'
+        ? 'audio/wav'
+        : audioExtension === 'mp4'
+          ? 'audio/mp4'
+          : 'audio/webm';
+
+    console.log(`Audio format: ${audioExtension} (${audioMimeType}), base64 length: ${audioBase64.length}`);
 
     // Transcribe audio using Lovable AI with audio input
     const transcribeResponse = await fetch(LOVABLE_AI_URL, {
@@ -111,11 +131,12 @@ serve(async (req) => {
                 text: 'Please transcribe this audio recording. Provide a verbatim transcription of all spoken words. If parts are unclear, indicate with [inaudible]. If there is no speech or only silence/noise, respond with exactly: NO_SPEECH_DETECTED'
               },
               {
-                type: 'input_audio',
-                input_audio: {
+                // Gemini-compatible multimodal format: inline_data + mime_type
+                type: 'inline_data',
+                inline_data: {
+                  mime_type: audioMimeType,
                   data: audioBase64,
-                  format: audioExtension === 'wav' ? 'wav' : 'webm'
-                }
+                },
               }
             ]
           }
@@ -141,26 +162,22 @@ serve(async (req) => {
     }
 
     const transcribeData = await transcribeResponse.json();
-    const transcript = transcribeData.choices?.[0]?.message?.content?.trim() || '';
+    const transcriptRaw = transcribeData.choices?.[0]?.message?.content?.trim() || '';
     
-    console.log('Transcription result:', transcript.substring(0, 100) + (transcript.length > 100 ? '...' : ''));
+    console.log('Transcription result:', transcriptRaw.substring(0, 100) + (transcriptRaw.length > 100 ? '...' : ''));
 
-    // Check for no speech - be more lenient with the check
-    if (!transcript || transcript === 'NO_SPEECH_DETECTED' || transcript.toLowerCase().includes('no speech') || transcript.toLowerCase().includes('no audio')) {
-      console.log('No speech detected in audio');
-      await supabase
-        .from('sessions')
-        .update({ 
-          status: 'failed', 
-          error_message: 'No speech was detected in the recording. Please ensure your microphone is working and speak clearly.',
-          transcript: transcript || null
-        })
-        .eq('id', sessionId);
-      return new Response(
-        JSON.stringify({ error: 'No speech detected' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const noSpeechDetected =
+      !transcriptRaw ||
+      transcriptRaw === 'NO_SPEECH_DETECTED' ||
+      transcriptRaw.toLowerCase().includes('no speech') ||
+      transcriptRaw.toLowerCase().includes('no audio');
+
+    if (noSpeechDetected) {
+      console.log('No speech detected in audio (will fall back to minimal summary)');
     }
+
+    // Normalize transcript so "no speech" flows into the brief-recording path
+    const transcript = noSpeechDetected ? '' : transcriptRaw;
 
     // Count words in transcript
     const wordCount = transcript.split(/\s+/).filter((word: string) => word.length > 0).length;
@@ -180,7 +197,11 @@ serve(async (req) => {
           strengths: ["Not enough content to assess"],
           challenges: ["Not enough content to assess"]
         },
-        attention_flags: ["Recording was too short for detailed analysis"],
+        attention_flags: [
+          noSpeechDetected
+            ? "No clear speech was detected in the recording"
+            : "Recording was too short for detailed analysis",
+        ],
         next_steps: ["Try recording for at least 30 seconds with clear speech for richer summaries"],
         brief_recording: true,
         recording_tip: "For best results, record lessons that are at least 30 seconds long with clear, continuous speech."
