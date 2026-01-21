@@ -65,18 +65,73 @@ serve(async (req) => {
 
     console.log('Audio downloaded, transcribing...');
 
-    // Transcribe audio using Whisper API via Lovable AI Gateway
-    // For now, we'll simulate transcription with a placeholder
-    // In production, you'd integrate with a speech-to-text service
-    const transcript = `Today's lesson covered the basics of photosynthesis. 
-    Students learned about chlorophyll, sunlight absorption, and the carbon dioxide to oxygen conversion process.
-    Most students engaged well with the hands-on leaf experiment.
-    Some students, particularly in the back row, seemed confused about the role of water in the process.
-    I noticed Marcus was distracted and Emma asked excellent follow-up questions about plant adaptations.
-    We discussed real-world applications like agriculture and climate change.
-    For homework, students will draw and label the photosynthesis cycle.`;
+    // Convert audio to base64 for transcription
+    const audioArrayBuffer = await audioData.arrayBuffer();
+    const audioBase64 = btoa(
+      new Uint8Array(audioArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+    );
 
-    console.log('Generating summary...');
+    // Determine audio mime type from path
+    const audioExtension = session.audio_path.split('.').pop()?.toLowerCase() || 'webm';
+    const mimeType = audioExtension === 'wav' ? 'audio/wav' : 'audio/webm';
+
+    // Transcribe audio using Lovable AI with audio input
+    const transcribeResponse = await fetch(LOVABLE_AI_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${Deno.env.get('LOVABLE_API_KEY')}`,
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Transcribe this audio recording exactly as spoken. Include all dialogue, pauses noted as [...], and any background context if audible. Do not summarize or interpret - provide a verbatim transcription only. If the audio is unclear or silent, respond with "Audio unclear or no speech detected."'
+              },
+              {
+                type: 'input_audio',
+                input_audio: {
+                  data: audioBase64,
+                  format: audioExtension === 'wav' ? 'wav' : 'webm'
+                }
+              }
+            ]
+          }
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!transcribeResponse.ok) {
+      const errorText = await transcribeResponse.text();
+      console.error('Transcription API error:', errorText);
+      throw new Error('Audio transcription failed');
+    }
+
+    const transcribeData = await transcribeResponse.json();
+    const transcript = transcribeData.choices?.[0]?.message?.content?.trim() || '';
+
+    if (!transcript || transcript === 'Audio unclear or no speech detected.') {
+      console.log('No speech detected in audio');
+      await supabase
+        .from('sessions')
+        .update({ 
+          status: 'failed', 
+          error_message: 'No speech detected in the recording. Please try again with a clearer recording.',
+          transcript: transcript || null
+        })
+        .eq('id', sessionId);
+      return new Response(
+        JSON.stringify({ error: 'No speech detected' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log('Transcription complete, generating summary...');
 
     // Generate summary using AI
     const summaryPrompt = `You are an educational AI assistant helping teachers create lesson summaries.
