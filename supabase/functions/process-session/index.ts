@@ -185,11 +185,25 @@ serve(async (req) => {
     
     console.log(`Recording stats: duration=${durationSeconds}s, words=${wordCount}`);
 
-    // Check for brief recordings (< 5 seconds OR < 5 words)
-    const isBriefRecording = durationSeconds < 5 || wordCount < 5;
+    // Check for brief recordings (< 8 seconds OR < 15 words)
+    const isTooShort = durationSeconds < 8;
+    const isTooFewWords = wordCount < 15;
+    const isBriefRecording = noSpeechDetected || isTooShort || isTooFewWords;
+
+    // Determine the specific reason for brief recording
+    let briefReason = "Recording was too short for detailed analysis";
+    if (noSpeechDetected) {
+      briefReason = "No speech detected";
+    } else if (isTooShort && isTooFewWords) {
+      briefReason = "Too short";
+    } else if (isTooShort) {
+      briefReason = "Too short";
+    } else if (isTooFewWords) {
+      briefReason = "Too quiet";
+    }
 
     if (isBriefRecording) {
-      console.log('Brief recording detected, using minimal summary');
+      console.log(`Brief recording detected (reason: ${briefReason}), using minimal summary`);
       
       const minimalSummary = {
         lesson_summary: ["Brief audio captured."],
@@ -197,14 +211,11 @@ serve(async (req) => {
           strengths: ["Not enough content to assess"],
           challenges: ["Not enough content to assess"]
         },
-        attention_flags: [
-          noSpeechDetected
-            ? "No clear speech was detected in the recording"
-            : "Recording was too short for detailed analysis",
-        ],
-        next_steps: ["Try recording for at least 30 seconds with clear speech for richer summaries"],
+        attention_flags: [briefReason],
+        next_steps: ["Try recording for at least 10 seconds with clear speech for richer summaries"],
         brief_recording: true,
-        recording_tip: "For best results, record lessons that are at least 30 seconds long with clear, continuous speech."
+        brief_reason: briefReason,
+        recording_tip: "For best results, record lessons that are at least 10 seconds long with clear, continuous speech."
       };
 
       const { error: updateError } = await supabase

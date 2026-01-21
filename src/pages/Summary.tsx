@@ -17,6 +17,8 @@ interface SummaryData {
   };
   attention_flags: string[];
   next_steps: string[];
+  brief_recording?: boolean;
+  brief_reason?: string;
 }
 
 interface SessionData {
@@ -237,8 +239,34 @@ export default function Summary() {
           </p>
         </div>
 
-        {/* Lesson Summary */}
+        {/* Transcript - shown first */}
         <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.1s' }}>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" />
+              Transcript
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {session.transcript ? (
+              <div className="bg-muted/50 rounded-lg p-4 max-h-64 overflow-y-auto">
+                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                  {session.transcript}
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                <span className="text-sm italic">
+                  {summary.brief_reason || 'No speech detected'}
+                </span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Lesson Summary */}
+        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.15s' }}>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2">
               <Lightbulb className="w-5 h-5 text-primary" />
@@ -258,7 +286,7 @@ export default function Summary() {
         </Card>
 
         {/* Student Understanding */}
-        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.2s' }}>
+        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.25s' }}>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
@@ -297,7 +325,7 @@ export default function Summary() {
 
         {/* Attention Flags */}
         {summary.attention_flags.length > 0 && (
-          <Card className="animate-slide-up border-0 shadow-md bg-accent/5" style={{ animationDelay: '0.3s' }}>
+          <Card className="animate-slide-up border-0 shadow-md bg-accent/5" style={{ animationDelay: '0.35s' }}>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg flex items-center gap-2">
                 <Flag className="w-5 h-5 text-accent" />
@@ -319,7 +347,7 @@ export default function Summary() {
 
         {/* Next Steps */}
         {summary.next_steps.length > 0 && (
-          <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.4s' }}>
+          <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.45s' }}>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg">Suggested Next Steps</CardTitle>
             </CardHeader>
@@ -338,29 +366,8 @@ export default function Summary() {
           </Card>
         )}
 
-        {/* Raw Transcript */}
-        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.45s' }}>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <FileText className="w-5 h-5 text-primary" />
-              Transcript
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {session.transcript ? (
-              <div className="bg-muted/50 rounded-lg p-4 max-h-64 overflow-y-auto">
-                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                  {session.transcript}
-                </p>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground italic">Transcript not available.</p>
-            )}
-          </CardContent>
-        </Card>
-
         {/* Teacher Notes */}
-        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.5s' }}>
+        <Card className="animate-slide-up border-0 shadow-md bg-card-gradient" style={{ animationDelay: '0.55s' }}>
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Your Notes</CardTitle>
           </CardHeader>
@@ -375,7 +382,7 @@ export default function Summary() {
         </Card>
 
         {/* Actions */}
-        <div className="animate-slide-up pt-4" style={{ animationDelay: '0.6s' }}>
+        <div className="animate-slide-up pt-4" style={{ animationDelay: '0.65s' }}>
           <Button
             variant="hero"
             className="w-full"
