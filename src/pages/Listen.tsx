@@ -13,6 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
+import { convertToWav, validateAudioBlob } from '@/lib/audio-utils';
 
 type RecordingState = 'inactive' | 'recording' | 'paused';
 
@@ -42,12 +44,25 @@ export default function Listen() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const lowLevelCountRef = useRef(0);
+  
+  // Audio frame-based timing
+  const audioFrameCountRef = useRef(0);
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+
+  // Speech recognition for live captions
+  const {
+    isSupported: speechSupported,
+    liveCaption,
+    fullTranscript,
+    noSpeechWarning,
+    start: startSpeechRecognition,
+    stop: stopSpeechRecognition,
+    reset: resetSpeechRecognition,
+  } = useSpeechRecognition();
 
   // Derived state: only true when MediaRecorder is actually recording
   const isRecording = recorderState === 'recording';
@@ -140,11 +155,11 @@ export default function Listen() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (scriptProcessorRef.current) {
+        scriptProcessorRef.current.disconnect();
       }
       if (audioContextRef.current) {
         audioContextRef.current.close();
@@ -155,8 +170,9 @@ export default function Listen() {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
+      stopSpeechRecognition();
     };
-  }, []);
+  }, [stopSpeechRecognition]);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -166,6 +182,7 @@ export default function Listen() {
 
   const startRecording = async () => {
     setAudioError(null);
+    resetSpeechRecognition();
     
     try {
       // Check if getUserMedia is available (not in iframe restrictions)
@@ -174,9 +191,9 @@ export default function Listen() {
       }
 
       // Build audio constraints with selected device
-      const audioConstraints: boolean | MediaTrackConstraints = selectedDeviceId
-        ? { deviceId: { exact: selectedDeviceId } }
-        : true;
+      const audioConstraints: MediaTrackConstraints = selectedDeviceId
+        ? { deviceId: { exact: selectedDeviceId }, echoCancellation: true, noiseSuppression: true }
+        : { echoCancellation: true, noiseSuppression: true };
 
       console.log('[Audio] Requesting microphone access...', selectedDeviceId ? `Device: ${selectedDeviceId}` : 'Default');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
@@ -186,23 +203,47 @@ export default function Listen() {
       const audioTrack = stream.getAudioTracks()[0];
       console.log('[Audio] Microphone access granted:', audioTrack?.label, 'stream active:', stream.active);
 
-      // Set up audio level monitoring with Web Audio API
+      // Set up audio context for level monitoring AND frame-based timing
       const audioContext = new AudioContext();
       audioContextRef.current = audioContext;
       const source = audioContext.createMediaStreamSource(stream);
+      
+      // Analyser for VU meter
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.5;
       source.connect(analyser);
       analyserRef.current = analyser;
       
+      // Script processor for frame-based timing
+      const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      audioFrameCountRef.current = 0;
+      
+      scriptProcessor.onaudioprocess = () => {
+        audioFrameCountRef.current++;
+        // Update duration based on actual audio frames processed
+        // Each buffer is 4096 samples at context.sampleRate
+        const elapsedSeconds = Math.floor((audioFrameCountRef.current * 4096) / audioContext.sampleRate);
+        setDuration(elapsedSeconds);
+      };
+      
+      source.connect(scriptProcessor);
+      scriptProcessor.connect(audioContext.destination); // Required for processing to work
+      scriptProcessorRef.current = scriptProcessor;
+      
       // Reset warning state
       lowLevelCountRef.current = 0;
       setLowAudioWarning(false);
       setAudioLevel(0);
+      setDuration(0);
       
       // Start monitoring audio levels
       updateAudioLevel();
+      
+      // Start speech recognition for live captions
+      if (speechSupported) {
+        startSpeechRecognition();
+      }
 
       // Check for supported MIME types
       let mimeType = 'audio/webm;codecs=opus';
@@ -225,17 +266,6 @@ export default function Listen() {
       mediaRecorder.onstart = () => {
         console.log('[Audio] MediaRecorder.state changed to:', mediaRecorder.state);
         setRecorderState('recording');
-        
-        // Start timer based on actual elapsed time
-        startTimeRef.current = Date.now();
-        setDuration(0);
-        
-        timerRef.current = window.setInterval(() => {
-          if (startTimeRef.current) {
-            const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-            setDuration(elapsed);
-          }
-        }, 100); // Update more frequently for accuracy
       };
 
       mediaRecorder.ondataavailable = (event) => {
@@ -249,21 +279,22 @@ export default function Listen() {
         console.log('[Audio] MediaRecorder.state changed to:', mediaRecorder.state);
         setRecorderState('inactive');
         
-        // Stop timer
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        
-        // Calculate final duration
-        const finalDuration = startTimeRef.current 
-          ? Math.floor((Date.now() - startTimeRef.current) / 1000)
+        // Get final duration from audio frames
+        const finalDuration = audioContextRef.current 
+          ? Math.floor((audioFrameCountRef.current * 4096) / audioContextRef.current.sampleRate)
           : duration;
+        
+        // Stop speech recognition
+        stopSpeechRecognition();
         
         // Stop audio level monitoring
         if (animationFrameRef.current) {
           cancelAnimationFrame(animationFrameRef.current);
           animationFrameRef.current = null;
+        }
+        if (scriptProcessorRef.current) {
+          scriptProcessorRef.current.disconnect();
+          scriptProcessorRef.current = null;
         }
         if (audioContextRef.current) {
           audioContextRef.current.close();
@@ -286,13 +317,15 @@ export default function Listen() {
         setAudioError('Recording error occurred. Please try again.');
         setRecorderState('inactive');
         
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
+        stopSpeechRecognition();
+        
         if (animationFrameRef.current) {
           cancelAnimationFrame(animationFrameRef.current);
           animationFrameRef.current = null;
+        }
+        if (scriptProcessorRef.current) {
+          scriptProcessorRef.current.disconnect();
+          scriptProcessorRef.current = null;
         }
         if (audioContextRef.current) {
           audioContextRef.current.close();
@@ -337,11 +370,6 @@ export default function Listen() {
   const stopRecording = () => {
     console.log('[Audio] Stop recording requested, current state:', mediaRecorderRef.current?.state);
     
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       console.log('[Audio] Calling MediaRecorder.stop()...');
       mediaRecorderRef.current.stop();
@@ -354,13 +382,37 @@ export default function Listen() {
     setIsUploading(true);
 
     try {
-      const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-      const audioPath = `${user.id}/${sessionId}.webm`;
+      // Create initial blob from chunks
+      const rawBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      console.log('[Audio] Raw blob size:', rawBlob.size);
+      
+      // Validate audio before processing
+      const validation = await validateAudioBlob(rawBlob);
+      if (!validation.valid) {
+        console.warn('[Audio] Validation failed:', validation.reason);
+        setAudioError(validation.reason || 'Recording validation failed');
+        toast({
+          title: 'Recording Issue',
+          description: validation.reason || 'Please try recording again with clearer audio.',
+          variant: 'destructive',
+        });
+        setIsUploading(false);
+        return;
+      }
+      
+      console.log('[Audio] Validation passed, RMS:', validation.rms?.toFixed(4));
+      
+      // Convert to WAV (16-bit PCM, 16kHz)
+      console.log('[Audio] Converting to WAV...');
+      const wavBlob = await convertToWav(rawBlob);
+      console.log('[Audio] WAV blob size:', wavBlob.size);
+      
+      const audioPath = `${user.id}/${sessionId}.wav`;
 
       // Upload to storage
       const { error: uploadError } = await supabase.storage
         .from('bottor-audio')
-        .upload(audioPath, audioBlob);
+        .upload(audioPath, wavBlob);
 
       if (uploadError) throw uploadError;
 
@@ -399,6 +451,9 @@ export default function Listen() {
       </div>
     );
   }
+
+  // Current caption to display (prioritize interim results, fall back to recent final)
+  const displayCaption = liveCaption || (fullTranscript ? fullTranscript.split(' ').slice(-8).join(' ') : '');
 
   return (
     <div className="min-h-screen bg-bottor-gradient flex flex-col">
@@ -476,6 +531,28 @@ export default function Listen() {
             </div>
           )}
 
+          {/* Live Captions */}
+          {isRecording && (
+            <div className="mb-6 min-h-[60px] animate-fade-in">
+              {noSpeechWarning ? (
+                <div className="flex items-center justify-center gap-2 text-accent">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span className="text-sm font-medium">We can't hear you — check mic.</span>
+                </div>
+              ) : displayCaption ? (
+                <div className="bg-background/30 rounded-lg px-4 py-3 backdrop-blur-sm">
+                  <p className="text-sm text-foreground/80 italic">
+                    "{displayCaption}"
+                  </p>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">
+                  {speechSupported ? 'Listening for speech...' : 'Live captions not available in this browser'}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Audio Level Indicator */}
           {isRecording && (
             <div className="mb-8 w-full max-w-xs animate-fade-in">
@@ -500,7 +577,7 @@ export default function Listen() {
               </div>
               
               {/* Low audio warning */}
-              {lowAudioWarning && (
+              {lowAudioWarning && !noSpeechWarning && (
                 <div className="mt-3 flex items-center gap-2 text-accent animate-fade-in">
                   <AlertTriangle className="w-4 h-4" />
                   <span className="text-xs">No audio detected. Check your microphone.</span>
