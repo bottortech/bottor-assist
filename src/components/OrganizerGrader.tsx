@@ -8,7 +8,7 @@
  * DATA FLOW:
  * 1. Teacher uploads image OR pastes OCR text
  * 2. If image: run OCR to extract text
- * 3. Send text + prompt to grade-paper edge function
+ * 3. Send text + prompt to grade-organizer edge function
  * 4. Display per-source scoring grid and feedback
  * 5. Allow editing and regeneration
  * =============================================================================
@@ -36,26 +36,14 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
-
-interface SourceScore {
-  source_number: number;
-  source_title_score: number;
-  author_score: number;
-  central_idea_score: number;
-  evidence_score: number;
-  analysis_score: number;
-  total: number;
-  notes?: string;
-}
-
-interface OrganizerGradeResult {
-  total_score: number;
-  per_source: SourceScore[];
-  evidence_quality: string;
-  actionable_feedback: string[];
-  teacher_note: string;
-  feedback_paragraph: string;
-}
+import {
+  gradeGraphicOrganizer,
+  recalculateSourceScore,
+  recalculateTotalScore,
+  type OrganizerGradeResult,
+  type SourceGrade,
+  type SourceCategories,
+} from '@/lib/organizer-grader';
 
 export default function OrganizerGrader() {
   const { user } = useAuth();
@@ -76,7 +64,7 @@ export default function OrganizerGrader() {
   // Results state
   const [result, setResult] = useState<OrganizerGradeResult | null>(null);
   const [editingScore, setEditingScore] = useState(false);
-  const [editedScores, setEditedScores] = useState<SourceScore[]>([]);
+  const [editedSources, setEditedSources] = useState<SourceGrade[]>([]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -171,33 +159,14 @@ export default function OrganizerGrader() {
 
     setGrading(true);
     try {
-      const rubric = `Each source (5 points):
-- Source Title (1 pt)
-- Source Author (1 pt)
-- Central idea of the source (1 pt)
-- Evidence with citation (1 pt)
-- Analysis question response (1 pt)
-
-Scoring: Full credit (1), Partial (0.5), No credit (0)
-${strictness === 'stricter' ? '\nBe STRICT: require complete, accurate, and clearly legible responses for full credit.' : ''}
-${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when the student shows effort or partial understanding.' : ''}`;
-
-      const { data, error } = await supabase.functions.invoke('grade-paper', {
-        body: {
-          student_work: textToGrade,
-          grade_level: '8',
-          subject: 'ELA/Social Studies',
-          assignment_type: 'Graphic Essay Organizer',
-          rubric,
-          prompt_text: promptText || undefined,
-        },
+      const gradeResult = await gradeGraphicOrganizer({
+        promptText: promptText || '',
+        studentWorkText: textToGrade,
+        strictness,
       });
 
-      if (error) throw error;
-
-      const gradeResult = data as OrganizerGradeResult;
       setResult(gradeResult);
-      setEditedScores(gradeResult.per_source || []);
+      setEditedSources(JSON.parse(JSON.stringify(gradeResult.per_source || [])));
       setEditingScore(false);
       toast({ title: 'Grading complete!' });
     } catch (error) {
@@ -212,23 +181,31 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
     }
   };
 
-  const updateSourceScore = (index: number, field: keyof SourceScore, value: number) => {
-    setEditedScores((prev) => {
+  const updateCategoryScore = (
+    sourceIndex: number,
+    category: keyof SourceCategories,
+    value: number
+  ) => {
+    setEditedSources((prev) => {
       const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
-      // Recalculate total
-      updated[index].total =
-        updated[index].source_title_score +
-        updated[index].author_score +
-        updated[index].central_idea_score +
-        updated[index].evidence_score +
-        updated[index].analysis_score;
+      updated[sourceIndex] = {
+        ...updated[sourceIndex],
+        categories: {
+          ...updated[sourceIndex].categories,
+          [category]: {
+            ...updated[sourceIndex].categories[category],
+            score: value,
+          },
+        },
+      };
+      // Recalculate source total
+      updated[sourceIndex].score = recalculateSourceScore(updated[sourceIndex].categories);
       return updated;
     });
   };
 
   const getEditedTotal = () => {
-    return editedScores.reduce((sum, s) => sum + s.total, 0);
+    return recalculateTotalScore(editedSources);
   };
 
   const handleSave = async () => {
@@ -238,7 +215,7 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
     try {
       const finalResult = {
         ...result,
-        per_source: editedScores,
+        per_source: editedSources,
         total_score: getEditedTotal(),
       };
 
@@ -272,10 +249,12 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
     value,
     onChange,
     editable,
+    notes,
   }: {
     value: number;
     onChange?: (v: number) => void;
     editable: boolean;
+    notes?: string;
   }) => {
     const getBgColor = () => {
       if (value >= 1) return 'bg-primary/20 text-primary';
@@ -289,6 +268,7 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           className={`w-16 p-1 rounded text-center text-sm font-medium ${getBgColor()}`}
+          title={notes}
         >
           <option value={0}>0</option>
           <option value={0.5}>0.5</option>
@@ -298,7 +278,10 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
     }
 
     return (
-      <span className={`inline-block w-10 py-1 rounded text-center text-sm font-medium ${getBgColor()}`}>
+      <span
+        className={`inline-block w-10 py-1 rounded text-center text-sm font-medium ${getBgColor()}`}
+        title={notes}
+      >
         {value}
       </span>
     );
@@ -306,6 +289,9 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
 
   const textToGrade = ocrText || manualText;
   const canGrade = textToGrade.trim().length > 0;
+
+  // Get sources for rendering
+  const sourcesToRender = editingScore ? editedSources : (result?.per_source || []);
 
   return (
     <Card className="border-0 shadow-md bg-card-gradient">
@@ -437,45 +423,50 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
                   </tr>
                 </thead>
                 <tbody>
-                  {(editingScore ? editedScores : result.per_source)?.map((source, idx) => (
+                  {sourcesToRender.map((source, idx) => (
                     <tr key={idx} className="border-b">
-                      <td className="py-2 pr-2 font-medium">Source {source.source_number || idx + 1}</td>
+                      <td className="py-2 pr-2 font-medium">{source.source_label}</td>
                       <td className="text-center py-2 px-1">
                         <ScoreCell
-                          value={source.source_title_score}
+                          value={source.categories.source_title.score}
                           editable={editingScore}
-                          onChange={(v) => updateSourceScore(idx, 'source_title_score', v)}
+                          onChange={(v) => updateCategoryScore(idx, 'source_title', v)}
+                          notes={source.categories.source_title.notes}
                         />
                       </td>
                       <td className="text-center py-2 px-1">
                         <ScoreCell
-                          value={source.author_score}
+                          value={source.categories.source_author.score}
                           editable={editingScore}
-                          onChange={(v) => updateSourceScore(idx, 'author_score', v)}
+                          onChange={(v) => updateCategoryScore(idx, 'source_author', v)}
+                          notes={source.categories.source_author.notes}
                         />
                       </td>
                       <td className="text-center py-2 px-1">
                         <ScoreCell
-                          value={source.central_idea_score}
+                          value={source.categories.central_idea.score}
                           editable={editingScore}
-                          onChange={(v) => updateSourceScore(idx, 'central_idea_score', v)}
+                          onChange={(v) => updateCategoryScore(idx, 'central_idea', v)}
+                          notes={source.categories.central_idea.notes}
                         />
                       </td>
                       <td className="text-center py-2 px-1">
                         <ScoreCell
-                          value={source.evidence_score}
+                          value={source.categories.evidence_cited.score}
                           editable={editingScore}
-                          onChange={(v) => updateSourceScore(idx, 'evidence_score', v)}
+                          onChange={(v) => updateCategoryScore(idx, 'evidence_cited', v)}
+                          notes={source.categories.evidence_cited.notes}
                         />
                       </td>
                       <td className="text-center py-2 px-1">
                         <ScoreCell
-                          value={source.analysis_score}
+                          value={source.categories.analysis_item.score}
                           editable={editingScore}
-                          onChange={(v) => updateSourceScore(idx, 'analysis_score', v)}
+                          onChange={(v) => updateCategoryScore(idx, 'analysis_item', v)}
+                          notes={source.categories.analysis_item.notes}
                         />
                       </td>
-                      <td className="text-center py-2 pl-2 font-bold">{source.total}/5</td>
+                      <td className="text-center py-2 pl-2 font-bold">{source.score}/5</td>
                     </tr>
                   ))}
                 </tbody>
@@ -496,8 +487,16 @@ ${strictness === 'kinder' ? '\nBe LENIENT: give partial credit generously when t
             {/* Evidence Quality */}
             {result.evidence_quality && (
               <div className="space-y-1">
-                <p className="text-sm font-medium text-muted-foreground">Evidence Quality</p>
-                <p className="text-sm">{result.evidence_quality}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Evidence Quality: <span className="capitalize">{result.evidence_quality.overall}</span>
+                </p>
+                {result.evidence_quality.notes?.length > 0 && (
+                  <ul className="list-disc list-inside text-sm">
+                    {result.evidence_quality.notes.map((note, idx) => (
+                      <li key={idx}>{note}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
 

@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.grade-paper]
 verify_jwt = false
+
+[functions.grade-organizer]
+verify_jwt = false
