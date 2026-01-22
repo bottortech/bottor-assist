@@ -122,6 +122,13 @@ interface GradingResult {
   feedback_paragraph: string;
 }
 
+interface UploadedFile {
+  id: string; // unique key: filename + lastModified
+  file: File;
+  extractedText: string;
+  extractionStatus: 'pending' | 'extracting' | 'done' | 'failed';
+}
+
 /**
  * =============================================================================
  * COMPONENT
@@ -143,10 +150,9 @@ export default function GradePapers() {
     answer_key: '',
   });
 
-  // File state
-  const [file, setFile] = useState<File | null>(null);
-  const [extractedText, setExtractedText] = useState<string>('');
-  const [extracting, setExtracting] = useState(false);
+  // Multi-file state
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [combinedText, setCombinedText] = useState<string>('');
   const [convertingHeic, setConvertingHeic] = useState(false);
 
   // Results state (editable)
@@ -157,6 +163,25 @@ export default function GradePapers() {
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   /**
+   * Generate unique ID for file
+   */
+  const getFileId = (f: File) => `${f.name}_${f.lastModified}`;
+
+  /**
+   * Update combined text from all uploaded files
+   */
+  const updateCombinedText = (files: UploadedFile[]) => {
+    const parts = files.map((uf, idx) => {
+      const header = `--- Page ${idx + 1}: ${uf.file.name} ---`;
+      const body = uf.extractionStatus === 'failed'
+        ? '[Extraction failed — paste text manually]'
+        : uf.extractedText || '[Extracting...]';
+      return `${header}\n${body}`;
+    });
+    setCombinedText(parts.join('\n\n'));
+  };
+
+  /**
    * [FORM UPDATE] Update form field
    */
   const updateForm = (field: keyof GradePapersForm, value: string) => {
@@ -164,219 +189,90 @@ export default function GradePapers() {
   };
 
   /**
-   * [FILE UPLOAD] Handle file selection
+   * Resize image blob to JPEG with max dimension
    */
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+  const resizeImageBlobToJpeg = async (blob: Blob, maxDimension: number): Promise<Blob> => {
+    const tryBitmap = async () => {
+      const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' } as any);
+      const srcW = bmp.width;
+      const srcH = bmp.height;
+      const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+      const targetW = Math.max(1, Math.round(srcW * scale));
+      const targetH = Math.max(1, Math.round(srcH * scale));
 
-    // Validate file type (MIME OR extension), since HEIC often reports as "" or "application/octet-stream"
-    const allowedMimes = [
-      'application/pdf',
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/webp',
-      'image/heic',
-      'image/heif',
-    ];
-    const fileType = (selectedFile.type || '').toLowerCase();
-    const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-    const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
-    const okByMime = allowedMimes.includes(fileType);
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas not supported');
+      ctx.drawImage(bmp, 0, 0, targetW, targetH);
+      bmp.close?.();
 
-    if (!okByExt && !okByMime) {
-      toast({
-        title: 'Unsupported file type',
-        description: 'Upload PDF or image (JPG, PNG, HEIC/HEIF).',
-        variant: 'destructive',
+      return await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('Failed to create output blob'))),
+          'image/jpeg',
+          0.85
+        );
       });
-      return;
-    }
+    };
 
-    // Validate file size (max 10MB)
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      toast({
-        title: 'File too large',
-        description: 'Please upload a file smaller than 10MB.',
-        variant: 'destructive',
-      });
-      return;
-    }
+    try {
+      return await tryBitmap();
+    } catch {
+      return await new Promise<Blob>((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+          try {
+            const srcW = img.width;
+            const srcH = img.height;
+            const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+            const targetW = Math.max(1, Math.round(srcW * scale));
+            const targetH = Math.max(1, Math.round(srcH * scale));
 
-    const isHeicOrHeif =
-      fileType === 'image/heic' ||
-      fileType === 'image/heif' ||
-      ext === 'heic' ||
-      ext === 'heif';
+            const canvas = document.createElement('canvas');
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('Canvas not supported');
+            ctx.drawImage(img, 0, 0, targetW, targetH);
 
-    const resizeImageBlobToJpeg = async (blob: Blob, maxDimension: number): Promise<Blob> => {
-      // Prefer createImageBitmap so we can honor EXIF orientation when supported.
-      const tryBitmap = async () => {
-        const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' } as any);
-        const srcW = bmp.width;
-        const srcH = bmp.height;
-        const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
-        const targetW = Math.max(1, Math.round(srcW * scale));
-        const targetH = Math.max(1, Math.round(srcH * scale));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Canvas not supported');
-        ctx.drawImage(bmp, 0, 0, targetW, targetH);
-        bmp.close?.();
-
-        return await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error('Failed to create output blob'))),
-            'image/jpeg',
-            0.85
-          );
-        });
-      };
-
-      try {
-        return await tryBitmap();
-      } catch {
-        // Fallback: decode via HTMLImageElement
-        return await new Promise<Blob>((resolve, reject) => {
-          const img = new Image();
-          const url = URL.createObjectURL(blob);
-          img.onload = () => {
-            try {
-              const srcW = img.width;
-              const srcH = img.height;
-              const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
-              const targetW = Math.max(1, Math.round(srcW * scale));
-              const targetH = Math.max(1, Math.round(srcH * scale));
-
-              const canvas = document.createElement('canvas');
-              canvas.width = targetW;
-              canvas.height = targetH;
-              const ctx = canvas.getContext('2d');
-              if (!ctx) throw new Error('Canvas not supported');
-              ctx.drawImage(img, 0, 0, targetW, targetH);
-
-              canvas.toBlob(
-                (b) => {
-                  URL.revokeObjectURL(url);
-                  b ? resolve(b) : reject(new Error('Failed to create output blob'));
-                },
-                'image/jpeg',
-                0.85
-              );
-            } catch (err) {
-              URL.revokeObjectURL(url);
-              reject(err);
-            }
-          };
-          img.onerror = () => {
+            canvas.toBlob(
+              (b) => {
+                URL.revokeObjectURL(url);
+                b ? resolve(b) : reject(new Error('Failed to create output blob'));
+              },
+              'image/jpeg',
+              0.85
+            );
+          } catch (err) {
             URL.revokeObjectURL(url);
-            reject(new Error('Image decode failed'));
-          };
-          img.src = url;
-        });
-      }
-    };
-
-    const convertHeicToJpeg = async (heicFile: File): Promise<File> => {
-      const converted = await heic2any({
-        blob: heicFile,
-        toType: 'image/jpeg',
-        quality: 0.85,
+            reject(err);
+          }
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error('Image decode failed'));
+        };
+        img.src = url;
       });
-      const blob = Array.isArray(converted) ? converted[0] : converted;
-      const resized = await resizeImageBlobToJpeg(blob, 2000);
-      const newName = heicFile.name.replace(/\.(heic|heif)$/i, '.jpg');
-      return new File([resized], newName, { type: 'image/jpeg' });
-    };
-
-    let fileToProcess = selectedFile;
-
-    if (isHeicOrHeif) {
-      setConvertingHeic(true);
-      try {
-        fileToProcess = await convertHeicToJpeg(selectedFile);
-      } catch (error) {
-        console.error('HEIC conversion failed:', error);
-        toast({
-          title: "Couldn't read this HEIC image",
-          description: 'Please upload JPG/PNG or use Paste Text Manually.',
-          variant: 'destructive',
-        });
-        setFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        return;
-      } finally {
-        setConvertingHeic(false);
-      }
     }
-
-    // Conversion can increase size; re-check
-    if (fileToProcess.size > 10 * 1024 * 1024) {
-      toast({
-        title: 'File too large',
-        description: 'Please upload a file smaller than 10MB.',
-        variant: 'destructive',
-      });
-      setFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
-    setFile(fileToProcess);
-    setExtractedText('');
-    setResult(null);
-
-    // Auto-extract text
-    await extractTextFromFile(fileToProcess);
   };
 
   /**
-   * [TEXT EXTRACTION] Extract text from uploaded file
-   * 
-   * [MIGRATION POINT: File Processing]
-   * In Next.js, use server action with pdf-parse or Tesseract.js
+   * Convert HEIC to JPEG
    */
-  const extractTextFromFile = async (fileToExtract: File) => {
-    setExtracting(true);
-    try {
-      // Convert file to base64
-      const base64 = await fileToBase64(fileToExtract);
-      
-      // [EDGE FUNCTION CALL] Extract text
-      const { data, error } = await supabase.functions.invoke('extract-text', {
-        body: {
-          file_data: base64,
-          file_type: fileToExtract.type,
-          file_name: fileToExtract.name,
-        },
-      });
-
-      if (error) throw error;
-
-      if (data.text) {
-        setExtractedText(data.text);
-        toast({ title: 'Text extracted successfully!' });
-      } else {
-        toast({
-          title: 'No text found',
-          description: 'Could not extract text from the file. You can type it manually.',
-          variant: 'destructive',
-        });
-      }
-    } catch (error) {
-      console.error('Text extraction error:', error);
-      toast({
-        title: 'Extraction failed',
-        description: 'Could not extract text. You can paste or type the content manually.',
-        variant: 'destructive',
-      });
-    } finally {
-      setExtracting(false);
-    }
+  const convertHeicToJpeg = async (heicFile: File): Promise<File> => {
+    const converted = await heic2any({
+      blob: heicFile,
+      toType: 'image/jpeg',
+      quality: 0.85,
+    });
+    const blob = Array.isArray(converted) ? converted[0] : converted;
+    const resized = await resizeImageBlobToJpeg(blob, 2000);
+    const newName = heicFile.name.replace(/\.(heic|heif)$/i, '.jpg');
+    return new File([resized], newName, { type: 'image/jpeg' });
   };
 
   /**
@@ -387,7 +283,6 @@ export default function GradePapers() {
       const reader = new FileReader();
       reader.onload = () => {
         const result = reader.result as string;
-        // Remove data URL prefix to get pure base64
         const base64 = result.split(',')[1];
         resolve(base64);
       };
@@ -397,11 +292,180 @@ export default function GradePapers() {
   };
 
   /**
-   * [REMOVE FILE] Clear uploaded file
+   * [TEXT EXTRACTION] Extract text from a single file
    */
-  const removeFile = () => {
-    setFile(null);
-    setExtractedText('');
+  const extractTextFromFile = async (fileToExtract: File): Promise<string> => {
+    const base64 = await fileToBase64(fileToExtract);
+    const { data, error } = await supabase.functions.invoke('extract-text', {
+      body: {
+        file_data: base64,
+        file_type: fileToExtract.type,
+        file_name: fileToExtract.name,
+      },
+    });
+    if (error) throw error;
+    return data.text || '';
+  };
+
+  /**
+   * [FILE UPLOAD] Handle file selection (multi-file)
+   */
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files;
+    if (!selectedFiles || selectedFiles.length === 0) return;
+
+    const allowedMimes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+    ];
+
+    const newFiles: UploadedFile[] = [];
+
+    for (const selectedFile of Array.from(selectedFiles)) {
+      const fileType = (selectedFile.type || '').toLowerCase();
+      const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+      const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
+      const okByMime = allowedMimes.includes(fileType);
+
+      if (!okByExt && !okByMime) {
+        toast({
+          title: 'Unsupported file type',
+          description: `Skipped ${selectedFile.name}. Upload PDF or image (JPG, PNG, HEIC/HEIF).`,
+          variant: 'destructive',
+        });
+        continue;
+      }
+
+      if (selectedFile.size > 10 * 1024 * 1024) {
+        toast({
+          title: 'File too large',
+          description: `Skipped ${selectedFile.name}. Max 10MB.`,
+          variant: 'destructive',
+        });
+        continue;
+      }
+
+      const isHeicOrHeif =
+        fileType === 'image/heic' ||
+        fileType === 'image/heif' ||
+        ext === 'heic' ||
+        ext === 'heif';
+
+      let fileToProcess = selectedFile;
+
+      if (isHeicOrHeif) {
+        setConvertingHeic(true);
+        try {
+          fileToProcess = await convertHeicToJpeg(selectedFile);
+        } catch (error) {
+          console.error('HEIC conversion failed:', error);
+          toast({
+            title: "Couldn't read HEIC image",
+            description: `Skipped ${selectedFile.name}. Upload JPG/PNG instead.`,
+            variant: 'destructive',
+          });
+          continue;
+        } finally {
+          setConvertingHeic(false);
+        }
+      }
+
+      // Check again after conversion
+      if (fileToProcess.size > 10 * 1024 * 1024) {
+        toast({
+          title: 'File too large after conversion',
+          description: `Skipped ${selectedFile.name}. Max 10MB.`,
+          variant: 'destructive',
+        });
+        continue;
+      }
+
+      const id = getFileId(fileToProcess);
+      // Skip duplicates
+      if (uploadedFiles.some(uf => uf.id === id)) {
+        continue;
+      }
+
+      newFiles.push({
+        id,
+        file: fileToProcess,
+        extractedText: '',
+        extractionStatus: 'pending',
+      });
+    }
+
+    if (newFiles.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // Add to state and update combined text
+    const updatedFiles = [...uploadedFiles, ...newFiles];
+    setUploadedFiles(updatedFiles);
+    updateCombinedText(updatedFiles);
+    setResult(null);
+
+    // Clear input for re-selection
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    // Extract text for each new file
+    for (const uf of newFiles) {
+      setUploadedFiles(prev => prev.map(f =>
+        f.id === uf.id ? { ...f, extractionStatus: 'extracting' } : f
+      ));
+
+      try {
+        const text = await extractTextFromFile(uf.file);
+        setUploadedFiles(prev => {
+          const updated = prev.map(f =>
+            f.id === uf.id ? { ...f, extractedText: text, extractionStatus: 'done' as const } : f
+          );
+          updateCombinedText(updated);
+          return updated;
+        });
+      } catch (error) {
+        console.error('Extraction failed for', uf.file.name, error);
+        setUploadedFiles(prev => {
+          const updated = prev.map(f =>
+            f.id === uf.id ? { ...f, extractionStatus: 'failed' as const } : f
+          );
+          updateCombinedText(updated);
+          return updated;
+        });
+        toast({
+          title: 'Extraction failed',
+          description: `Could not extract text from ${uf.file.name}. You can edit the combined text manually.`,
+          variant: 'destructive',
+        });
+      }
+    }
+
+    toast({ title: `${newFiles.length} file(s) added` });
+  };
+
+  /**
+   * [REMOVE FILE] Remove a single file from the list
+   */
+  const removeFile = (fileId: string) => {
+    setUploadedFiles(prev => {
+      const updated = prev.filter(f => f.id !== fileId);
+      updateCombinedText(updated);
+      return updated;
+    });
+  };
+
+  /**
+   * [CLEAR ALL] Remove all uploaded files
+   */
+  const clearAllFiles = () => {
+    setUploadedFiles([]);
+    setCombinedText('');
+    setResult(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -414,10 +478,10 @@ export default function GradePapers() {
    * In Next.js, replace with server action calling Lovable AI gateway
    */
   const handleGenerateGrade = async () => {
-    if (!extractedText.trim()) {
+    if (!combinedText.trim()) {
       toast({
         title: 'No student work',
-        description: 'Please upload a file or paste the student work text.',
+        description: 'Please upload files or paste the student work text.',
         variant: 'destructive',
       });
       return;
@@ -436,7 +500,7 @@ export default function GradePapers() {
     try {
       const { data, error } = await supabase.functions.invoke('grade-paper', {
         body: {
-          student_work: extractedText,
+          student_work: combinedText,
           grade_level: form.grade_level,
           subject: form.subject,
           assignment_type: form.assignment_type,
@@ -576,7 +640,7 @@ export default function GradePapers() {
         snippet: `Score: ${result.score_suggestion} | ${result.strengths.slice(0, 80)}...`,
         summary_json: summaryJson,
         teacher_notes: JSON.stringify(notesJson),
-        transcript: extractedText, // Store extracted student work
+        transcript: combinedText, // Store combined extracted student work
       };
 
       if (sessionId) {
@@ -617,7 +681,8 @@ export default function GradePapers() {
     );
   }
 
-  const canGenerate = extractedText.trim() && form.rubric.trim();
+  const isExtracting = uploadedFiles.some(f => f.extractionStatus === 'extracting');
+  const canGenerate = combinedText.trim() && form.rubric.trim() && !isExtracting;
 
   return (
     <div className="min-h-screen bg-bottor-gradient">
@@ -732,8 +797,18 @@ export default function GradePapers() {
 
         {/* File Upload */}
         <Card className="border-0 shadow-md bg-card-gradient">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg">Student Work</CardTitle>
+            {uploadedFiles.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearAllFiles}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                Clear all
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Upload Zone */}
@@ -741,64 +816,94 @@ export default function GradePapers() {
               <input
                 ref={fileInputRef}
                 type="file"
-                  accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                multiple
+                accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
                 onChange={handleFileSelect}
                 className="hidden"
                 id="file-upload"
               />
               
-              {!file ? (
-                <label
-                  htmlFor="file-upload"
-                  className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
-                >
-                  <Upload className="w-8 h-8 text-muted-foreground mb-2" />
-                  <span className="text-sm text-muted-foreground">
-                    Click to upload PDF or image (JPG, PNG, WebP, HEIC/HEIF)
-                  </span>
-                  <span className="text-xs text-muted-foreground mt-1">
-                    Max 10MB
-                  </span>
-                </label>
-              ) : (
-                <div className="flex items-center gap-3 p-4 border border-border rounded-lg bg-muted/20">
-                  <FileText className="w-8 h-8 text-primary" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{file.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(file.size / 1024).toFixed(1)} KB
-                    </p>
-                  </div>
-                  {extracting || convertingHeic ? (
-                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={removeFile}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  )}
-                </div>
-              )}
+              <label
+                htmlFor="file-upload"
+                className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+              >
+                {convertingHeic ? (
+                  <>
+                    <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
+                    <span className="text-sm text-muted-foreground">Converting HEIC...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-6 h-6 text-muted-foreground mb-2" />
+                    <span className="text-sm text-muted-foreground">
+                      Click to upload PDFs or images (JPG, PNG, HEIC/HEIF)
+                    </span>
+                    <span className="text-xs text-muted-foreground mt-1">
+                      Select multiple files • Max 10MB each
+                    </span>
+                  </>
+                )}
+              </label>
             </div>
 
-            {/* Extracted/Manual Text */}
+            {/* Uploaded Files List */}
+            {uploadedFiles.length > 0 && (
+              <div className="space-y-2">
+                <Label>Uploaded Files ({uploadedFiles.length})</Label>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {uploadedFiles.map((uf, idx) => (
+                    <div
+                      key={uf.id}
+                      className="flex items-center gap-3 p-3 border border-border rounded-lg bg-muted/20"
+                    >
+                      <span className="text-xs font-medium text-muted-foreground w-6">
+                        {idx + 1}.
+                      </span>
+                      <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{uf.file.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(uf.file.size / 1024).toFixed(1)} KB
+                          {uf.extractionStatus === 'extracting' && ' • Extracting...'}
+                          {uf.extractionStatus === 'done' && ' • Done'}
+                          {uf.extractionStatus === 'failed' && ' • Extraction failed'}
+                        </p>
+                      </div>
+                      {uf.extractionStatus === 'extracting' ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-primary flex-shrink-0" />
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFile(uf.id)}
+                          className="text-muted-foreground hover:text-destructive flex-shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Combined Extracted Text */}
             <div className="space-y-2">
               <Label htmlFor="extracted_text">
-                Extracted Text {extracting && '(Extracting...)'}
+                Extracted Text (combined) {isExtracting && '(Extracting...)'}
               </Label>
               <Textarea
                 id="extracted_text"
-                placeholder="Text extracted from file will appear here. You can also paste or type student work directly..."
-                value={extractedText}
-                onChange={(e) => setExtractedText(e.target.value)}
-                rows={8}
-                disabled={extracting}
+                placeholder="Text extracted from files will appear here with page separators. You can also paste or type student work directly..."
+                value={combinedText}
+                onChange={(e) => setCombinedText(e.target.value)}
+                rows={10}
+                disabled={isExtracting}
                 className="font-mono text-sm"
               />
+              <p className="text-xs text-muted-foreground">
+                You can edit this text before grading. If extraction failed for any file, update its section manually.
+              </p>
             </div>
           </CardContent>
         </Card>
