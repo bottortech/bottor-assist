@@ -5,11 +5,10 @@
  * 
  * NEXT.JS MIGRATION: app/page.tsx
  * 
- * PURPOSE: Entry point with navigation to Quick Notes, Listen, and History.
+ * PURPOSE: Entry point with navigation to Grade Papers, Quick Notes, and History.
  * 
  * DATA FLOW:
- * 1. [SESSION CREATE] Create recording session when user clicks "Start Listening"
- * 2. [NAVIGATE] Route to appropriate page based on action
+ * 1. [NAVIGATE] Route to appropriate page based on action
  * 
  * This is the main hub for all user flows.
  * =============================================================================
@@ -19,14 +18,11 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Mic, LogOut, FileText, History } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { LogOut, FileText, History, GraduationCap } from 'lucide-react';
 
 export default function Index() {
   const { user, loading, signOut } = useAuth();
   const navigate = useNavigate();
-  const { toast } = useToast();
 
   // [AUTH GUARD] Redirect unauthenticated users
   useEffect(() => {
@@ -34,34 +30,6 @@ export default function Index() {
       navigate('/auth', { replace: true });
     }
   }, [user, loading, navigate]);
-
-  // [SESSION CREATE] Create new recording session for audio flow
-  const handleStartListening = async () => {
-    try {
-      // [MIGRATION POINT: Session Creation]
-      // In Next.js, replace with server action
-      const { data, error } = await supabase
-        .from('sessions')
-        .insert({
-          user_id: user?.id,
-          status: 'recording',
-          // NOTE: Add input_mode after migration
-          // input_mode: 'audio',
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      navigate(`/listen?sessionId=${data.id}`);
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to create session. Please try again.',
-        variant: 'destructive',
-      });
-    }
-  };
 
   // [AUTH] Sign out user
   const handleSignOut = async () => {
@@ -97,7 +65,7 @@ export default function Index() {
         <div className="text-center max-w-md mx-auto animate-fade-in">
           {/* Logo */}
           <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary text-primary-foreground mb-6 shadow-xl">
-            <Mic className="w-10 h-10" />
+            <GraduationCap className="w-10 h-10" />
           </div>
 
           {/* Title */}
@@ -110,26 +78,26 @@ export default function Index() {
 
           {/* Actions */}
           <div className="space-y-4">
-            {/* [ROUTE: /quick-notes] Primary action - Quick Notes */}
+            {/* [ROUTE: /grade] Primary action - Grade Papers */}
             <Button
               variant="hero"
               size="xl"
+              onClick={() => navigate('/grade')}
+              className="w-full"
+            >
+              <GraduationCap className="w-5 h-5 mr-2" />
+              Grade Papers (Recommended)
+            </Button>
+
+            {/* [ROUTE: /quick-notes] Secondary action - Quick Notes */}
+            <Button
+              variant="outline"
+              size="lg"
               onClick={() => navigate('/quick-notes')}
               className="w-full"
             >
               <FileText className="w-5 h-5 mr-2" />
-              Quick Notes (Recommended)
-            </Button>
-
-            {/* [ROUTE: /listen] Secondary action - Audio Recording (Beta) */}
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={handleStartListening}
-              className="w-full"
-            >
-              <Mic className="w-5 h-5 mr-2" />
-              Start Listening (Beta)
+              Quick Notes
             </Button>
 
             {/* [ROUTE: /history] Tertiary action - View History */}

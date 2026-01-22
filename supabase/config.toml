@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.generate-parent-messages]
 verify_jwt = false
+
+[functions.extract-text]
+verify_jwt = false
+
+[functions.grade-paper]
+verify_jwt = false
