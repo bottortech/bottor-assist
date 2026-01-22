@@ -7,6 +7,7 @@
  * Routes are defined here and map to Next.js file-based routing:
  * - / → app/page.tsx
  * - /auth → app/auth/page.tsx
+ * - /grade → app/grade/page.tsx
  * - /quick-notes → app/quick-notes/page.tsx
  * - /listen → app/listen/page.tsx
  * - /processing/:sessionId → app/processing/[sessionId]/page.tsx
@@ -15,6 +16,7 @@
  * 
  * ROUTE STRUCTURE (STABLE):
  * - / (Home) - Entry point with navigation
+ * - /grade - Grade papers with AI feedback
  * - /quick-notes - Manual lesson notes entry
  * - /listen - Audio recording (beta)
  * - /processing/:sessionId - Audio processing status
@@ -35,6 +37,9 @@ import Index from "./pages/Index";
 
 // [ROUTE: /auth] Authentication page
 import Auth from "./pages/Auth";
+
+// [ROUTE: /grade] Grade papers with AI feedback
+import GradePapers from "./pages/GradePapers";
 
 // [ROUTE: /quick-notes] Manual lesson notes entry
 import QuickNotes from "./pages/QuickNotes";
@@ -67,6 +72,7 @@ const App = () => (
             {/* Primary Routes */}
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/grade" element={<GradePapers />} />
             <Route path="/quick-notes" element={<QuickNotes />} />
             <Route path="/history" element={<History />} />
             <Route path="/session/:sessionId" element={<Session />} />
