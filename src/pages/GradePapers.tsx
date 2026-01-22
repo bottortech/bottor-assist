@@ -35,6 +35,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import heic2any from 'heic2any';
 import {
   Select,
   SelectContent,
@@ -146,6 +147,7 @@ export default function GradePapers() {
   const [file, setFile] = useState<File | null>(null);
   const [extractedText, setExtractedText] = useState<string>('');
   const [extracting, setExtracting] = useState(false);
+  const [convertingHeic, setConvertingHeic] = useState(false);
 
   // Results state (editable)
   const [result, setResult] = useState<GradingResult | null>(null);
@@ -168,12 +170,25 @@ export default function GradePapers() {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    // Validate file type
-    const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-    if (!validTypes.includes(selectedFile.type)) {
+    // Validate file type (MIME OR extension), since HEIC often reports as "" or "application/octet-stream"
+    const allowedMimes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+    ];
+    const fileType = (selectedFile.type || '').toLowerCase();
+    const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+    const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
+    const okByMime = allowedMimes.includes(fileType);
+
+    if (!okByExt && !okByMime) {
       toast({
-        title: 'Invalid file type',
-        description: 'Please upload a PDF or image file (JPEG, PNG, WebP).',
+        title: 'Unsupported file type',
+        description: 'Upload PDF or image (JPG, PNG, HEIC/HEIF).',
         variant: 'destructive',
       });
       return;
@@ -189,12 +204,134 @@ export default function GradePapers() {
       return;
     }
 
-    setFile(selectedFile);
+    const isHeicOrHeif =
+      fileType === 'image/heic' ||
+      fileType === 'image/heif' ||
+      ext === 'heic' ||
+      ext === 'heif';
+
+    const resizeImageBlobToJpeg = async (blob: Blob, maxDimension: number): Promise<Blob> => {
+      // Prefer createImageBitmap so we can honor EXIF orientation when supported.
+      const tryBitmap = async () => {
+        const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' } as any);
+        const srcW = bmp.width;
+        const srcH = bmp.height;
+        const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+        const targetW = Math.max(1, Math.round(srcW * scale));
+        const targetH = Math.max(1, Math.round(srcH * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas not supported');
+        ctx.drawImage(bmp, 0, 0, targetW, targetH);
+        bmp.close?.();
+
+        return await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error('Failed to create output blob'))),
+            'image/jpeg',
+            0.85
+          );
+        });
+      };
+
+      try {
+        return await tryBitmap();
+      } catch {
+        // Fallback: decode via HTMLImageElement
+        return await new Promise<Blob>((resolve, reject) => {
+          const img = new Image();
+          const url = URL.createObjectURL(blob);
+          img.onload = () => {
+            try {
+              const srcW = img.width;
+              const srcH = img.height;
+              const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+              const targetW = Math.max(1, Math.round(srcW * scale));
+              const targetH = Math.max(1, Math.round(srcH * scale));
+
+              const canvas = document.createElement('canvas');
+              canvas.width = targetW;
+              canvas.height = targetH;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) throw new Error('Canvas not supported');
+              ctx.drawImage(img, 0, 0, targetW, targetH);
+
+              canvas.toBlob(
+                (b) => {
+                  URL.revokeObjectURL(url);
+                  b ? resolve(b) : reject(new Error('Failed to create output blob'));
+                },
+                'image/jpeg',
+                0.85
+              );
+            } catch (err) {
+              URL.revokeObjectURL(url);
+              reject(err);
+            }
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('Image decode failed'));
+          };
+          img.src = url;
+        });
+      }
+    };
+
+    const convertHeicToJpeg = async (heicFile: File): Promise<File> => {
+      const converted = await heic2any({
+        blob: heicFile,
+        toType: 'image/jpeg',
+        quality: 0.85,
+      });
+      const blob = Array.isArray(converted) ? converted[0] : converted;
+      const resized = await resizeImageBlobToJpeg(blob, 2000);
+      const newName = heicFile.name.replace(/\.(heic|heif)$/i, '.jpg');
+      return new File([resized], newName, { type: 'image/jpeg' });
+    };
+
+    let fileToProcess = selectedFile;
+
+    if (isHeicOrHeif) {
+      setConvertingHeic(true);
+      try {
+        fileToProcess = await convertHeicToJpeg(selectedFile);
+      } catch (error) {
+        console.error('HEIC conversion failed:', error);
+        toast({
+          title: "Couldn't read this HEIC image",
+          description: 'Please upload JPG/PNG or use Paste Text Manually.',
+          variant: 'destructive',
+        });
+        setFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      } finally {
+        setConvertingHeic(false);
+      }
+    }
+
+    // Conversion can increase size; re-check
+    if (fileToProcess.size > 10 * 1024 * 1024) {
+      toast({
+        title: 'File too large',
+        description: 'Please upload a file smaller than 10MB.',
+        variant: 'destructive',
+      });
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setFile(fileToProcess);
     setExtractedText('');
     setResult(null);
 
     // Auto-extract text
-    await extractTextFromFile(selectedFile);
+    await extractTextFromFile(fileToProcess);
   };
 
   /**
@@ -604,7 +741,7 @@ export default function GradePapers() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,image/jpeg,image/png,image/webp"
+                  accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
                 onChange={handleFileSelect}
                 className="hidden"
                 id="file-upload"
@@ -617,7 +754,7 @@ export default function GradePapers() {
                 >
                   <Upload className="w-8 h-8 text-muted-foreground mb-2" />
                   <span className="text-sm text-muted-foreground">
-                    Click to upload PDF or image
+                    Click to upload PDF or image (JPG, PNG, WebP, HEIC/HEIF)
                   </span>
                   <span className="text-xs text-muted-foreground mt-1">
                     Max 10MB
@@ -632,7 +769,7 @@ export default function GradePapers() {
                       {(file.size / 1024).toFixed(1)} KB
                     </p>
                   </div>
-                  {extracting ? (
+                  {extracting || convertingHeic ? (
                     <Loader2 className="w-5 h-5 animate-spin text-primary" />
                   ) : (
                     <Button
