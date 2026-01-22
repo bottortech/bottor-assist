@@ -16,6 +16,7 @@
 
 import { useState, useRef } from 'react';
 import type { Json } from '@/integrations/supabase/types';
+import heic2any from 'heic2any';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -45,6 +46,9 @@ import {
   type SourceCategories,
 } from '@/lib/organizer-grader';
 
+// Max dimension for converted images (long side)
+const MAX_IMAGE_DIMENSION = 2000;
+
 export default function OrganizerGrader() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -58,6 +62,7 @@ export default function OrganizerGrader() {
 
   // Processing state
   const [extractingText, setExtractingText] = useState(false);
+  const [convertingHeic, setConvertingHeic] = useState(false);
   const [grading, setGrading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -66,26 +71,155 @@ export default function OrganizerGrader() {
   const [editingScore, setEditingScore] = useState(false);
   const [editedSources, setEditedSources] = useState<SourceGrade[]>([]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * Resize an image to fit within MAX_IMAGE_DIMENSION while preserving aspect ratio
+   */
+  const resizeImage = (blob: Blob, maxDimension: number): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        
+        let { width, height } = img;
+        
+        // Calculate new dimensions
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+        
+        // Create canvas and draw resized image
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not get canvas context'));
+          return;
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        canvas.toBlob(
+          (resizedBlob) => {
+            if (resizedBlob) {
+              resolve(resizedBlob);
+            } else {
+              reject(new Error('Failed to create resized blob'));
+            }
+          },
+          'image/jpeg',
+          0.85
+        );
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load image for resizing'));
+      };
+      
+      img.src = url;
+    });
+  };
+
+  /**
+   * Convert HEIC/HEIF to JPEG with resizing
+   */
+  const convertHeicToJpeg = async (heicFile: File): Promise<File> => {
+    try {
+      // heic2any returns Blob or Blob[]
+      const convertedBlob = await heic2any({
+        blob: heicFile,
+        toType: 'image/jpeg',
+        quality: 0.85,
+      });
+      
+      // Handle both single blob and array
+      const blob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+      
+      // Resize if needed
+      const resizedBlob = await resizeImage(blob, MAX_IMAGE_DIMENSION);
+      
+      // Create new file with .jpg extension
+      const newFileName = heicFile.name.replace(/\.(heic|heif)$/i, '.jpg');
+      return new File([resizedBlob], newFileName, { type: 'image/jpeg' });
+    } catch (error) {
+      console.error('HEIC conversion error:', error);
+      throw new Error('HEIC conversion failed');
+    }
+  };
+
+  const isHeicFile = (file: File): boolean => {
+    const heicTypes = ['image/heic', 'image/heif'];
+    const heicExtensions = ['.heic', '.heif'];
+    
+    return (
+      heicTypes.includes(file.type.toLowerCase()) ||
+      heicExtensions.some((ext) => file.name.toLowerCase().endsWith(ext))
+    );
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    const validTypes = ['image/jpeg', 'image/png', 'image/jpg'];
-    if (!validTypes.includes(selectedFile.type)) {
+    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'image/heic', 'image/heif'];
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'];
+    
+    const hasValidType = validTypes.includes(selectedFile.type.toLowerCase());
+    const hasValidExtension = validExtensions.some((ext) => 
+      selectedFile.name.toLowerCase().endsWith(ext)
+    );
+    
+    if (!hasValidType && !hasValidExtension) {
       toast({
         title: 'Invalid file type',
-        description: 'Please upload a JPG or PNG image.',
+        description: 'Please upload a JPG, PNG, WebP, or HEIC image.',
         variant: 'destructive',
       });
       return;
     }
 
-    if (selectedFile.size > 10 * 1024 * 1024) {
+    if (selectedFile.size > 20 * 1024 * 1024) {
       toast({
         title: 'File too large',
-        description: 'Please upload an image smaller than 10MB.',
+        description: 'Please upload an image smaller than 20MB.',
         variant: 'destructive',
       });
+      return;
+    }
+
+    // Check if HEIC/HEIF and convert
+    if (isHeicFile(selectedFile)) {
+      setConvertingHeic(true);
+      try {
+        const convertedFile = await convertHeicToJpeg(selectedFile);
+        setFile(convertedFile);
+        setOcrText('');
+        setManualText('');
+        setResult(null);
+        toast({ title: 'HEIC converted successfully!' });
+      } catch (error) {
+        console.error('HEIC conversion failed:', error);
+        toast({
+          title: "Couldn't read this HEIC image",
+          description: 'Please upload JPG/PNG or use Paste Text Manually.',
+          variant: 'destructive',
+        });
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } finally {
+        setConvertingHeic(false);
+      }
       return;
     }
 
@@ -335,11 +469,11 @@ export default function OrganizerGrader() {
         {/* File Upload Section */}
         {!manualText && (
           <div className="space-y-2">
-            <Label>Upload Organizer Image (JPG/PNG)</Label>
+            <Label>Upload Organizer Image (JPG/PNG/WebP/HEIC)</Label>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".jpg,.jpeg,.png"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -348,9 +482,19 @@ export default function OrganizerGrader() {
                 variant="outline"
                 className="w-full h-24 border-dashed"
                 onClick={() => fileInputRef.current?.click()}
+                disabled={convertingHeic}
               >
-                <Upload className="w-5 h-5 mr-2" />
-                Click to upload image
+                {convertingHeic ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Converting HEIC...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 mr-2" />
+                    Click to upload image (incl. HEIC)
+                  </>
+                )}
               </Button>
             ) : (
               <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
