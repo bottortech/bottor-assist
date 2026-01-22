@@ -171,18 +171,24 @@ export default function OrganizerGrader() {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp', 'image/heic', 'image/heif'];
-    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'];
+    const validTypes = [
+      'image/jpeg', 'image/png', 'image/jpg', 'image/webp',
+      'image/heic', 'image/heif',
+      'application/pdf'
+    ];
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.pdf'];
     
-    const hasValidType = validTypes.includes(selectedFile.type.toLowerCase());
-    const hasValidExtension = validExtensions.some((ext) => 
-      selectedFile.name.toLowerCase().endsWith(ext)
-    );
+    const fileType = selectedFile.type.toLowerCase();
+    const fileName = selectedFile.name.toLowerCase();
+    
+    // HEIC/HEIF may have empty or incorrect MIME type, so check extension too
+    const hasValidType = validTypes.includes(fileType);
+    const hasValidExtension = validExtensions.some((ext) => fileName.endsWith(ext));
     
     if (!hasValidType && !hasValidExtension) {
       toast({
-        title: 'Invalid file type',
-        description: 'Please upload a JPG, PNG, WebP, or HEIC image.',
+        title: 'Unsupported file type',
+        description: 'Upload PDF or image (JPG, PNG, HEIC).',
         variant: 'destructive',
       });
       return;
@@ -469,11 +475,11 @@ export default function OrganizerGrader() {
         {/* File Upload Section */}
         {!manualText && (
           <div className="space-y-2">
-            <Label>Upload Organizer Image (JPG/PNG/WebP/HEIC)</Label>
+            <Label>Upload Organizer (PDF or Image)</Label>
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -492,7 +498,7 @@ export default function OrganizerGrader() {
                 ) : (
                   <>
                     <Upload className="w-5 h-5 mr-2" />
-                    Click to upload image (incl. HEIC)
+                    Click to upload (PDF, JPG, PNG, HEIC)
                   </>
                 )}
               </Button>
