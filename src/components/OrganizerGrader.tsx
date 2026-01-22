@@ -302,68 +302,124 @@ export default function OrganizerGrader() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* File Upload */}
-        <div className="space-y-2">
-          <Label>Upload Organizer Image (JPG/PNG)</Label>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".jpg,.jpeg,.png"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-          {!file ? (
-            <Button
-              variant="outline"
-              className="w-full h-24 border-dashed"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="w-5 h-5 mr-2" />
-              Click to upload image
-            </Button>
-          ) : (
-            <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
-              <FileText className="w-5 h-5 text-primary" />
-              <span className="flex-1 truncate text-sm">{file.name}</span>
-              <Button variant="ghost" size="sm" onClick={removeFile}>
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-          )}
+        {/* Input Mode Toggle */}
+        <div className="flex gap-2 p-1 bg-muted rounded-lg">
+          <Button
+            variant={!manualText && !ocrText ? 'default' : file ? 'default' : 'ghost'}
+            size="sm"
+            className="flex-1"
+            onClick={() => {
+              if (manualText) {
+                setManualText('');
+              }
+            }}
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Upload Image
+          </Button>
+          <Button
+            variant={manualText ? 'default' : 'ghost'}
+            size="sm"
+            className="flex-1"
+            onClick={() => {
+              if (file) {
+                removeFile();
+              }
+            }}
+          >
+            <FileText className="w-4 h-4 mr-2" />
+            Paste Text Manually
+          </Button>
         </div>
 
-        {/* Extract Text Button */}
-        {file && !ocrText && (
-          <Button onClick={extractText} disabled={extractingText} className="w-full">
-            {extractingText ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        {/* File Upload Section */}
+        {!manualText && (
+          <div className="space-y-2">
+            <Label>Upload Organizer Image (JPG/PNG)</Label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            {!file ? (
+              <Button
+                variant="outline"
+                className="w-full h-24 border-dashed"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="w-5 h-5 mr-2" />
+                Click to upload image
+              </Button>
             ) : (
-              <Sparkles className="w-4 h-4 mr-2" />
+              <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
+                <FileText className="w-5 h-5 text-primary" />
+                <span className="flex-1 truncate text-sm">{file.name}</span>
+                <Button variant="ghost" size="sm" onClick={removeFile}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
             )}
-            Extract Text (OCR)
-          </Button>
+
+            {/* Extract Text Button */}
+            {file && !ocrText && (
+              <Button onClick={extractText} disabled={extractingText} className="w-full">
+                {extractingText ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4 mr-2" />
+                )}
+                Extract Text (OCR)
+              </Button>
+            )}
+
+            {/* OCR Result */}
+            {ocrText && (
+              <div className="space-y-2">
+                <Label>Extracted Text (editable)</Label>
+                <Textarea
+                  value={ocrText}
+                  onChange={(e) => setOcrText(e.target.value)}
+                  rows={6}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+
+            {/* Fallback hint */}
+            {file && !ocrText && !extractingText && (
+              <p className="text-xs text-muted-foreground text-center">
+                OCR not working? Use "Paste Text Manually" to type what the student wrote.
+              </p>
+            )}
+          </div>
         )}
 
-        {/* OCR Result or Manual Text */}
-        {ocrText ? (
+        {/* Manual Text Entry Section */}
+        {(manualText || (!file && !ocrText)) && !file && (
           <div className="space-y-2">
-            <Label>Extracted Text (editable)</Label>
-            <Textarea
-              value={ocrText}
-              onChange={(e) => setOcrText(e.target.value)}
-              rows={6}
-              className="font-mono text-sm"
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label>Or Paste Text Manually</Label>
+            <Label>Paste Text Manually</Label>
             <Textarea
               value={manualText}
               onChange={(e) => setManualText(e.target.value)}
-              placeholder="Paste the student's organizer text here..."
-              rows={6}
+              placeholder="Type or paste what the student wrote on their organizer...
+
+Example format:
+Source 1:
+- Title: [title]
+- Author: [author]
+- Central Idea: [idea]
+- Evidence: [quote or detail]
+- Analysis: [response to prompt]
+
+Source 2:
+..."
+              rows={8}
             />
+            <p className="text-xs text-muted-foreground">
+              Copy-type exactly what the student wrote. Mark unclear handwriting as [illegible].
+            </p>
           </div>
         )}
 
