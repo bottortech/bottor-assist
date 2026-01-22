@@ -27,7 +27,7 @@
  * =============================================================================
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import heic2any from 'heic2any';
 import {
   Select,
@@ -54,6 +55,7 @@ import {
   Upload,
   FileText,
   X,
+  FileSearch,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -155,6 +157,10 @@ export default function GradePapers() {
   const [combinedText, setCombinedText] = useState<string>('');
   const [convertingHeic, setConvertingHeic] = useState(false);
 
+  // Source detection state
+  const [autoDetectSources, setAutoDetectSources] = useState(true);
+  const [detectedSourceCount, setDetectedSourceCount] = useState<number>(0);
+
   // Results state (editable)
   const [result, setResult] = useState<GradingResult | null>(null);
   const [grading, setGrading] = useState(false);
@@ -168,6 +174,50 @@ export default function GradePapers() {
   const getFileId = (f: File) => `${f.name}_${f.lastModified}`;
 
   /**
+   * Detect distinct source sections in text
+   * Looks for patterns like "Source 1", "Source A", "Source:", "[Source 1]", etc.
+   */
+  const detectSourcesInText = (text: string): number => {
+    if (!text.trim()) return 0;
+
+    // Common patterns for source sections
+    const sourcePatterns = [
+      /\bSource\s*[1-9]\b/gi,                    // Source 1, Source 2
+      /\bSource\s*[A-E]\b/gi,                    // Source A, Source B
+      /\[Source\s*[1-9A-E]\]/gi,                 // [Source 1], [Source A]
+      /\bDocument\s*[1-9A-E]\b/gi,               // Document 1, Document A
+      /\bText\s*[1-9]\b/gi,                      // Text 1, Text 2
+      /\bPassage\s*[1-9]\b/gi,                   // Passage 1, Passage 2
+      /\bExcerpt\s*[1-9]\b/gi,                   // Excerpt 1, Excerpt 2
+      /---\s*Source\s*[1-9]/gi,                  // --- Source 1
+    ];
+
+    const foundSources = new Set<string>();
+
+    for (const pattern of sourcePatterns) {
+      const matches = text.match(pattern);
+      if (matches) {
+        matches.forEach(match => {
+          // Normalize to detect unique sources
+          const normalized = match.toLowerCase().replace(/[\[\]\s-]/g, '');
+          foundSources.add(normalized);
+        });
+      }
+    }
+
+    return foundSources.size;
+  };
+
+  /**
+   * Re-detect sources when combinedText changes (e.g., manual edits)
+   */
+  useEffect(() => {
+    if (autoDetectSources && combinedText) {
+      setDetectedSourceCount(detectSourcesInText(combinedText));
+    }
+  }, [combinedText, autoDetectSources]);
+
+  /**
    * Update combined text from all uploaded files
    */
   const updateCombinedText = (files: UploadedFile[]) => {
@@ -178,7 +228,13 @@ export default function GradePapers() {
         : uf.extractedText || '[Extracting...]';
       return `${header}\n${body}`;
     });
-    setCombinedText(parts.join('\n\n'));
+    const combined = parts.join('\n\n');
+    setCombinedText(combined);
+    
+    // Auto-detect sources when text changes
+    if (autoDetectSources) {
+      setDetectedSourceCount(detectSourcesInText(combined));
+    }
   };
 
   /**
@@ -904,6 +960,43 @@ export default function GradePapers() {
               <p className="text-xs text-muted-foreground">
                 You can edit this text before grading. If extraction failed for any file, update its section manually.
               </p>
+            </div>
+            {/* Source Detection */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border">
+              <Checkbox
+                id="auto-detect-sources"
+                checked={autoDetectSources}
+                onCheckedChange={(checked) => {
+                  setAutoDetectSources(checked === true);
+                  if (checked && combinedText) {
+                    setDetectedSourceCount(detectSourcesInText(combinedText));
+                  } else {
+                    setDetectedSourceCount(0);
+                  }
+                }}
+              />
+              <div className="flex-1 space-y-1">
+                <label
+                  htmlFor="auto-detect-sources"
+                  className="text-sm font-medium leading-none cursor-pointer flex items-center gap-2"
+                >
+                  <FileSearch className="w-4 h-4 text-primary" />
+                  Auto-detect sources based on content (recommended)
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Automatically identifies Source 1, Source 2, etc. in the extracted text
+                </p>
+                {autoDetectSources && detectedSourceCount > 0 && (
+                  <p className="text-xs font-medium text-primary">
+                    ✓ {detectedSourceCount} source{detectedSourceCount !== 1 ? 's' : ''} detected
+                  </p>
+                )}
+                {autoDetectSources && combinedText.trim() && detectedSourceCount === 0 && !isExtracting && (
+                  <p className="text-xs text-muted-foreground/80">
+                    No distinct source labels found — content will be graded as a single submission
+                  </p>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
