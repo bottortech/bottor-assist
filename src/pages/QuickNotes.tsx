@@ -48,7 +48,9 @@ import {
   Save,
   Check,
   Loader2,
+  FileText,
 } from 'lucide-react';
+import OrganizerGrader from '@/components/OrganizerGrader';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -126,6 +128,7 @@ export default function QuickNotes() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [showOrganizerGrader, setShowOrganizerGrader] = useState(false);
 
   const updateForm = (field: keyof QuickNotesForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -372,135 +375,164 @@ export default function QuickNotes() {
 
       {/* Main Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Form Section */}
-        <Card className="border-0 shadow-md bg-card-gradient">
-          <CardHeader>
-            <CardTitle className="text-lg">Lesson Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="subject">Subject</Label>
-                <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
-                  <SelectTrigger id="subject">
-                    <SelectValue placeholder="Select subject" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SUBJECTS.map((subject) => (
-                      <SelectItem key={subject} value={subject}>
-                        {subject}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        {/* Quick Action: Grade Organizer */}
+        {!showOrganizerGrader ? (
+          <Button
+            variant="outline"
+            className="w-full border-primary/50 text-primary hover:bg-primary/10"
+            onClick={() => setShowOrganizerGrader(true)}
+          >
+            <FileText className="w-5 h-5 mr-2" />
+            Grade Graphic Organizer (15pt)
+          </Button>
+        ) : (
+          <div className="space-y-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowOrganizerGrader(false)}
+              className="text-muted-foreground"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Quick Notes
+            </Button>
+            <OrganizerGrader />
+          </div>
+        )}
+
+        {/* Form Section - hide when grading organizer */}
+        {!showOrganizerGrader && (
+          <Card className="border-0 shadow-md bg-card-gradient">
+            <CardHeader>
+              <CardTitle className="text-lg">Lesson Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="subject">Subject</Label>
+                  <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
+                    <SelectTrigger id="subject">
+                      <SelectValue placeholder="Select subject" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUBJECTS.map((subject) => (
+                        <SelectItem key={subject} value={subject}>
+                          {subject}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="grade">Grade</Label>
+                  <Select value={form.grade} onValueChange={(v) => updateForm('grade', v)}>
+                    <SelectTrigger id="grade">
+                      <SelectValue placeholder="Select grade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GRADES.map((grade) => (
+                        <SelectItem key={grade} value={grade}>
+                          {grade}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="grade">Grade</Label>
-                <Select value={form.grade} onValueChange={(v) => updateForm('grade', v)}>
-                  <SelectTrigger id="grade">
-                    <SelectValue placeholder="Select grade" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADES.map((grade) => (
-                      <SelectItem key={grade} value={grade}>
-                        {grade}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="topic">Lesson Topic</Label>
+                <Input
+                  id="topic"
+                  placeholder="e.g., Introduction to Fractions"
+                  value={form.topic}
+                  onChange={(e) => updateForm('topic', e.target.value)}
+                />
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="topic">Lesson Topic</Label>
-              <Input
-                id="topic"
-                placeholder="e.g., Introduction to Fractions"
-                value={form.topic}
-                onChange={(e) => updateForm('topic', e.target.value)}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatWeDid">What we did today</Label>
+                <Textarea
+                  id="whatWeDid"
+                  placeholder="Describe the main activities and learning objectives covered..."
+                  value={form.whatWeDid}
+                  onChange={(e) => updateForm('whatWeDid', e.target.value)}
+                  rows={3}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="whatWeDid">What we did today</Label>
-              <Textarea
-                id="whatWeDid"
-                placeholder="Describe the main activities and learning objectives covered..."
-                value={form.whatWeDid}
-                onChange={(e) => updateForm('whatWeDid', e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="struggles">What students struggled with</Label>
+                <Textarea
+                  id="struggles"
+                  placeholder="Note any challenging concepts or common difficulties..."
+                  value={form.struggles}
+                  onChange={(e) => updateForm('struggles', e.target.value)}
+                  rows={3}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="struggles">What students struggled with</Label>
-              <Textarea
-                id="struggles"
-                placeholder="Note any challenging concepts or common difficulties..."
-                value={form.struggles}
-                onChange={(e) => updateForm('struggles', e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="attentionNeeded">Names/groups needing attention</Label>
+                <Textarea
+                  id="attentionNeeded"
+                  placeholder="e.g., Sarah (needs extra help with multiplication), Table 3 group..."
+                  value={form.attentionNeeded}
+                  onChange={(e) => updateForm('attentionNeeded', e.target.value)}
+                  rows={2}
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="attentionNeeded">Names/groups needing attention</Label>
-              <Textarea
-                id="attentionNeeded"
-                placeholder="e.g., Sarah (needs extra help with multiplication), Table 3 group..."
-                value={form.attentionNeeded}
-                onChange={(e) => updateForm('attentionNeeded', e.target.value)}
-                rows={2}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="nextSteps">Homework/Assessment/Next steps</Label>
+                <Textarea
+                  id="nextSteps"
+                  placeholder="Upcoming assignments, assessments, or follow-up activities..."
+                  value={form.nextSteps}
+                  onChange={(e) => updateForm('nextSteps', e.target.value)}
+                  rows={2}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-            <div className="space-y-2">
-              <Label htmlFor="nextSteps">Homework/Assessment/Next steps</Label>
-              <Textarea
-                id="nextSteps"
-                placeholder="Upcoming assignments, assessments, or follow-up activities..."
-                value={form.nextSteps}
-                onChange={(e) => updateForm('nextSteps', e.target.value)}
-                rows={2}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Generate Actions */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <Button
-            onClick={handleGenerateSummary}
-            disabled={!hasNotes || loadingSummary}
-            className="flex-1"
-            size="lg"
-          >
-            {loadingSummary ? (
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-            ) : (
-              <Sparkles className="w-5 h-5 mr-2" />
-            )}
-            Generate Summary
-          </Button>
-          <Button
-            onClick={handleGenerateParentMessages}
-            disabled={!generated.summary || loadingMessages}
-            variant="secondary"
-            className="flex-1"
-            size="lg"
-          >
-            {loadingMessages ? (
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-            ) : (
-              <MessageSquare className="w-5 h-5 mr-2" />
-            )}
-            Generate Parent Message
-          </Button>
-        </div>
+        {/* Generate Actions - hide when grading organizer */}
+        {!showOrganizerGrader && (
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button
+              onClick={handleGenerateSummary}
+              disabled={!hasNotes || loadingSummary}
+              className="flex-1"
+              size="lg"
+            >
+              {loadingSummary ? (
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+              ) : (
+                <Sparkles className="w-5 h-5 mr-2" />
+              )}
+              Generate Summary
+            </Button>
+            <Button
+              onClick={handleGenerateParentMessages}
+              disabled={!generated.summary || loadingMessages}
+              variant="secondary"
+              className="flex-1"
+              size="lg"
+            >
+              {loadingMessages ? (
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+              ) : (
+                <MessageSquare className="w-5 h-5 mr-2" />
+              )}
+              Generate Parent Message
+            </Button>
+          </div>
+        )}
 
         {/* Generated Summary */}
-        {generated.summary && (
+        {!showOrganizerGrader && generated.summary && (
           <Card className="border-0 shadow-md bg-card-gradient animate-fade-in">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-lg">AI Summary</CardTitle>
@@ -523,7 +555,7 @@ export default function QuickNotes() {
         )}
 
         {/* Generated Parent Messages */}
-        {generated.parentMessageWarm && (
+        {!showOrganizerGrader && generated.parentMessageWarm && (
           <Card className="border-0 shadow-md bg-card-gradient animate-fade-in">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-lg">Parent Message (Warm & Supportive)</CardTitle>
@@ -545,7 +577,7 @@ export default function QuickNotes() {
           </Card>
         )}
 
-        {generated.parentMessageSms && (
+        {!showOrganizerGrader && generated.parentMessageSms && (
           <Card className="border-0 shadow-md bg-card-gradient animate-fade-in">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-lg">Parent Message (SMS-Ready)</CardTitle>
@@ -568,7 +600,7 @@ export default function QuickNotes() {
         )}
 
         {/* Export Actions */}
-        {(generated.summary || hasNotes) && (
+        {!showOrganizerGrader && (generated.summary || hasNotes) && (
           <div className="flex flex-wrap gap-3 justify-center pb-8">
             <Button
               variant="outline"
