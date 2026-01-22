@@ -1,28 +1,21 @@
 /**
  * =============================================================================
- * GRADE PAPER EDGE FUNCTION
+ * GRADE PAPER EDGE FUNCTION - BOTTOR ASSIST
  * =============================================================================
  * 
  * NEXT.JS MIGRATION: app/api/grade-paper/route.ts
  * 
- * PURPOSE: Generate AI-powered grade suggestions and feedback for student work.
+ * PURPOSE: Grade 8th grade ELA/Social Studies "Graphic Essay Organizer" assignments.
  * 
- * INPUT:
- * - student_work: Extracted text from student submission
- * - grade_level: Grade level (e.g., "Grade 5")
- * - subject: Subject area (e.g., "Mathematics")
- * - assignment_type: Type (multiple_choice, constructed_response, essay)
- * - rubric: Grading rubric text
- * - answer_key: Optional answer key for reference
+ * RUBRIC: 15 points total (5 points per source × 3 sources)
+ * Each source: Title(1) + Author(1) + Central Idea(1) + Evidence(1) + Analysis(1)
  * 
- * OUTPUT:
- * - score_suggestion: Suggested score aligned to rubric
- * - strengths: What the student did well
- * - areas_for_improvement: Where the student can improve
- * - feedback_paragraph: Draft feedback in supportive teacher tone
+ * SCORING:
+ * - Full credit (1): present, relevant, and accurate
+ * - Partial (0.5): present but vague, partly incorrect, or not clearly tied to prompt
+ * - No credit (0): missing, off-topic, copied prompt only, or illegible
  * 
- * ANTI-HALLUCINATION: All outputs are based strictly on provided inputs.
- * If information is missing, output "Not provided."
+ * ANTI-HALLUCINATION: Grade only what is present. Never invent missing info.
  * =============================================================================
  */
 
@@ -73,9 +66,9 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`[grade-paper] Grading ${assignment_type} for ${grade_level} ${subject}`);
+    console.log(`[grade-paper] Grading Graphic Essay Organizer for ${grade_level} ${subject}`);
 
-    // Build the grading prompt
+    // Build the grading prompt with specific rubric
     const prompt = buildGradingPrompt(body);
 
     const response = await fetch(LOVABLE_AI_URL, {
@@ -89,25 +82,58 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You are an experienced ${subject || 'education'} teacher grading student work for ${grade_level || 'a student'}.
+            content: `You are Bottor Assist, an 8th grade ELA/Social Studies grading assistant.
 
-Your task is to evaluate the student's submission against the provided rubric and generate constructive feedback.
+You are grading a "Graphic Essay Organizer" that is worth 15 points total.
 
-CRITICAL RULES:
-1. Base your assessment ONLY on the student work provided - never assume or invent content
-2. Apply the rubric criteria exactly as written
-3. If an answer key is provided, use it as reference for correctness
-4. If information is missing or unclear, state "Not provided" or "Unable to assess"
-5. Be fair, supportive, and age-appropriate in your feedback
-6. Focus on growth mindset - highlight what was done well before areas for improvement
+CRITICAL GRADING RULES:
+1. Grade ONLY what is present on the organizer - do NOT invent missing information
+2. If handwriting is unclear or illegible, explicitly state "illegible/unclear" and do NOT assume what it says
+3. Give point-by-point scoring using the rubric exactly
+4. Provide brief, teacher-quality feedback: what's correct, what's missing, and exactly how to fix it
+5. Keep educators fully in control: phrase all suggestions as recommendations
+
+RUBRIC (15 points total):
+Each source is worth 5 points, with these categories:
+1) Source Title (1 pt) - The title of the source material
+2) Source Author (1 pt) - The author's name
+3) Central idea of the source (1 pt) - The main idea or thesis
+4) Evidence (cited) that supports the answer (1 pt) - A specific quote or detail with citation
+5) Analysis question/response for that source (1 pt) - Response to the analysis prompt
+
+NOTE: If the organizer's prompt replaces "analysis question" with a specific analysis item
+(e.g., "According to this source, what was the consequence of fascism?"),
+treat that required analysis item as the 1-pt analysis category.
+
+SCORING RULES:
+- Full credit (1): present, relevant, and accurate
+- Partial (0.5): present but vague, partly incorrect, or not clearly tied to the prompt
+- No credit (0): missing, off-topic, copied prompt only, or illegible
 
 OUTPUT FORMAT:
 You MUST respond with valid JSON in exactly this format:
 {
-  "score_suggestion": "The suggested score based on rubric (e.g., '85/100', 'B+', '4/5 points', etc.)",
-  "strengths": "2-4 specific things the student did well, with examples from their work",
-  "areas_for_improvement": "2-3 specific areas where the student can improve, with actionable suggestions",
-  "feedback_paragraph": "A 3-5 sentence feedback paragraph written directly to the student in a warm, supportive teacher tone. Start with what they did well, then address areas for growth, end with encouragement."
+  "total_score": <number out of 15>,
+  "per_source": [
+    {
+      "source_number": 1,
+      "source_score": <number out of 5>,
+      "title": { "score": <0|0.5|1>, "notes": "<what was written or 'missing'>" },
+      "author": { "score": <0|0.5|1>, "notes": "<what was written or 'missing'>" },
+      "central_idea": { "score": <0|0.5|1>, "notes": "<what was written or 'missing/vague'>" },
+      "evidence": { "score": <0|0.5|1>, "notes": "<quote present? cited? specific?>" },
+      "analysis": { "score": <0|0.5|1>, "notes": "<response quality or 'missing'>" }
+    },
+    // ... repeat for sources 2 and 3 if present
+  ],
+  "evidence_quality": "<overall notes on citation quality, specificity of quotes/details>",
+  "actionable_feedback": [
+    "<bullet 1: specific actionable item>",
+    "<bullet 2: specific actionable item>",
+    // 3-6 bullets total
+  ],
+  "teacher_note": "<note about any illegible handwriting, missing fields, or grading considerations>",
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>"
 }`,
           },
           {
@@ -115,8 +141,8 @@ You MUST respond with valid JSON in exactly this format:
             content: prompt,
           },
         ],
-        max_tokens: 1500,
-        temperature: 0.7,
+        max_tokens: 2000,
+        temperature: 0.5,
       }),
     });
 
@@ -146,25 +172,55 @@ You MUST respond with valid JSON in exactly this format:
     // Parse the JSON response
     let gradingResult;
     try {
-      // Try to extract JSON from the response
+      // Extract JSON from the response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         gradingResult = JSON.parse(jsonMatch[0]);
       } else {
         throw new Error("No JSON found in response");
       }
+
+      // Validate required fields exist
+      if (typeof gradingResult.total_score !== 'number') {
+        gradingResult.total_score = 0;
+      }
+      if (!Array.isArray(gradingResult.per_source)) {
+        gradingResult.per_source = [];
+      }
+      if (!Array.isArray(gradingResult.actionable_feedback)) {
+        gradingResult.actionable_feedback = ["Please review the submission manually."];
+      }
+      if (!gradingResult.teacher_note) {
+        gradingResult.teacher_note = "AI grading complete. Please verify scores.";
+      }
+      if (!gradingResult.feedback_paragraph) {
+        gradingResult.feedback_paragraph = "Please review this work and provide personalized feedback.";
+      }
+
+      // Map to legacy format for UI compatibility
+      gradingResult.score_suggestion = `${gradingResult.total_score}/15`;
+      gradingResult.strengths = gradingResult.per_source
+        .filter((s: any) => s.source_score >= 4)
+        .map((s: any) => `Source ${s.source_number}: Strong work (${s.source_score}/5)`)
+        .join("; ") || "See per-source breakdown";
+      gradingResult.areas_for_improvement = gradingResult.actionable_feedback.join("\n• ");
+
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
-      // Return a structured fallback
       gradingResult = {
+        total_score: 0,
         score_suggestion: "Unable to determine - please review manually",
-        strengths: content.includes("strength") ? extractSection(content, "strength") : "Not provided",
-        areas_for_improvement: content.includes("improve") ? extractSection(content, "improve") : "Not provided",
-        feedback_paragraph: content.slice(0, 500) || "Not provided",
+        per_source: [],
+        evidence_quality: "Unable to assess",
+        actionable_feedback: ["Manual review required - AI parsing failed"],
+        teacher_note: "AI response could not be parsed. Please grade manually.",
+        feedback_paragraph: "Please review this work and provide personalized feedback.",
+        strengths: "Not provided",
+        areas_for_improvement: "Not provided",
       };
     }
 
-    console.log("[grade-paper] Grading complete");
+    console.log("[grade-paper] Grading complete, total score:", gradingResult.total_score);
 
     return new Response(
       JSON.stringify(gradingResult),
@@ -180,31 +236,31 @@ You MUST respond with valid JSON in exactly this format:
 });
 
 /**
- * Build the grading prompt with all context
+ * Build the grading prompt with Graphic Essay Organizer context
  */
 function buildGradingPrompt(request: GradeRequest): string {
   const { student_work, grade_level, subject, assignment_type, rubric, answer_key } = request;
 
-  const typeLabels: Record<string, string> = {
-    multiple_choice: "Multiple Choice",
-    constructed_response: "Constructed Response",
-    essay: "Essay",
-  };
-
   const sections = [
-    `## Assignment Context`,
-    `- Grade Level: ${grade_level || "Not specified"}`,
-    `- Subject: ${subject || "Not specified"}`,
-    `- Assignment Type: ${typeLabels[assignment_type] || assignment_type || "Not specified"}`,
+    `## Assignment: Graphic Essay Organizer`,
+    `- Grade Level: ${grade_level || "8th Grade"}`,
+    `- Subject: ${subject || "ELA/Social Studies"}`,
+    `- Assignment Type: ${assignment_type || "Graphic Essay Organizer"}`,
+    `- Total Points: 15 (5 points per source × 3 sources)`,
     "",
     `## Grading Rubric`,
-    rubric,
+    rubric || `Each source (5 points):
+- Source Title (1 pt)
+- Source Author (1 pt)  
+- Central idea of the source (1 pt)
+- Evidence with citation (1 pt)
+- Analysis question response (1 pt)`,
     "",
   ];
 
   if (answer_key?.trim()) {
     sections.push(
-      `## Answer Key / Correct Responses`,
+      `## Answer Key / Expected Responses`,
       answer_key,
       ""
     );
@@ -212,31 +268,13 @@ function buildGradingPrompt(request: GradeRequest): string {
 
   sections.push(
     `## Student Work to Grade`,
+    `(Grade ONLY what is visible below. Do not assume or invent content.)`,
+    "",
     student_work,
     "",
-    `Please evaluate this student work against the rubric and provide your assessment in JSON format.`
+    `Please evaluate this Graphic Essay Organizer against the rubric and provide your assessment in the specified JSON format.`,
+    `Remember: If anything is illegible, say so. If anything is missing, score it 0.`
   );
 
   return sections.join("\n");
-}
-
-/**
- * Helper to extract a section from unstructured text
- */
-function extractSection(text: string, keyword: string): string {
-  const lines = text.split("\n");
-  const relevantLines: string[] = [];
-  let capturing = false;
-
-  for (const line of lines) {
-    if (line.toLowerCase().includes(keyword)) {
-      capturing = true;
-    }
-    if (capturing) {
-      relevantLines.push(line);
-      if (relevantLines.length >= 5) break;
-    }
-  }
-
-  return relevantLines.join(" ").slice(0, 300) || "Not provided";
 }
