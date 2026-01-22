@@ -35,6 +35,7 @@ interface GradeRequest {
   assignment_type: string;
   rubric: string;
   answer_key?: string;
+  prompt_text?: string; // Teacher's specific analysis prompt for this assignment
 }
 
 serve(async (req) => {
@@ -45,7 +46,7 @@ serve(async (req) => {
 
   try {
     const body: GradeRequest = await req.json();
-    const { student_work, grade_level, subject, assignment_type, rubric, answer_key } = body;
+    const { student_work, grade_level, subject, assignment_type, rubric, answer_key, prompt_text } = body;
 
     if (!student_work?.trim()) {
       return new Response(
@@ -239,15 +240,29 @@ You MUST respond with valid JSON in exactly this format:
  * Build the grading prompt with Graphic Essay Organizer context
  */
 function buildGradingPrompt(request: GradeRequest): string {
-  const { student_work, grade_level, subject, assignment_type, rubric, answer_key } = request;
+  const { student_work, grade_level, subject, assignment_type, rubric, answer_key, prompt_text } = request;
 
   const sections = [
     `## Assignment: Graphic Essay Organizer`,
-    `- Grade Level: ${grade_level || "8th Grade"}`,
+    `- Grade Level: ${grade_level || "8"}`,
     `- Subject: ${subject || "ELA/Social Studies"}`,
-    `- Assignment Type: ${assignment_type || "Graphic Essay Organizer"}`,
+    `- Assignment Type: ${assignment_type || "Graphic Essay Organizer (3 sources, 15 points)"}`,
     `- Total Points: 15 (5 points per source × 3 sources)`,
     "",
+  ];
+
+  // Include teacher's specific analysis prompt if provided
+  if (prompt_text?.trim()) {
+    sections.push(
+      `## Teacher Prompt (Analysis Question for this assignment)`,
+      prompt_text,
+      ``,
+      `NOTE: For the "Analysis" category (1 pt per source), evaluate whether the student responded to this specific prompt.`,
+      ""
+    );
+  }
+
+  sections.push(
     `## Grading Rubric`,
     rubric || `Each source (5 points):
 - Source Title (1 pt)
@@ -255,8 +270,8 @@ function buildGradingPrompt(request: GradeRequest): string {
 - Central idea of the source (1 pt)
 - Evidence with citation (1 pt)
 - Analysis question response (1 pt)`,
-    "",
-  ];
+    ""
+  );
 
   if (answer_key?.trim()) {
     sections.push(
@@ -267,13 +282,20 @@ function buildGradingPrompt(request: GradeRequest): string {
   }
 
   sections.push(
-    `## Student Work to Grade`,
-    `(Grade ONLY what is visible below. Do not assume or invent content.)`,
-    "",
+    `## Student Work (OCR-extracted text from organizer)`,
+    ``,
+    `INSTRUCTIONS:`,
+    `- Grade ONLY what is visible in the extracted text below`,
+    `- If you can detect headings, boxes, or section labels, use them to identify which source is which`,
+    `- Preserve the structure in your understanding (Source 1 vs Source 2 vs Source 3)`,
+    `- Do NOT assume or invent content that is not present`,
+    `- If text is illegible or unclear, state "illegible/unclear" and score 0`,
+    ``,
+    `--- BEGIN STUDENT WORK ---`,
     student_work,
-    "",
-    `Please evaluate this Graphic Essay Organizer against the rubric and provide your assessment in the specified JSON format.`,
-    `Remember: If anything is illegible, say so. If anything is missing, score it 0.`
+    `--- END STUDENT WORK ---`,
+    ``,
+    `Evaluate this Graphic Essay Organizer against the rubric. Return JSON only.`
   );
 
   return sections.join("\n");
