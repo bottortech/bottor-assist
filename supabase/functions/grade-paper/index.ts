@@ -5,17 +5,21 @@
  * 
  * NEXT.JS MIGRATION: app/api/grade-paper/route.ts
  * 
- * PURPOSE: Grade 8th grade ELA/Social Studies "Graphic Essay Organizer" assignments.
+ * PURPOSE: Grade student assignments using RUBRIC-FIRST methodology.
  * 
- * RUBRIC: 15 points total (5 points per source × 3 sources)
- * Each source: Title(1) + Author(1) + Central Idea(1) + Evidence(1) + Analysis(1)
+ * RUBRIC-FIRST GRADING:
+ * - Uses teacher-provided rubric text OR rubric detected from documents
+ * - If no rubric detected, switches to "Feedback-only" mode (no scoring)
+ * - Never invents a grading system - grades strictly by provided criteria
  * 
- * SCORING:
- * - Full credit (1): present, relevant, and accurate
- * - Partial (0.5): present but vague, partly incorrect, or not clearly tied to prompt
- * - No credit (0): missing, off-topic, copied prompt only, or illegible
+ * GUARDRAILS:
+ * - Do not penalize for "Source 1 missing" unless rubric explicitly requires labeled sources
+ * - Grade by matching content to rubric requirements, not by assuming form labels
+ * - If rubric says "3 sources," check whether THREE sources appear regardless of numbering
  * 
- * ANTI-HALLUCINATION: Grade only what is present. Never invent missing info.
+ * OUTPUT:
+ * - Scoring mode: numeric score like "6.5/15" if rubric has point totals
+ * - Feedback-only mode: score = "N/A", qualitative feedback only
  * =============================================================================
  */
 
@@ -35,7 +39,9 @@ interface GradeRequest {
   assignment_type: string;
   rubric: string;
   answer_key?: string;
-  prompt_text?: string; // Teacher's specific analysis prompt for this assignment
+  prompt_text?: string;
+  assignment_doc_text?: string;  // Text from assignment/rubric documents
+  grading_mode: 'scoring' | 'feedback-only';
 }
 
 serve(async (req) => {
@@ -46,18 +52,21 @@ serve(async (req) => {
 
   try {
     const body: GradeRequest = await req.json();
-    const { student_work, grade_level, subject, assignment_type, rubric, answer_key, prompt_text } = body;
+    const { 
+      student_work, 
+      grade_level, 
+      subject, 
+      assignment_type, 
+      rubric, 
+      answer_key, 
+      prompt_text,
+      assignment_doc_text,
+      grading_mode = 'feedback-only'
+    } = body;
 
     if (!student_work?.trim()) {
       return new Response(
         JSON.stringify({ error: "No student work provided" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!rubric?.trim()) {
-      return new Response(
-        JSON.stringify({ error: "No rubric provided" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -67,10 +76,11 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`[grade-paper] Grading Graphic Essay Organizer for ${grade_level} ${subject}`);
+    console.log(`[grade-paper] Grading in ${grading_mode} mode for ${grade_level} ${subject}`);
 
-    // Build the grading prompt with specific rubric
+    // Build the grading prompt based on mode
     const prompt = buildGradingPrompt(body);
+    const systemPrompt = buildSystemPrompt(grading_mode, rubric);
 
     const response = await fetch(LOVABLE_AI_URL, {
       method: "POST",
@@ -83,59 +93,7 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You are Bottor Assist, an 8th grade ELA/Social Studies grading assistant.
-
-You are grading a "Graphic Essay Organizer" that is worth 15 points total.
-
-CRITICAL GRADING RULES:
-1. Grade ONLY what is present on the organizer - do NOT invent missing information
-2. If handwriting is unclear or illegible, explicitly state "illegible/unclear" and do NOT assume what it says
-3. Give point-by-point scoring using the rubric exactly
-4. Provide brief, teacher-quality feedback: what's correct, what's missing, and exactly how to fix it
-5. Keep educators fully in control: phrase all suggestions as recommendations
-
-RUBRIC (15 points total):
-Each source is worth 5 points, with these categories:
-1) Source Title (1 pt) - The title of the source material
-2) Source Author (1 pt) - The author's name
-3) Central idea of the source (1 pt) - The main idea or thesis
-4) Evidence (cited) that supports the answer (1 pt) - A specific quote or detail with citation
-5) Analysis question/response for that source (1 pt) - Response to the analysis prompt
-
-NOTE: If the organizer's prompt replaces "analysis question" with a specific analysis item
-(e.g., "According to this source, what was the consequence of fascism?"),
-treat that required analysis item as the 1-pt analysis category.
-
-SCORING RULES:
-- Full credit (1): present, relevant, and accurate
-- Partial (0.5): present but vague, partly incorrect, or not clearly tied to the prompt
-- No credit (0): missing, off-topic, copied prompt only, or illegible
-
-OUTPUT FORMAT:
-You MUST respond with valid JSON in exactly this format:
-{
-  "total_score": <number out of 15>,
-  "per_source": [
-    {
-      "source_number": 1,
-      "source_score": <number out of 5>,
-      "title": { "score": <0|0.5|1>, "notes": "<what was written or 'missing'>" },
-      "author": { "score": <0|0.5|1>, "notes": "<what was written or 'missing'>" },
-      "central_idea": { "score": <0|0.5|1>, "notes": "<what was written or 'missing/vague'>" },
-      "evidence": { "score": <0|0.5|1>, "notes": "<quote present? cited? specific?>" },
-      "analysis": { "score": <0|0.5|1>, "notes": "<response quality or 'missing'>" }
-    },
-    // ... repeat for sources 2 and 3 if present
-  ],
-  "evidence_quality": "<overall notes on citation quality, specificity of quotes/details>",
-  "actionable_feedback": [
-    "<bullet 1: specific actionable item>",
-    "<bullet 2: specific actionable item>",
-    // 3-6 bullets total
-  ],
-  "teacher_note": "<note about any illegible handwriting, missing fields, or grading considerations>",
-  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>"
-}`,
+            content: systemPrompt,
           },
           {
             role: "user",
@@ -173,7 +131,6 @@ You MUST respond with valid JSON in exactly this format:
     // Parse the JSON response
     let gradingResult;
     try {
-      // Extract JSON from the response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         gradingResult = JSON.parse(jsonMatch[0]);
@@ -181,47 +138,49 @@ You MUST respond with valid JSON in exactly this format:
         throw new Error("No JSON found in response");
       }
 
-      // Validate required fields exist
-      if (typeof gradingResult.total_score !== 'number') {
-        gradingResult.total_score = 0;
+      // Handle scoring vs feedback-only mode
+      if (grading_mode === 'feedback-only') {
+        gradingResult.score_suggestion = "N/A";
+        gradingResult.total_score = null;
+      } else {
+        // Map to legacy format for UI compatibility
+        if (typeof gradingResult.total_score === 'number' && gradingResult.max_score) {
+          gradingResult.score_suggestion = `${gradingResult.total_score}/${gradingResult.max_score}`;
+        } else if (typeof gradingResult.total_score === 'number') {
+          gradingResult.score_suggestion = `${gradingResult.total_score}`;
+        } else if (gradingResult.qualitative_rating) {
+          gradingResult.score_suggestion = gradingResult.qualitative_rating;
+        } else {
+          gradingResult.score_suggestion = "N/A";
+        }
       }
-      if (!Array.isArray(gradingResult.per_source)) {
-        gradingResult.per_source = [];
+
+      // Ensure required fields exist
+      if (!Array.isArray(gradingResult.strengths_list)) {
+        gradingResult.strengths_list = [];
       }
-      if (!Array.isArray(gradingResult.actionable_feedback)) {
-        gradingResult.actionable_feedback = ["Please review the submission manually."];
-      }
-      if (!gradingResult.teacher_note) {
-        gradingResult.teacher_note = "AI grading complete. Please verify scores.";
+      if (!Array.isArray(gradingResult.improvements_list)) {
+        gradingResult.improvements_list = [];
       }
       if (!gradingResult.feedback_paragraph) {
         gradingResult.feedback_paragraph = "Please review this work and provide personalized feedback.";
       }
 
-      // Map to legacy format for UI compatibility
-      gradingResult.score_suggestion = `${gradingResult.total_score}/15`;
-      gradingResult.strengths = gradingResult.per_source
-        .filter((s: any) => s.source_score >= 4)
-        .map((s: any) => `Source ${s.source_number}: Strong work (${s.source_score}/5)`)
-        .join("; ") || "See per-source breakdown";
-      gradingResult.areas_for_improvement = gradingResult.actionable_feedback.join("\n• ");
+      // Map to legacy format
+      gradingResult.strengths = gradingResult.strengths_list.join("\n• ") || "See detailed feedback";
+      gradingResult.areas_for_improvement = gradingResult.improvements_list.join("\n• ") || "See detailed feedback";
 
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
       gradingResult = {
-        total_score: 0,
-        score_suggestion: "Unable to determine - please review manually",
-        per_source: [],
-        evidence_quality: "Unable to assess",
-        actionable_feedback: ["Manual review required - AI parsing failed"],
-        teacher_note: "AI response could not be parsed. Please grade manually.",
+        score_suggestion: grading_mode === 'feedback-only' ? "N/A" : "Unable to determine - please review manually",
+        strengths: "Unable to parse AI response",
+        areas_for_improvement: "Manual review required - AI parsing failed",
         feedback_paragraph: "Please review this work and provide personalized feedback.",
-        strengths: "Not provided",
-        areas_for_improvement: "Not provided",
       };
     }
 
-    console.log("[grade-paper] Grading complete, total score:", gradingResult.total_score);
+    console.log("[grade-paper] Grading complete, mode:", grading_mode, "score:", gradingResult.score_suggestion);
 
     return new Response(
       JSON.stringify(gradingResult),
@@ -237,42 +196,180 @@ You MUST respond with valid JSON in exactly this format:
 });
 
 /**
- * Build the grading prompt with Graphic Essay Organizer context
+ * Build system prompt based on grading mode
+ */
+function buildSystemPrompt(gradingMode: 'scoring' | 'feedback-only', rubric: string): string {
+  const basePrompt = `You are Bottor Assist, an AI grading assistant for teachers.
+
+CRITICAL RULES - RUBRIC-FIRST GRADING:
+1. Grade ONLY using the provided rubric/criteria - NEVER invent your own grading system
+2. Grade ONLY what is present in the student work - do NOT invent or assume missing information
+3. If handwriting is unclear or illegible, state "illegible/unclear" and do NOT guess
+4. Match content to rubric requirements by substance, not by form labels
+5. Do NOT penalize for "Source 1 missing" unless rubric explicitly requires labeled Source 1/2/3
+6. If rubric says "3 sources," check if THREE sources appear in content (by titles/authors/etc) regardless of numbering
+
+GUARDRAILS:
+- Never hallucinate content that isn't in the student work
+- Keep educators in control - phrase all suggestions as recommendations
+- Be specific and actionable in feedback`;
+
+  if (gradingMode === 'feedback-only') {
+    return `${basePrompt}
+
+FEEDBACK-ONLY MODE:
+Since no rubric/grading criteria was detected, provide qualitative feedback only.
+- Do NOT assign any numeric score
+- Focus on identifying what the student did well
+- Provide constructive suggestions for improvement
+- Do NOT guess what the rubric might be
+
+OUTPUT FORMAT (JSON only):
+{
+  "score_suggestion": "N/A",
+  "qualitative_rating": null,
+  "strengths_list": [
+    "<bullet 1: what the student did well>",
+    "<bullet 2: another strength>"
+  ],
+  "improvements_list": [
+    "<bullet 1: specific actionable improvement>",
+    "<bullet 2: another improvement>"
+  ],
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
+  "grading_notes": "<note for teacher about why scoring wasn't possible>"
+}`;
+  }
+
+  // Check if rubric contains point values
+  const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric);
+
+  if (hasPointValues) {
+    return `${basePrompt}
+
+SCORING MODE (Numeric):
+The rubric contains point values. Calculate a numeric score based strictly on the rubric.
+- Award points ONLY for criteria that are met in the student work
+- Use the exact point values from the rubric
+- If rubric uses 0/0.5/1 scoring, follow that exactly
+- Calculate total score as sum of all category scores
+
+OUTPUT FORMAT (JSON only):
+{
+  "total_score": <number>,
+  "max_score": <number from rubric>,
+  "score_suggestion": "<total>/<max>",
+  "per_category": [
+    {
+      "category": "<rubric category name>",
+      "points_earned": <number>,
+      "points_possible": <number>,
+      "notes": "<what was found or missing>"
+    }
+  ],
+  "strengths_list": [
+    "<bullet 1: strength tied to rubric category>",
+    "<bullet 2: another strength>"
+  ],
+  "improvements_list": [
+    "<bullet 1: specific actionable item tied to rubric>",
+    "<bullet 2: another improvement>"
+  ],
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
+  "grading_notes": "<any notes about illegible text, missing sections, or grading considerations>"
+}`;
+  }
+
+  // Rubric exists but no point values - qualitative assessment
+  return `${basePrompt}
+
+SCORING MODE (Qualitative):
+The rubric has criteria but no specific point values. Provide qualitative rubric-aligned ratings.
+- Evaluate each rubric criterion
+- Use qualitative ratings like "Exceeds", "Meets", "Approaching", "Not Yet" for each
+- Do NOT assign numeric scores since rubric doesn't specify points
+
+OUTPUT FORMAT (JSON only):
+{
+  "score_suggestion": "N/A",
+  "qualitative_rating": "<overall rating: Exceeds/Meets/Approaching/Not Yet>",
+  "per_category": [
+    {
+      "category": "<rubric category name>",
+      "rating": "<Exceeds/Meets/Approaching/Not Yet>",
+      "notes": "<what was found or missing>"
+    }
+  ],
+  "strengths_list": [
+    "<bullet 1: strength tied to rubric category>",
+    "<bullet 2: another strength>"
+  ],
+  "improvements_list": [
+    "<bullet 1: specific actionable item tied to rubric>",
+    "<bullet 2: another improvement>"
+  ],
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
+  "grading_notes": "<any notes about illegible text, missing sections, or grading considerations>"
+}`;
+}
+
+/**
+ * Build the grading prompt with all context
  */
 function buildGradingPrompt(request: GradeRequest): string {
-  const { student_work, grade_level, subject, assignment_type, rubric, answer_key, prompt_text } = request;
+  const { 
+    student_work, 
+    grade_level, 
+    subject, 
+    assignment_type, 
+    rubric, 
+    answer_key, 
+    prompt_text,
+    assignment_doc_text,
+    grading_mode
+  } = request;
 
   const sections = [
-    `## Assignment: Graphic Essay Organizer`,
-    `- Grade Level: ${grade_level || "8"}`,
-    `- Subject: ${subject || "ELA/Social Studies"}`,
-    `- Assignment Type: ${assignment_type || "Graphic Essay Organizer (3 sources, 15 points)"}`,
-    `- Total Points: 15 (5 points per source × 3 sources)`,
+    `## Assignment Context`,
+    `- Grade Level: ${grade_level || "Not specified"}`,
+    `- Subject: ${subject || "Not specified"}`,
+    `- Assignment Type: ${assignment_type || "Not specified"}`,
+    `- Grading Mode: ${grading_mode === 'scoring' ? 'Scoring (rubric detected)' : 'Feedback-only (no rubric)'}`,
     "",
   ];
 
   // Include teacher's specific analysis prompt if provided
   if (prompt_text?.trim()) {
     sections.push(
-      `## Teacher Prompt (Analysis Question for this assignment)`,
+      `## Teacher Prompt / Analysis Question`,
       prompt_text,
-      ``,
-      `NOTE: For the "Analysis" category (1 pt per source), evaluate whether the student responded to this specific prompt.`,
       ""
     );
   }
 
-  sections.push(
-    `## Grading Rubric`,
-    rubric || `Each source (5 points):
-- Source Title (1 pt)
-- Source Author (1 pt)  
-- Central idea of the source (1 pt)
-- Evidence with citation (1 pt)
-- Analysis question response (1 pt)`,
-    ""
-  );
+  // Include rubric if provided
+  if (rubric?.trim()) {
+    sections.push(
+      `## Grading Rubric / Criteria`,
+      `IMPORTANT: Grade STRICTLY using these criteria. Do not invent additional criteria.`,
+      "",
+      rubric,
+      ""
+    );
+  }
 
+  // Include assignment document text if provided
+  if (assignment_doc_text?.trim()) {
+    sections.push(
+      `## Assignment / Rubric Document (extracted text)`,
+      `Use this for context about the assignment and any grading criteria mentioned.`,
+      "",
+      assignment_doc_text,
+      ""
+    );
+  }
+
+  // Include answer key if provided
   if (answer_key?.trim()) {
     sections.push(
       `## Answer Key / Expected Responses`,
@@ -282,20 +379,19 @@ function buildGradingPrompt(request: GradeRequest): string {
   }
 
   sections.push(
-    `## Student Work (OCR-extracted text from organizer)`,
+    `## Student Work`,
     ``,
     `INSTRUCTIONS:`,
-    `- Grade ONLY what is visible in the extracted text below`,
-    `- If you can detect headings, boxes, or section labels, use them to identify which source is which`,
-    `- Preserve the structure in your understanding (Source 1 vs Source 2 vs Source 3)`,
+    `- Evaluate ONLY what is present in the text below`,
+    `- If you detect sections, headings, or labels, use them to understand structure`,
     `- Do NOT assume or invent content that is not present`,
-    `- If text is illegible or unclear, state "illegible/unclear" and score 0`,
+    `- If text is illegible or unclear, note it and do not guess`,
     ``,
     `--- BEGIN STUDENT WORK ---`,
     student_work,
     `--- END STUDENT WORK ---`,
     ``,
-    `Evaluate this Graphic Essay Organizer against the rubric. Return JSON only.`
+    `Evaluate this work${rubric ? ' against the provided rubric' : ''}. Return JSON only.`
   );
 
   return sections.join("\n");
