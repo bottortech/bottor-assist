@@ -39,9 +39,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import heic2any from 'heic2any';
 import {
   Select,
@@ -62,6 +67,9 @@ import {
   FileText,
   X,
   FileSearch,
+  ChevronDown,
+  ChevronRight,
+  Info,
   AlertTriangle,
   CheckCircle2,
 } from 'lucide-react';
@@ -212,6 +220,10 @@ export default function GradePapers() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Collapsible section state
+  const [optionalContextOpen, setOptionalContextOpen] = useState(false);
+  const [answerKeyOpen, setAnswerKeyOpen] = useState(false);
 
   /**
    * Generate unique ID for file
@@ -935,104 +947,192 @@ export default function GradePapers() {
 
       {/* Main Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Assignment Details */}
-        <Card className="border-0 shadow-md bg-card-gradient">
+        {/* Section 1: Optional Context (collapsed by default) */}
+        <Collapsible open={optionalContextOpen} onOpenChange={setOptionalContextOpen}>
+          <Card className="border-0 shadow-md bg-card-gradient">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {optionalContextOpen ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <CardTitle className="text-lg">Optional Context (Improves Feedback Quality)</CardTitle>
+                  </div>
+                  <Badge variant="outline" className="text-xs">Optional</Badge>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground ml-6">
+                  These fields are optional and help tailor feedback tone and language. They do not affect scoring rules.
+                </CardDescription>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="space-y-4 pt-0">
+                <div className="space-y-2">
+                  <Label htmlFor="subject">Subject (optional)</Label>
+                  <Select 
+                    value={form.subject} 
+                    onValueChange={(v) => updateForm('subject', v)}
+                  >
+                    <SelectTrigger id="subject">
+                      <SelectValue placeholder="Select subject" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUBJECTS.map((subject) => (
+                        <SelectItem key={subject} value={subject}>
+                          {subject}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Optional context to improve clarity of feedback.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="grade_level">Grade Level (optional)</Label>
+                  <Select 
+                    value={form.grade_level} 
+                    onValueChange={(v) => updateForm('grade_level', v)}
+                  >
+                    <SelectTrigger id="grade_level">
+                      <SelectValue placeholder="Select grade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GRADES.map((grade) => (
+                        <SelectItem key={grade} value={grade}>
+                          {grade}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Used only to adjust feedback language. Not required for scoring.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="assignment_type">Assignment Type (optional)</Label>
+                  <Select 
+                    value={form.assignment_type} 
+                    onValueChange={(v) => updateForm('assignment_type', v)}
+                  >
+                    <SelectTrigger id="assignment_type">
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ASSIGNMENT_TYPES.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Helps format comments. Does not change scoring criteria.
+                  </p>
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
+        {/* Section 2: Rubric / Grading Criteria (REQUIRED for scoring - visually dominant) */}
+        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader>
-            <CardTitle className="text-lg">Assignment Details</CardTitle>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <span>Rubric / Grading Criteria</span>
+              <Badge variant="secondary" className="text-xs">Required for scoring</Badge>
+            </CardTitle>
+            <CardDescription className="text-sm text-muted-foreground">
+              Bottor grades strictly using the criteria you provide here. If no rubric is provided, scoring is disabled and Bottor switches to feedback-only mode.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="grade_level">Grade Level</Label>
-                <Select 
-                  value={form.grade_level} 
-                  onValueChange={(v) => updateForm('grade_level', v)}
-                >
-                  <SelectTrigger id="grade_level">
-                    <SelectValue placeholder="Select grade" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADES.map((grade) => (
-                      <SelectItem key={grade} value={grade}>
-                        {grade}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <Textarea
+              id="rubric"
+              placeholder="Paste your grading rubric here. Include criteria, point values, and expectations..."
+              value={form.rubric}
+              onChange={(e) => updateForm('rubric', e.target.value)}
+              rows={6}
+              className="font-mono text-sm"
+            />
+            
+            {/* Rubric Status Callout */}
+            {gradingMode === 'scoring' ? (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
+                <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
+                <span className="text-sm font-medium text-primary">
+                  Rubric detected — Scoring enabled
+                </span>
+                {detectedRubricSource && (
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    (from {detectedRubricSource})
+                  </span>
+                )}
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="subject">Subject</Label>
-                <Select 
-                  value={form.subject} 
-                  onValueChange={(v) => updateForm('subject', v)}
-                >
-                  <SelectTrigger id="subject">
-                    <SelectValue placeholder="Select subject" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SUBJECTS.map((subject) => (
-                      <SelectItem key={subject} value={subject}>
-                        {subject}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            ) : (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+                <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
+                <span className="text-sm font-medium text-destructive">
+                  No rubric detected — Feedback-only mode (scoring disabled)
+                </span>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="assignment_type">Assignment Type</Label>
-              <Select 
-                value={form.assignment_type} 
-                onValueChange={(v) => updateForm('assignment_type', v)}
-              >
-                <SelectTrigger id="assignment_type">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ASSIGNMENT_TYPES.map((type) => (
-                    <SelectItem key={type.value} value={type.value}>
-                      {type.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="rubric">Rubric / Grading Criteria (paste or upload)</Label>
-              <Textarea
-                id="rubric"
-                placeholder="Paste your grading rubric here. Include criteria, point values, and expectations..."
-                value={form.rubric}
-                onChange={(e) => updateForm('rubric', e.target.value)}
-                rows={5}
-                className="font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">
-                Bottor grades strictly using what you provide here. If blank, Bottor will try to detect criteria from uploaded documents.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="answer_key">Answer Key (Optional)</Label>
-              <Textarea
-                id="answer_key"
-                placeholder="Paste answer key or correct responses for reference..."
-                value={form.answer_key}
-                onChange={(e) => updateForm('answer_key', e.target.value)}
-                rows={3}
-                className="font-mono text-sm"
-              />
-            </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Assignment/Rubric Document Upload */}
+        {/* Section 3: Answer Key (collapsed by default) */}
+        <Collapsible open={answerKeyOpen} onOpenChange={setAnswerKeyOpen}>
+          <Card className="border-0 shadow-md bg-card-gradient">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {answerKeyOpen ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <CardTitle className="text-lg">Answer Key (Optional)</CardTitle>
+                  </div>
+                  <Badge variant="outline" className="text-xs">Optional</Badge>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground ml-6">
+                  Optional reference for objective questions (e.g., math, multiple choice).
+                </CardDescription>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0">
+                <Textarea
+                  id="answer_key"
+                  placeholder="Paste answer key or correct responses for reference..."
+                  value={form.answer_key}
+                  onChange={(e) => updateForm('answer_key', e.target.value)}
+                  rows={4}
+                  className="font-mono text-sm"
+                />
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
+        {/* Section 4: Assignment/Rubric Document Upload (optional) */}
         <Card className="border-0 shadow-md bg-card-gradient">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Assignment / Rubric Document (optional)</CardTitle>
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                Upload Assignment / Rubric Document
+                <Badge variant="outline" className="text-xs">Optional</Badge>
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground mt-1">
+                Upload rubric or assignment directions (PDF/JPG/PNG). Optional.
+              </CardDescription>
+            </div>
             {assignmentFiles.length > 0 && (
               <Button
                 variant="ghost"
@@ -1109,10 +1209,15 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* Student Work Upload */}
-        <Card className="border-0 shadow-md bg-card-gradient">
+        {/* Section 5: Student Work Upload (primary) */}
+        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Student Work</CardTitle>
+            <div>
+              <CardTitle className="text-lg">Student Work</CardTitle>
+              <CardDescription className="text-xs text-muted-foreground mt-1">
+                Upload student work as PDFs or images. Review and edit extracted text before grading.
+              </CardDescription>
+            </div>
             {studentFiles.length > 0 && (
               <Button
                 variant="ghost"
@@ -1229,59 +1334,22 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* Grading Mode Indicator */}
-        <div className="flex items-center gap-3 p-4 rounded-lg border border-border bg-muted/20">
-          {gradingMode === 'scoring' ? (
-            <>
-              <CheckCircle2 className="w-5 h-5 text-primary flex-shrink-0" />
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">
-                    Rubric detected
-                  </span>
-                  <Badge variant="default" className="text-xs">
-                    Scoring enabled
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Source: {detectedRubricSource}
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0" />
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">
-                    No rubric detected
-                  </span>
-                  <Badge variant="secondary" className="text-xs">
-                    Feedback-only mode
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Provide rubric text or upload assignment rubric to enable scoring
-                </p>
-              </div>
-            </>
-          )}
+        {/* Section 6: Generate Button (sticky at bottom) */}
+        <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border border-border">
+          <Button
+            onClick={handleGenerateGrade}
+            disabled={!canGenerate || grading}
+            className="w-full"
+            size="lg"
+          >
+            {grading ? (
+              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+            ) : (
+              <Sparkles className="w-5 h-5 mr-2" />
+            )}
+            Generate Draft Grade + Feedback
+          </Button>
         </div>
-
-        {/* Generate Button */}
-        <Button
-          onClick={handleGenerateGrade}
-          disabled={!canGenerate || grading}
-          className="w-full"
-          size="lg"
-        >
-          {grading ? (
-            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-          ) : (
-            <Sparkles className="w-5 h-5 mr-2" />
-          )}
-          Generate Draft Grade + Feedback
-        </Button>
 
         {/* Results (Editable) */}
         {result && (
