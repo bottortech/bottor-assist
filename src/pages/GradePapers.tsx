@@ -8,13 +8,18 @@
  * PURPOSE: Upload student work (PDF/image), provide rubric, and generate 
  * AI-powered draft grades with feedback.
  * 
+ * RUBRIC-FIRST GRADING:
+ * - Uses teacher-provided rubric text OR rubric detected from documents
+ * - If no rubric detected, switches to "Feedback-only" mode
+ * 
  * DATA FLOW:
  * 1. [INPUT] User fills assignment details + rubric + optional answer key
- * 2. [UPLOAD] User uploads student work (PDF or image)
- * 3. [EXTRACT] Edge function extracts text from file
- * 4. [AI CALL] Generate grade + feedback via edge function
- * 5. [EDIT] User can edit all outputs before saving
- * 6. [SAVE] Persist session with assignment data and feedback
+ * 2. [UPLOAD] User uploads assignment/rubric docs AND student work
+ * 3. [EXTRACT] Edge function extracts text from files
+ * 4. [DETECT] Detect rubric from textbox → assignment docs → student work
+ * 5. [AI CALL] Generate grade + feedback via edge function
+ * 6. [EDIT] User can edit all outputs before saving
+ * 7. [SAVE] Persist session with assignment data and feedback
  * 
  * FIELD MAPPING (form → database):
  * - grade_level → notes_json.grade_level
@@ -36,6 +41,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import heic2any from 'heic2any';
 import {
   Select,
@@ -56,6 +62,8 @@ import {
   FileText,
   X,
   FileSearch,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -103,6 +111,31 @@ const ASSIGNMENT_TYPES = [
   { value: 'essay', label: 'Essay' },
 ];
 
+// Keywords that indicate rubric/criteria content
+const RUBRIC_KEYWORDS = [
+  'rubric',
+  'criteria',
+  'points',
+  'total',
+  'score',
+  'each',
+  'x3',
+  'x2',
+  'requirements',
+  'grading',
+  'evaluation',
+  'pts',
+  'point value',
+  'scoring',
+  '/5',
+  '/10',
+  '/15',
+  '/20',
+  '/25',
+  '/50',
+  '/100',
+];
+
 /**
  * =============================================================================
  * TYPES
@@ -131,6 +164,8 @@ interface UploadedFile {
   extractionStatus: 'pending' | 'extracting' | 'done' | 'failed';
 }
 
+type GradingMode = 'scoring' | 'feedback-only';
+
 /**
  * =============================================================================
  * COMPONENT
@@ -141,7 +176,8 @@ export default function GradePapers() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const studentFileInputRef = useRef<HTMLInputElement>(null);
+  const assignmentFileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [form, setForm] = useState<GradePapersForm>({
@@ -152,14 +188,23 @@ export default function GradePapers() {
     answer_key: '',
   });
 
-  // Multi-file state
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [combinedText, setCombinedText] = useState<string>('');
+  // Multi-file state for Student Work
+  const [studentFiles, setStudentFiles] = useState<UploadedFile[]>([]);
+  const [studentCombinedText, setStudentCombinedText] = useState<string>('');
+  
+  // Multi-file state for Assignment/Rubric Documents
+  const [assignmentFiles, setAssignmentFiles] = useState<UploadedFile[]>([]);
+  const [assignmentCombinedText, setAssignmentCombinedText] = useState<string>('');
+  
   const [convertingHeic, setConvertingHeic] = useState(false);
 
   // Source detection state
   const [autoDetectSources, setAutoDetectSources] = useState(true);
   const [detectedSourceCount, setDetectedSourceCount] = useState<number>(0);
+
+  // Rubric detection state
+  const [gradingMode, setGradingMode] = useState<GradingMode>('feedback-only');
+  const [detectedRubricSource, setDetectedRubricSource] = useState<string>('');
 
   // Results state (editable)
   const [result, setResult] = useState<GradingResult | null>(null);
@@ -174,22 +219,66 @@ export default function GradePapers() {
   const getFileId = (f: File) => `${f.name}_${f.lastModified}`;
 
   /**
+   * Detect if text contains rubric/criteria keywords
+   */
+  const detectRubricInText = (text: string): boolean => {
+    if (!text.trim()) return false;
+    const lowerText = text.toLowerCase();
+    
+    // Check for keyword matches
+    const keywordMatches = RUBRIC_KEYWORDS.filter(keyword => 
+      lowerText.includes(keyword.toLowerCase())
+    );
+    
+    // Need at least 2 keyword matches to be confident it's a rubric
+    return keywordMatches.length >= 2;
+  };
+
+  /**
+   * Determine grading mode based on rubric priority order
+   */
+  useEffect(() => {
+    // Priority 1: Teacher typed rubric in textbox
+    if (form.rubric.trim()) {
+      setGradingMode('scoring');
+      setDetectedRubricSource('Rubric textbox');
+      return;
+    }
+
+    // Priority 2: Detect from assignment/rubric documents
+    if (assignmentCombinedText.trim() && detectRubricInText(assignmentCombinedText)) {
+      setGradingMode('scoring');
+      setDetectedRubricSource('Assignment/Rubric documents');
+      return;
+    }
+
+    // Priority 3: Detect from student work (only if explicitly contains rubric section)
+    if (studentCombinedText.trim() && detectRubricInText(studentCombinedText)) {
+      setGradingMode('scoring');
+      setDetectedRubricSource('Student work documents');
+      return;
+    }
+
+    // No rubric found → Feedback-only mode
+    setGradingMode('feedback-only');
+    setDetectedRubricSource('');
+  }, [form.rubric, assignmentCombinedText, studentCombinedText]);
+
+  /**
    * Detect distinct source sections in text
-   * Looks for patterns like "Source 1", "Source A", "Source:", "[Source 1]", etc.
    */
   const detectSourcesInText = (text: string): number => {
     if (!text.trim()) return 0;
 
-    // Common patterns for source sections
     const sourcePatterns = [
-      /\bSource\s*[1-9]\b/gi,                    // Source 1, Source 2
-      /\bSource\s*[A-E]\b/gi,                    // Source A, Source B
-      /\[Source\s*[1-9A-E]\]/gi,                 // [Source 1], [Source A]
-      /\bDocument\s*[1-9A-E]\b/gi,               // Document 1, Document A
-      /\bText\s*[1-9]\b/gi,                      // Text 1, Text 2
-      /\bPassage\s*[1-9]\b/gi,                   // Passage 1, Passage 2
-      /\bExcerpt\s*[1-9]\b/gi,                   // Excerpt 1, Excerpt 2
-      /---\s*Source\s*[1-9]/gi,                  // --- Source 1
+      /\bSource\s*[1-9]\b/gi,
+      /\bSource\s*[A-E]\b/gi,
+      /\[Source\s*[1-9A-E]\]/gi,
+      /\bDocument\s*[1-9A-E]\b/gi,
+      /\bText\s*[1-9]\b/gi,
+      /\bPassage\s*[1-9]\b/gi,
+      /\bExcerpt\s*[1-9]\b/gi,
+      /---\s*Source\s*[1-9]/gi,
     ];
 
     const foundSources = new Set<string>();
@@ -198,7 +287,6 @@ export default function GradePapers() {
       const matches = text.match(pattern);
       if (matches) {
         matches.forEach(match => {
-          // Normalize to detect unique sources
           const normalized = match.toLowerCase().replace(/[\[\]\s-]/g, '');
           foundSources.add(normalized);
         });
@@ -209,18 +297,21 @@ export default function GradePapers() {
   };
 
   /**
-   * Re-detect sources when combinedText changes (e.g., manual edits)
+   * Re-detect sources when studentCombinedText changes
    */
   useEffect(() => {
-    if (autoDetectSources && combinedText) {
-      setDetectedSourceCount(detectSourcesInText(combinedText));
+    if (autoDetectSources && studentCombinedText) {
+      setDetectedSourceCount(detectSourcesInText(studentCombinedText));
     }
-  }, [combinedText, autoDetectSources]);
+  }, [studentCombinedText, autoDetectSources]);
 
   /**
-   * Update combined text from all uploaded files
+   * Update combined text from uploaded files
    */
-  const updateCombinedText = (files: UploadedFile[]) => {
+  const updateCombinedText = (
+    files: UploadedFile[],
+    setter: React.Dispatch<React.SetStateAction<string>>
+  ) => {
     const parts = files.map((uf, idx) => {
       const header = `--- Page ${idx + 1}: ${uf.file.name} ---`;
       const body = uf.extractionStatus === 'failed'
@@ -229,12 +320,7 @@ export default function GradePapers() {
       return `${header}\n${body}`;
     });
     const combined = parts.join('\n\n');
-    setCombinedText(combined);
-    
-    // Auto-detect sources when text changes
-    if (autoDetectSources) {
-      setDetectedSourceCount(detectSourcesInText(combined));
-    }
+    setter(combined);
   };
 
   /**
@@ -364,9 +450,15 @@ export default function GradePapers() {
   };
 
   /**
-   * [FILE UPLOAD] Handle file selection (multi-file)
+   * [FILE UPLOAD] Generic handler for multi-file upload
    */
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    existingFiles: UploadedFile[],
+    setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>,
+    setCombinedText: React.Dispatch<React.SetStateAction<string>>,
+    inputRef: React.RefObject<HTMLInputElement>
+  ) => {
     const selectedFiles = e.target.files;
     if (!selectedFiles || selectedFiles.length === 0) return;
 
@@ -431,7 +523,6 @@ export default function GradePapers() {
         }
       }
 
-      // Check again after conversion
       if (fileToProcess.size > 10 * 1024 * 1024) {
         toast({
           title: 'File too large after conversion',
@@ -442,8 +533,7 @@ export default function GradePapers() {
       }
 
       const id = getFileId(fileToProcess);
-      // Skip duplicates
-      if (uploadedFiles.some(uf => uf.id === id)) {
+      if (existingFiles.some(uf => uf.id === id)) {
         continue;
       }
 
@@ -456,41 +546,39 @@ export default function GradePapers() {
     }
 
     if (newFiles.length === 0) {
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (inputRef.current) inputRef.current.value = '';
       return;
     }
 
-    // Add to state and update combined text
-    const updatedFiles = [...uploadedFiles, ...newFiles];
-    setUploadedFiles(updatedFiles);
-    updateCombinedText(updatedFiles);
+    const updatedFiles = [...existingFiles, ...newFiles];
+    setFiles(updatedFiles);
+    updateCombinedText(updatedFiles, setCombinedText);
     setResult(null);
 
-    // Clear input for re-selection
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (inputRef.current) inputRef.current.value = '';
 
     // Extract text for each new file
     for (const uf of newFiles) {
-      setUploadedFiles(prev => prev.map(f =>
+      setFiles(prev => prev.map(f =>
         f.id === uf.id ? { ...f, extractionStatus: 'extracting' } : f
       ));
 
       try {
         const text = await extractTextFromFile(uf.file);
-        setUploadedFiles(prev => {
+        setFiles(prev => {
           const updated = prev.map(f =>
             f.id === uf.id ? { ...f, extractedText: text, extractionStatus: 'done' as const } : f
           );
-          updateCombinedText(updated);
+          updateCombinedText(updated, setCombinedText);
           return updated;
         });
       } catch (error) {
         console.error('Extraction failed for', uf.file.name, error);
-        setUploadedFiles(prev => {
+        setFiles(prev => {
           const updated = prev.map(f =>
             f.id === uf.id ? { ...f, extractionStatus: 'failed' as const } : f
           );
-          updateCombinedText(updated);
+          updateCombinedText(updated, setCombinedText);
           return updated;
         });
         toast({
@@ -505,36 +593,77 @@ export default function GradePapers() {
   };
 
   /**
-   * [REMOVE FILE] Remove a single file from the list
+   * [STUDENT FILE UPLOAD] Handle student work file selection
    */
-  const removeFile = (fileId: string) => {
-    setUploadedFiles(prev => {
+  const handleStudentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFileSelect(e, studentFiles, setStudentFiles, setStudentCombinedText, studentFileInputRef);
+  };
+
+  /**
+   * [ASSIGNMENT FILE UPLOAD] Handle assignment/rubric file selection
+   */
+  const handleAssignmentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFileSelect(e, assignmentFiles, setAssignmentFiles, setAssignmentCombinedText, assignmentFileInputRef);
+  };
+
+  /**
+   * [REMOVE FILE] Remove a single file from a list
+   */
+  const removeFile = (
+    fileId: string,
+    setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>,
+    setCombinedText: React.Dispatch<React.SetStateAction<string>>
+  ) => {
+    setFiles(prev => {
       const updated = prev.filter(f => f.id !== fileId);
-      updateCombinedText(updated);
+      updateCombinedText(updated, setCombinedText);
       return updated;
     });
   };
 
   /**
-   * [CLEAR ALL] Remove all uploaded files
+   * [CLEAR ALL] Remove all files from a list
    */
-  const clearAllFiles = () => {
-    setUploadedFiles([]);
+  const clearAllFiles = (
+    setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>,
+    setCombinedText: React.Dispatch<React.SetStateAction<string>>,
+    inputRef: React.RefObject<HTMLInputElement>
+  ) => {
+    setFiles([]);
     setCombinedText('');
     setResult(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    if (inputRef.current) {
+      inputRef.current.value = '';
     }
   };
 
   /**
+   * Get effective rubric text based on priority
+   */
+  const getEffectiveRubric = (): string => {
+    // Priority 1: Teacher typed rubric
+    if (form.rubric.trim()) {
+      return form.rubric;
+    }
+    
+    // Priority 2: Assignment/rubric documents
+    if (assignmentCombinedText.trim() && detectRubricInText(assignmentCombinedText)) {
+      return assignmentCombinedText;
+    }
+    
+    // Priority 3: Student work (if contains explicit rubric)
+    if (studentCombinedText.trim() && detectRubricInText(studentCombinedText)) {
+      return studentCombinedText;
+    }
+    
+    return '';
+  };
+
+  /**
    * [AI GRADING] Generate grade and feedback
-   * 
-   * [MIGRATION POINT: AI Grading]
-   * In Next.js, replace with server action calling Lovable AI gateway
    */
   const handleGenerateGrade = async () => {
-    if (!combinedText.trim()) {
+    if (!studentCombinedText.trim()) {
       toast({
         title: 'No student work',
         description: 'Please upload files or paste the student work text.',
@@ -543,32 +672,27 @@ export default function GradePapers() {
       return;
     }
 
-    if (!form.rubric.trim()) {
-      toast({
-        title: 'Rubric required',
-        description: 'Please provide a rubric for grading.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
     setGrading(true);
     try {
+      const effectiveRubric = getEffectiveRubric();
+      
       const { data, error } = await supabase.functions.invoke('grade-paper', {
         body: {
-          student_work: combinedText,
+          student_work: studentCombinedText,
           grade_level: form.grade_level,
           subject: form.subject,
           assignment_type: form.assignment_type,
-          rubric: form.rubric,
+          rubric: effectiveRubric,
           answer_key: form.answer_key || null,
+          assignment_doc_text: assignmentCombinedText || null,
+          grading_mode: gradingMode,
         },
       });
 
       if (error) throw error;
 
       setResult({
-        score_suggestion: data.score_suggestion || 'Not provided',
+        score_suggestion: data.score_suggestion || 'N/A',
         strengths: data.strengths || 'Not provided',
         areas_for_improvement: data.areas_for_improvement || 'Not provided',
         feedback_paragraph: data.feedback_paragraph || 'Not provided',
@@ -662,25 +786,21 @@ export default function GradePapers() {
 
   /**
    * [SAVE] Save session to database
-   * 
-   * [MIGRATION POINT: Session Save]
-   * In Next.js, replace with server action
    */
   const handleSave = async () => {
     if (!user || !result) return;
 
     setSaving(true);
     try {
-      // Build summary_json structure
       const summaryJson = {
         score_suggestion: result.score_suggestion,
         strengths: [result.strengths],
         areas_for_improvement: [result.areas_for_improvement],
         feedback_paragraph: result.feedback_paragraph,
         input_type: 'grading',
+        grading_mode: gradingMode,
       };
 
-      // Build notes_json for assignment metadata
       const notesJson = {
         grade_level: form.grade_level,
         subject: form.subject,
@@ -696,7 +816,7 @@ export default function GradePapers() {
         snippet: `Score: ${result.score_suggestion} | ${result.strengths.slice(0, 80)}...`,
         summary_json: summaryJson,
         teacher_notes: JSON.stringify(notesJson),
-        transcript: combinedText, // Store combined extracted student work
+        transcript: studentCombinedText,
       };
 
       if (sessionId) {
@@ -737,8 +857,63 @@ export default function GradePapers() {
     );
   }
 
-  const isExtracting = uploadedFiles.some(f => f.extractionStatus === 'extracting');
-  const canGenerate = combinedText.trim() && form.rubric.trim() && !isExtracting;
+  const isStudentExtracting = studentFiles.some(f => f.extractionStatus === 'extracting');
+  const isAssignmentExtracting = assignmentFiles.some(f => f.extractionStatus === 'extracting');
+  const isExtracting = isStudentExtracting || isAssignmentExtracting;
+  const canGenerate = studentCombinedText.trim() && !isExtracting;
+
+  /**
+   * Render file list component
+   */
+  const FileList = ({
+    files,
+    setFiles,
+    setCombinedText,
+    label,
+  }: {
+    files: UploadedFile[];
+    setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>;
+    setCombinedText: React.Dispatch<React.SetStateAction<string>>;
+    label: string;
+  }) => (
+    <div className="space-y-2">
+      <Label>{label} ({files.length})</Label>
+      <div className="space-y-2 max-h-48 overflow-y-auto">
+        {files.map((uf, idx) => (
+          <div
+            key={uf.id}
+            className="flex items-center gap-3 p-3 border border-border rounded-lg bg-muted/20"
+          >
+            <span className="text-xs font-medium text-muted-foreground w-6">
+              {idx + 1}.
+            </span>
+            <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{uf.file.name}</p>
+              <p className="text-xs text-muted-foreground">
+                {(uf.file.size / 1024).toFixed(1)} KB
+                {uf.extractionStatus === 'extracting' && ' • Extracting...'}
+                {uf.extractionStatus === 'done' && ' • Done'}
+                {uf.extractionStatus === 'failed' && ' • Extraction failed'}
+              </p>
+            </div>
+            {uf.extractionStatus === 'extracting' ? (
+              <Loader2 className="w-4 h-4 animate-spin text-primary flex-shrink-0" />
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => removeFile(uf.id, setFiles, setCombinedText)}
+                className="text-muted-foreground hover:text-destructive flex-shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-bottor-gradient">
@@ -826,7 +1001,7 @@ export default function GradePapers() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="rubric">Rubric *</Label>
+              <Label htmlFor="rubric">Rubric / Grading Criteria (paste or upload)</Label>
               <Textarea
                 id="rubric"
                 placeholder="Paste your grading rubric here. Include criteria, point values, and expectations..."
@@ -835,6 +1010,9 @@ export default function GradePapers() {
                 rows={5}
                 className="font-mono text-sm"
               />
+              <p className="text-xs text-muted-foreground">
+                Bottor grades strictly using what you provide here. If blank, Bottor will try to detect criteria from uploaded documents.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -851,15 +1029,15 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* File Upload */}
+        {/* Assignment/Rubric Document Upload */}
         <Card className="border-0 shadow-md bg-card-gradient">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Student Work</CardTitle>
-            {uploadedFiles.length > 0 && (
+            <CardTitle className="text-lg">Assignment / Rubric Document (optional)</CardTitle>
+            {assignmentFiles.length > 0 && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={clearAllFiles}
+                onClick={() => clearAllFiles(setAssignmentFiles, setAssignmentCombinedText, assignmentFileInputRef)}
                 className="text-muted-foreground hover:text-destructive"
               >
                 Clear all
@@ -870,20 +1048,100 @@ export default function GradePapers() {
             {/* Upload Zone */}
             <div className="relative">
               <input
-                ref={fileInputRef}
+                ref={assignmentFileInputRef}
                 type="file"
                 multiple
                 accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                onChange={handleFileSelect}
+                onChange={handleAssignmentFileSelect}
                 className="hidden"
-                id="file-upload"
+                id="assignment-file-upload"
               />
               
               <label
-                htmlFor="file-upload"
+                htmlFor="assignment-file-upload"
+                className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+              >
+                {convertingHeic && isAssignmentExtracting ? (
+                  <>
+                    <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
+                    <span className="text-sm text-muted-foreground">Converting HEIC...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 text-muted-foreground mb-1" />
+                    <span className="text-sm text-muted-foreground">
+                      Upload rubric or assignment directions
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      PDF, JPG, PNG, HEIC/HEIF • Multiple files allowed
+                    </span>
+                  </>
+                )}
+              </label>
+            </div>
+
+            {/* Uploaded Files List */}
+            {assignmentFiles.length > 0 && (
+              <FileList
+                files={assignmentFiles}
+                setFiles={setAssignmentFiles}
+                setCombinedText={setAssignmentCombinedText}
+                label="Uploaded Documents"
+              />
+            )}
+
+            {/* Combined Extracted Text for Assignment Docs */}
+            {assignmentCombinedText && (
+              <div className="space-y-2">
+                <Label htmlFor="assignment_extracted_text">
+                  Extracted Text {isAssignmentExtracting && '(Extracting...)'}
+                </Label>
+                <Textarea
+                  id="assignment_extracted_text"
+                  value={assignmentCombinedText}
+                  onChange={(e) => setAssignmentCombinedText(e.target.value)}
+                  rows={6}
+                  disabled={isAssignmentExtracting}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Student Work Upload */}
+        <Card className="border-0 shadow-md bg-card-gradient">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-lg">Student Work</CardTitle>
+            {studentFiles.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => clearAllFiles(setStudentFiles, setStudentCombinedText, studentFileInputRef)}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                Clear all
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Upload Zone */}
+            <div className="relative">
+              <input
+                ref={studentFileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                onChange={handleStudentFileSelect}
+                className="hidden"
+                id="student-file-upload"
+              />
+              
+              <label
+                htmlFor="student-file-upload"
                 className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
               >
-                {convertingHeic ? (
+                {convertingHeic && isStudentExtracting ? (
                   <>
                     <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
                     <span className="text-sm text-muted-foreground">Converting HEIC...</span>
@@ -903,64 +1161,34 @@ export default function GradePapers() {
             </div>
 
             {/* Uploaded Files List */}
-            {uploadedFiles.length > 0 && (
-              <div className="space-y-2">
-                <Label>Uploaded Files ({uploadedFiles.length})</Label>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {uploadedFiles.map((uf, idx) => (
-                    <div
-                      key={uf.id}
-                      className="flex items-center gap-3 p-3 border border-border rounded-lg bg-muted/20"
-                    >
-                      <span className="text-xs font-medium text-muted-foreground w-6">
-                        {idx + 1}.
-                      </span>
-                      <FileText className="w-5 h-5 text-primary flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{uf.file.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {(uf.file.size / 1024).toFixed(1)} KB
-                          {uf.extractionStatus === 'extracting' && ' • Extracting...'}
-                          {uf.extractionStatus === 'done' && ' • Done'}
-                          {uf.extractionStatus === 'failed' && ' • Extraction failed'}
-                        </p>
-                      </div>
-                      {uf.extractionStatus === 'extracting' ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-primary flex-shrink-0" />
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeFile(uf.id)}
-                          className="text-muted-foreground hover:text-destructive flex-shrink-0"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {studentFiles.length > 0 && (
+              <FileList
+                files={studentFiles}
+                setFiles={setStudentFiles}
+                setCombinedText={setStudentCombinedText}
+                label="Uploaded Files"
+              />
             )}
 
             {/* Combined Extracted Text */}
             <div className="space-y-2">
               <Label htmlFor="extracted_text">
-                Extracted Text (combined) {isExtracting && '(Extracting...)'}
+                Extracted Text (combined) {isStudentExtracting && '(Extracting...)'}
               </Label>
               <Textarea
                 id="extracted_text"
                 placeholder="Text extracted from files will appear here with page separators. You can also paste or type student work directly..."
-                value={combinedText}
-                onChange={(e) => setCombinedText(e.target.value)}
+                value={studentCombinedText}
+                onChange={(e) => setStudentCombinedText(e.target.value)}
                 rows={10}
-                disabled={isExtracting}
+                disabled={isStudentExtracting}
                 className="font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
                 You can edit this text before grading. If extraction failed for any file, update its section manually.
               </p>
             </div>
+
             {/* Source Detection */}
             <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 border border-border">
               <Checkbox
@@ -968,8 +1196,8 @@ export default function GradePapers() {
                 checked={autoDetectSources}
                 onCheckedChange={(checked) => {
                   setAutoDetectSources(checked === true);
-                  if (checked && combinedText) {
-                    setDetectedSourceCount(detectSourcesInText(combinedText));
+                  if (checked && studentCombinedText) {
+                    setDetectedSourceCount(detectSourcesInText(studentCombinedText));
                   } else {
                     setDetectedSourceCount(0);
                   }
@@ -991,7 +1219,7 @@ export default function GradePapers() {
                     ✓ {detectedSourceCount} source{detectedSourceCount !== 1 ? 's' : ''} detected
                   </p>
                 )}
-                {autoDetectSources && combinedText.trim() && detectedSourceCount === 0 && !isExtracting && (
+                {autoDetectSources && studentCombinedText.trim() && detectedSourceCount === 0 && !isStudentExtracting && (
                   <p className="text-xs text-muted-foreground/80">
                     No distinct source labels found — content will be graded as a single submission
                   </p>
@@ -1000,6 +1228,45 @@ export default function GradePapers() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Grading Mode Indicator */}
+        <div className="flex items-center gap-3 p-4 rounded-lg border border-border bg-muted/20">
+          {gradingMode === 'scoring' ? (
+            <>
+              <CheckCircle2 className="w-5 h-5 text-primary flex-shrink-0" />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">
+                    Rubric detected
+                  </span>
+                  <Badge variant="default" className="text-xs">
+                    Scoring enabled
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Source: {detectedRubricSource}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0" />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">
+                    No rubric detected
+                  </span>
+                  <Badge variant="secondary" className="text-xs">
+                    Feedback-only mode
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Provide rubric text or upload assignment rubric to enable scoring
+                </p>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Generate Button */}
         <Button
@@ -1019,6 +1286,23 @@ export default function GradePapers() {
         {/* Results (Editable) */}
         {result && (
           <div className="space-y-4 animate-fade-in">
+            {/* Feedback-only mode notice */}
+            {gradingMode === 'feedback-only' && (
+              <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/30">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-destructive">
+                      Score not generated — no grading criteria detected
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Provide rubric text or upload assignment rubric to enable scoring.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Score */}
             <Card className="border-0 shadow-md bg-primary/5">
               <CardHeader className="pb-2">
