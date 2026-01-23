@@ -1066,7 +1066,7 @@ export default function GradePapers() {
               <Badge variant="secondary" className="text-xs">Required for scoring</Badge>
             </CardTitle>
             <CardDescription className="text-sm text-muted-foreground">
-              Bottor grades strictly using the criteria you provide here. If no rubric is provided, scoring is disabled and Bottor switches to feedback-only mode.
+              Bottor grades strictly using the criteria you provide here. If no rubric is provided, scoring is disabled and Bottor switches to feedback-only mode. If a rubric already exists in uploaded student work, Bottor will attempt to detect it automatically to reduce manual entry.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1081,16 +1081,25 @@ export default function GradePapers() {
             
             {/* Rubric Status Callout */}
             {gradingMode === 'scoring' ? (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
-                <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
-                <span className="text-sm font-medium text-primary">
-                  Rubric detected — Scoring enabled
-                </span>
-                {detectedRubricSource && (
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    (from {detectedRubricSource})
-                  </span>
-                )}
+              <div className="space-y-2">
+                <div className="flex flex-col gap-1 p-3 rounded-lg bg-primary/10 border border-primary/30">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
+                    <span className="text-sm font-medium text-primary">
+                      {detectedRubricSource === 'Rubric textbox' 
+                        ? 'Rubric detected — Scoring enabled'
+                        : 'Rubric detected automatically — Scoring enabled'}
+                    </span>
+                  </div>
+                  {detectedRubricSource && detectedRubricSource !== 'Rubric textbox' && (
+                    <span className="text-xs text-muted-foreground ml-6">
+                      Source: {detectedRubricSource === 'Student work documents' ? 'uploaded student work' : detectedRubricSource.toLowerCase()}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground ml-1">
+                  You can edit, replace, or override the detected rubric at any time.
+                </p>
               </div>
             ) : (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
