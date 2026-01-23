@@ -186,6 +186,7 @@ export default function GradePapers() {
   const { toast } = useToast();
   const studentFileInputRef = useRef<HTMLInputElement>(null);
   const assignmentFileInputRef = useRef<HTMLInputElement>(null);
+  const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [form, setForm] = useState<GradePapersForm>({
@@ -203,6 +204,10 @@ export default function GradePapers() {
   // Multi-file state for Assignment/Rubric Documents
   const [assignmentFiles, setAssignmentFiles] = useState<UploadedFile[]>([]);
   const [assignmentCombinedText, setAssignmentCombinedText] = useState<string>('');
+  
+  // Multi-file state for Answer Key Documents
+  const [answerKeyFiles, setAnswerKeyFiles] = useState<UploadedFile[]>([]);
+  const [answerKeyCombinedText, setAnswerKeyCombinedText] = useState<string>('');
   
   const [convertingHeic, setConvertingHeic] = useState(false);
 
@@ -619,6 +624,13 @@ export default function GradePapers() {
   };
 
   /**
+   * [ANSWER KEY FILE UPLOAD] Handle answer key file selection
+   */
+  const handleAnswerKeyFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFileSelect(e, answerKeyFiles, setAnswerKeyFiles, setAnswerKeyCombinedText, answerKeyFileInputRef);
+  };
+
+  /**
    * [REMOVE FILE] Remove a single file from a list
    */
   const removeFile = (
@@ -688,6 +700,11 @@ export default function GradePapers() {
     try {
       const effectiveRubric = getEffectiveRubric();
       
+      // Combine pasted answer key with uploaded answer key text
+      const combinedAnswerKey = [form.answer_key, answerKeyCombinedText]
+        .filter(Boolean)
+        .join('\n\n--- Uploaded Answer Key ---\n\n');
+      
       const { data, error } = await supabase.functions.invoke('grade-paper', {
         body: {
           student_work: studentCombinedText,
@@ -695,7 +712,7 @@ export default function GradePapers() {
           subject: form.subject,
           assignment_type: form.assignment_type,
           rubric: effectiveRubric,
-          answer_key: form.answer_key || null,
+          answer_key: combinedAnswerKey || null,
           assignment_doc_text: assignmentCombinedText || null,
           grading_mode: gradingMode,
         },
@@ -871,7 +888,8 @@ export default function GradePapers() {
 
   const isStudentExtracting = studentFiles.some(f => f.extractionStatus === 'extracting');
   const isAssignmentExtracting = assignmentFiles.some(f => f.extractionStatus === 'extracting');
-  const isExtracting = isStudentExtracting || isAssignmentExtracting;
+  const isAnswerKeyExtracting = answerKeyFiles.some(f => f.extractionStatus === 'extracting');
+  const isExtracting = isStudentExtracting || isAssignmentExtracting || isAnswerKeyExtracting;
   const canGenerate = studentCombinedText.trim() && !isExtracting;
 
   /**
@@ -1102,20 +1120,111 @@ export default function GradePapers() {
                   <Badge variant="outline" className="text-xs">Optional</Badge>
                 </div>
                 <CardDescription className="text-xs text-muted-foreground ml-6">
-                  Optional reference for objective questions (e.g., math, multiple choice).
+                  Optional reference for objective questions (e.g., math, multiple choice). Uploading an answer key can improve Bottor Assist accuracy.
                 </CardDescription>
               </CardHeader>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <CardContent className="pt-0">
-                <Textarea
-                  id="answer_key"
-                  placeholder="Paste answer key or correct responses for reference..."
-                  value={form.answer_key}
-                  onChange={(e) => updateForm('answer_key', e.target.value)}
-                  rows={4}
-                  className="font-mono text-sm"
-                />
+              <CardContent className="pt-0 space-y-6">
+                {/* A) Answer Key Text (paste, optional) */}
+                <div className="space-y-2">
+                  <Label htmlFor="answer_key">Answer Key (paste, optional)</Label>
+                  <Textarea
+                    id="answer_key"
+                    placeholder="Paste answer key or correct responses for reference..."
+                    value={form.answer_key}
+                    onChange={(e) => updateForm('answer_key', e.target.value)}
+                    rows={4}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Paste correct answers or scoring reference. Optional.
+                  </p>
+                </div>
+
+                {/* B) Answer Key Upload (optional) */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Answer Key File (upload, optional)</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Upload an answer key as PDF/JPG/PNG (multiple files allowed). Optional, but improves accuracy for objective grading.
+                      </p>
+                    </div>
+                    {answerKeyFiles.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => clearAllFiles(setAnswerKeyFiles, setAnswerKeyCombinedText, answerKeyFileInputRef)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        Clear all
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Upload Zone */}
+                  <div className="relative">
+                    <input
+                      ref={answerKeyFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      onChange={handleAnswerKeyFileSelect}
+                      className="hidden"
+                      id="answer-key-file-upload"
+                    />
+                    
+                    <label
+                      htmlFor="answer-key-file-upload"
+                      className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                    >
+                      {convertingHeic && isAnswerKeyExtracting ? (
+                        <>
+                          <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
+                          <span className="text-sm text-muted-foreground">Converting HEIC...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-5 h-5 text-muted-foreground mb-1" />
+                          <span className="text-sm text-muted-foreground">
+                            Upload answer key document
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            PDF, JPG, PNG, HEIC/HEIF • Multiple files allowed • Max 10MB each
+                          </span>
+                        </>
+                      )}
+                    </label>
+                  </div>
+
+                  {/* Uploaded Answer Key Files List */}
+                  {answerKeyFiles.length > 0 && (
+                    <FileList
+                      files={answerKeyFiles}
+                      setFiles={setAnswerKeyFiles}
+                      setCombinedText={setAnswerKeyCombinedText}
+                      label="Uploaded Answer Key Files"
+                    />
+                  )}
+
+                  {/* Extracted Answer Key Text */}
+                  {answerKeyCombinedText && (
+                    <div className="space-y-2">
+                      <Label htmlFor="answer_key_extracted_text">
+                        Extracted Answer Key Text {isAnswerKeyExtracting && '(Extracting...)'}
+                      </Label>
+                      <Textarea
+                        id="answer_key_extracted_text"
+                        value={answerKeyCombinedText}
+                        onChange={(e) => setAnswerKeyCombinedText(e.target.value)}
+                        rows={4}
+                        disabled={isAnswerKeyExtracting}
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </CollapsibleContent>
           </Card>
