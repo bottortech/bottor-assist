@@ -144,6 +144,61 @@ const RUBRIC_KEYWORDS = [
   '/100',
 ];
 
+// Keywords that indicate objective content (math, fill-in, multiple choice)
+const OBJECTIVE_CONTENT_KEYWORDS = [
+  'answer',
+  'correct',
+  'solve',
+  'calculate',
+  'compute',
+  'find the value',
+  'what is',
+  'how many',
+  'which of the following',
+  'choose the best',
+  'select the correct',
+  'fill in the blank',
+  'true or false',
+  'multiple choice',
+  'a)',
+  'b)',
+  'c)',
+  'd)',
+  '1)',
+  '2)',
+  '3)',
+  '= ',
+  '+ ',
+  '- ',
+  '× ',
+  '÷ ',
+];
+
+// Keywords that indicate open-ended/subjective content (reading, writing, ELA)
+const OPEN_ENDED_KEYWORDS = [
+  'explain',
+  'describe',
+  'analyze',
+  'compare',
+  'contrast',
+  'discuss',
+  'evaluate',
+  'argue',
+  'persuade',
+  'support your answer',
+  'cite evidence',
+  'text evidence',
+  'main idea',
+  'author\'s purpose',
+  'theme',
+  'central claim',
+  'essay',
+  'paragraph',
+  'response',
+  'reading passage',
+  'comprehension',
+];
+
 /**
  * =============================================================================
  * TYPES
@@ -252,34 +307,161 @@ export default function GradePapers() {
   };
 
   /**
-   * Determine grading mode based on rubric priority order
+   * Detect content type: objective (math, fill-in) vs open-ended (reading, writing)
+   * Returns: 'objective' | 'open-ended' | 'mixed'
+   */
+  const detectContentType = (text: string): 'objective' | 'open-ended' | 'mixed' => {
+    if (!text.trim()) return 'mixed';
+    const lowerText = text.toLowerCase();
+    
+    const objectiveMatches = OBJECTIVE_CONTENT_KEYWORDS.filter(keyword => 
+      lowerText.includes(keyword.toLowerCase())
+    ).length;
+    
+    const openEndedMatches = OPEN_ENDED_KEYWORDS.filter(keyword => 
+      lowerText.includes(keyword.toLowerCase())
+    ).length;
+    
+    // Determine dominant type with threshold
+    if (objectiveMatches >= 3 && objectiveMatches > openEndedMatches * 2) {
+      return 'objective';
+    }
+    if (openEndedMatches >= 3 && openEndedMatches > objectiveMatches * 2) {
+      return 'open-ended';
+    }
+    return 'mixed';
+  };
+
+  /**
+   * Get descriptive source label based on file names
+   */
+  const getDescriptiveSourceLabel = (
+    files: UploadedFile[],
+    fallbackLabel: string
+  ): string => {
+    if (files.length === 0) return fallbackLabel;
+    
+    // Check file names for common patterns
+    const fileNames = files.map(f => f.file.name.toLowerCase()).join(' ');
+    
+    if (fileNames.includes('worksheet')) return 'uploaded worksheet';
+    if (fileNames.includes('packet')) return 'student packet';
+    if (fileNames.includes('workbook')) return 'uploaded workbook';
+    if (fileNames.includes('rubric')) return 'uploaded rubric document';
+    if (fileNames.includes('answer') || fileNames.includes('key')) return 'answer key';
+    if (fileNames.includes('test') || fileNames.includes('quiz')) return 'uploaded test/quiz';
+    if (fileNames.includes('assignment')) return 'assignment document';
+    
+    // Fallback to generic label with file count
+    if (files.length > 1) {
+      return `${files.length} uploaded documents`;
+    }
+    return fallbackLabel;
+  };
+
+  /**
+   * Combine and aggregate rubric criteria from multiple document sources
+   * Returns: { hasRubric: boolean, source: string, combinedCriteria: string }
+   */
+  const aggregateRubricFromSources = (): { 
+    hasRubric: boolean; 
+    source: string; 
+    combinedCriteria: string;
+    contentType: 'objective' | 'open-ended' | 'mixed';
+  } => {
+    const sources: { text: string; label: string; priority: number; files: UploadedFile[] }[] = [];
+    
+    // Priority 1: Teacher typed rubric
+    if (form.rubric.trim()) {
+      return {
+        hasRubric: true,
+        source: 'Rubric textbox',
+        combinedCriteria: form.rubric,
+        contentType: detectContentType(form.rubric),
+      };
+    }
+    
+    // Collect all potential rubric sources
+    if (assignmentCombinedText.trim()) {
+      sources.push({
+        text: assignmentCombinedText,
+        label: getDescriptiveSourceLabel(assignmentFiles, 'Assignment/Rubric documents'),
+        priority: 2,
+        files: assignmentFiles,
+      });
+    }
+    
+    if (answerKeyCombinedText.trim()) {
+      sources.push({
+        text: answerKeyCombinedText,
+        label: getDescriptiveSourceLabel(answerKeyFiles, 'Answer key'),
+        priority: 3,
+        files: answerKeyFiles,
+      });
+    }
+    
+    if (studentCombinedText.trim()) {
+      sources.push({
+        text: studentCombinedText,
+        label: getDescriptiveSourceLabel(studentFiles, 'Student work documents'),
+        priority: 4,
+        files: studentFiles,
+      });
+    }
+    
+    // Find sources with rubric content
+    const rubricSources = sources.filter(s => detectRubricInText(s.text));
+    
+    if (rubricSources.length === 0) {
+      // No rubric found, but check if answer key exists (can still help objective grading)
+      const contentType = detectContentType(studentCombinedText);
+      return {
+        hasRubric: false,
+        source: '',
+        combinedCriteria: '',
+        contentType,
+      };
+    }
+    
+    // Use highest priority source
+    const primarySource = rubricSources.sort((a, b) => a.priority - b.priority)[0];
+    
+    // Build source label
+    let sourceLabel = primarySource.label;
+    if (rubricSources.length > 1) {
+      sourceLabel = `${primarySource.label} (+${rubricSources.length - 1} more)`;
+    }
+    
+    // Combine criteria from all sources for more complete context
+    const combinedCriteria = rubricSources.map(s => s.text).join('\n\n--- Additional Criteria ---\n\n');
+    
+    return {
+      hasRubric: true,
+      source: sourceLabel,
+      combinedCriteria,
+      contentType: detectContentType(combinedCriteria),
+    };
+  };
+
+  // Track detected content type for smart fallback behavior
+  const [detectedContentType, setDetectedContentType] = useState<'objective' | 'open-ended' | 'mixed'>('mixed');
+
+  /**
+   * Determine grading mode based on rubric priority order with multi-document support
    */
   useEffect(() => {
-    // Priority 1: Teacher typed rubric in textbox
-    if (form.rubric.trim()) {
+    const { hasRubric, source, contentType } = aggregateRubricFromSources();
+    
+    setDetectedContentType(contentType);
+    
+    if (hasRubric) {
       setGradingMode('scoring');
-      setDetectedRubricSource('Rubric textbox');
-      return;
+      setDetectedRubricSource(source);
+    } else {
+      setGradingMode('feedback-only');
+      setDetectedRubricSource('');
     }
-
-    // Priority 2: Detect from assignment/rubric documents
-    if (assignmentCombinedText.trim() && detectRubricInText(assignmentCombinedText)) {
-      setGradingMode('scoring');
-      setDetectedRubricSource('Assignment/Rubric documents');
-      return;
-    }
-
-    // Priority 3: Detect from student work (only if explicitly contains rubric section)
-    if (studentCombinedText.trim() && detectRubricInText(studentCombinedText)) {
-      setGradingMode('scoring');
-      setDetectedRubricSource('Student work documents');
-      return;
-    }
-
-    // No rubric found → Feedback-only mode
-    setGradingMode('feedback-only');
-    setDetectedRubricSource('');
-  }, [form.rubric, assignmentCombinedText, studentCombinedText]);
+  }, [form.rubric, assignmentCombinedText, studentCombinedText, answerKeyCombinedText, assignmentFiles, studentFiles, answerKeyFiles]);
 
   /**
    * Detect distinct source sections in text
@@ -662,25 +844,11 @@ export default function GradePapers() {
   };
 
   /**
-   * Get effective rubric text based on priority
+   * Get effective rubric text based on priority (uses aggregated sources)
    */
   const getEffectiveRubric = (): string => {
-    // Priority 1: Teacher typed rubric
-    if (form.rubric.trim()) {
-      return form.rubric;
-    }
-    
-    // Priority 2: Assignment/rubric documents
-    if (assignmentCombinedText.trim() && detectRubricInText(assignmentCombinedText)) {
-      return assignmentCombinedText;
-    }
-    
-    // Priority 3: Student work (if contains explicit rubric)
-    if (studentCombinedText.trim() && detectRubricInText(studentCombinedText)) {
-      return studentCombinedText;
-    }
-    
-    return '';
+    const { combinedCriteria } = aggregateRubricFromSources();
+    return combinedCriteria;
   };
 
   /**
@@ -715,6 +883,7 @@ export default function GradePapers() {
           answer_key: combinedAnswerKey || null,
           assignment_doc_text: assignmentCombinedText || null,
           grading_mode: gradingMode,
+          content_type: detectedContentType, // Smart fallback: objective vs open-ended
         },
       });
 
@@ -1093,7 +1262,7 @@ export default function GradePapers() {
                   </div>
                   {detectedRubricSource && detectedRubricSource !== 'Rubric textbox' && (
                     <span className="text-xs text-muted-foreground ml-6">
-                      Source: {detectedRubricSource === 'Student work documents' ? 'uploaded student work' : detectedRubricSource.toLowerCase()}
+                      Detected from {detectedRubricSource}
                     </span>
                   )}
                 </div>
@@ -1102,11 +1271,20 @@ export default function GradePapers() {
                 </p>
               </div>
             ) : (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
-                <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
-                <span className="text-sm font-medium text-destructive">
-                  No rubric detected — Feedback-only mode (scoring disabled)
-                </span>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+                  <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
+                  <span className="text-sm font-medium text-destructive">
+                    No rubric detected — Feedback-only mode (scoring disabled)
+                  </span>
+                </div>
+                {/* Smart fallback hint */}
+                {(form.answer_key.trim() || answerKeyCombinedText.trim()) && detectedContentType === 'objective' && (
+                  <p className="text-xs text-muted-foreground ml-1 flex items-center gap-1">
+                    <Info className="w-3 h-3" />
+                    Answer key detected — will be used to evaluate objective questions.
+                  </p>
+                )}
               </div>
             )}
           </CardContent>

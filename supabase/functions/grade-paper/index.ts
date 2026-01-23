@@ -42,6 +42,7 @@ interface GradeRequest {
   prompt_text?: string;
   assignment_doc_text?: string;  // Text from assignment/rubric documents
   grading_mode: 'scoring' | 'feedback-only';
+  content_type?: 'objective' | 'open-ended' | 'mixed';  // Smart fallback hint
 }
 
 serve(async (req) => {
@@ -61,7 +62,8 @@ serve(async (req) => {
       answer_key, 
       prompt_text,
       assignment_doc_text,
-      grading_mode = 'feedback-only'
+      grading_mode = 'feedback-only',
+      content_type = 'mixed'
     } = body;
 
     if (!student_work?.trim()) {
@@ -76,11 +78,11 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`[grade-paper] Grading in ${grading_mode} mode for ${grade_level} ${subject}`);
+    console.log(`[grade-paper] Grading in ${grading_mode} mode for ${grade_level} ${subject}, content_type: ${content_type}`);
 
-    // Build the grading prompt based on mode
+    // Build the grading prompt based on mode and content type
     const prompt = buildGradingPrompt(body);
-    const systemPrompt = buildSystemPrompt(grading_mode, rubric);
+    const systemPrompt = buildSystemPrompt(grading_mode, rubric, answer_key, content_type);
 
     const response = await fetch(LOVABLE_AI_URL, {
       method: "POST",
@@ -196,9 +198,14 @@ serve(async (req) => {
 });
 
 /**
- * Build system prompt based on grading mode
+ * Build system prompt based on grading mode with smart fallback behavior
  */
-function buildSystemPrompt(gradingMode: 'scoring' | 'feedback-only', rubric: string): string {
+function buildSystemPrompt(
+  gradingMode: 'scoring' | 'feedback-only', 
+  rubric: string,
+  answerKey?: string,
+  contentType: 'objective' | 'open-ended' | 'mixed' = 'mixed'
+): string {
   const basePrompt = `You are Bottor Assist, an AI grading assistant for teachers.
 
 CRITICAL RULES - RUBRIC-FIRST GRADING:
@@ -209,12 +216,56 @@ CRITICAL RULES - RUBRIC-FIRST GRADING:
 5. Do NOT penalize for "Source 1 missing" unless rubric explicitly requires labeled Source 1/2/3
 6. If rubric says "3 sources," check if THREE sources appear in content (by titles/authors/etc) regardless of numbering
 
+MULTI-DOCUMENT AWARENESS:
+- Student work may come from multiple pages or documents
+- Look for grading criteria embedded ANYWHERE in the uploaded materials
+- Combine detected criteria across multiple pages/files into unified grading context
+- Handle mixed-subject assignments (e.g., math workbook + ELA reading packet) by addressing each subject's content appropriately
+
+SUBJECT-AGNOSTIC LOGIC:
+- Do NOT rely on subject labels (math, ELA, etc.) for grading approach
+- Determine grading strategy from the CONTENT itself
+- All grading must be driven by: detected rubric, uploaded documents, or answer key (if provided)
+
 GUARDRAILS:
 - Never hallucinate content that isn't in the student work
 - Keep educators in control - phrase all suggestions as recommendations
 - Be specific and actionable in feedback`;
 
+  // Smart fallback for feedback-only mode with answer key
   if (gradingMode === 'feedback-only') {
+    // Check if we have an answer key that can help with objective content
+    const hasAnswerKey = answerKey && answerKey.trim().length > 0;
+    const isObjectiveContent = contentType === 'objective';
+    
+    if (hasAnswerKey && isObjectiveContent) {
+      return `${basePrompt}
+
+SMART FALLBACK MODE (Objective Content with Answer Key):
+No rubric was detected, but an answer key is provided for objective-style content (math, short answer, fill-in).
+- Use the answer key to evaluate correctness of objective responses
+- Compare student answers to expected answers
+- Do NOT assign a formal rubric-based score (no rubric provided)
+- Provide accuracy-based feedback: which answers are correct, which need work
+- Be specific about what the correct answer should be for incorrect items
+
+OUTPUT FORMAT (JSON only):
+{
+  "score_suggestion": "N/A",
+  "qualitative_rating": "<summary: e.g., '7 of 10 correct' or 'Mostly accurate'>",
+  "strengths_list": [
+    "<bullet 1: what the student answered correctly>",
+    "<bullet 2: another strength>"
+  ],
+  "improvements_list": [
+    "<bullet 1: specific item that was incorrect and what the right answer is>",
+    "<bullet 2: another area for improvement>"
+  ],
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student. Acknowledge what they got right, address errors constructively, encourage continued practice.>",
+  "grading_notes": "<note for teacher about answer key comparison results>"
+}`;
+    }
+    
     return `${basePrompt}
 
 FEEDBACK-ONLY MODE:
@@ -223,6 +274,7 @@ Since no rubric/grading criteria was detected, provide qualitative feedback only
 - Focus on identifying what the student did well
 - Provide constructive suggestions for improvement
 - Do NOT guess what the rubric might be
+${contentType === 'open-ended' ? '- For open-ended responses, focus on clarity, organization, evidence use, and argument strength' : ''}
 
 OUTPUT FORMAT (JSON only):
 {
@@ -243,6 +295,13 @@ OUTPUT FORMAT (JSON only):
 
   // Check if rubric contains point values
   const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric);
+  
+  // Smart context-aware scoring guidance
+  const contentGuidance = contentType === 'objective' 
+    ? '\n- For objective questions (math, fill-in), verify correctness against any provided answer key'
+    : contentType === 'open-ended'
+    ? '\n- For open-ended responses (essays, analysis), evaluate depth, evidence, and reasoning per rubric criteria'
+    : '\n- Handle mixed content by applying appropriate evaluation approach to each section';
 
   if (hasPointValues) {
     return `${basePrompt}
@@ -252,7 +311,7 @@ The rubric contains point values. Calculate a numeric score based strictly on th
 - Award points ONLY for criteria that are met in the student work
 - Use the exact point values from the rubric
 - If rubric uses 0/0.5/1 scoring, follow that exactly
-- Calculate total score as sum of all category scores
+- Calculate total score as sum of all category scores${contentGuidance}
 
 OUTPUT FORMAT (JSON only):
 {
@@ -287,7 +346,7 @@ SCORING MODE (Qualitative):
 The rubric has criteria but no specific point values. Provide qualitative rubric-aligned ratings.
 - Evaluate each rubric criterion
 - Use qualitative ratings like "Exceeds", "Meets", "Approaching", "Not Yet" for each
-- Do NOT assign numeric scores since rubric doesn't specify points
+- Do NOT assign numeric scores since rubric doesn't specify points${contentGuidance}
 
 OUTPUT FORMAT (JSON only):
 {
