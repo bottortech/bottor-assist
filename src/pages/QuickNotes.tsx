@@ -42,69 +42,94 @@ import { useToast } from '@/hooks/use-toast';
 import { isPilotMode } from '@/lib/feature-flags';
 import jsPDF from 'jspdf';
 
-// Template definitions
+// Template definitions - Teacher-aligned documentation formats
 const TEMPLATES = {
   'parent-contact': {
     label: 'Parent Contact Log',
     content: `Parent Contact Log
-Date: ${new Date().toLocaleDateString()}
-Student: 
-Contact Method: (phone / email / in-person)
+
+Parent / Guardian Name: 
+Student (optional): 
+Date & Time: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+Method of Contact: [ ] Call  [ ] Email  [ ] In-Person  [ ] Virtual
+
 Reason for Contact:
 
-Discussion Summary:
 
-Follow-up Needed:
+Summary of Discussion:
+
+
+Next Steps / Follow-Up Needed:
+
 `,
   },
   'meeting-notes': {
-    label: 'Meeting Notes',
-    content: `Meeting Notes
-Date: ${new Date().toLocaleDateString()}
-Attendees:
+    label: 'Meeting Notes (School Use)',
+    content: `Meeting Notes (School Use)
 
-Purpose:
+Meeting Type: 
+Date: ${new Date().toLocaleDateString()}
+Participants: 
+
+Purpose / Agenda:
+
 
 Key Discussion Points:
 
+
+Decisions Made:
+
+
 Action Items:
 
-Next Meeting:
+
+Follow-Up Date: 
+
 `,
   },
-  'behavior-incident': {
-    label: 'Behavior / Incident Note',
-    content: `Behavior / Incident Note
-Date: ${new Date().toLocaleDateString()}
-Student(s) Involved:
-Location:
-Time:
+  'behavior-observation': {
+    label: 'Behavior Observation / Incident Note',
+    content: `Behavior Observation / Incident Note
 
-Description of Incident:
+Student (optional): 
+Date & Time: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+Location: 
 
-Actions Taken:
+Observed Behavior:
 
-Parent Notified: (yes / no)
-Admin Notified: (yes / no)
 
-Follow-up Plan:
+Context / Trigger (if known):
+
+
+Response Taken:
+
+
+Outcome:
+
+
+Notes / Reflection:
+
 `,
   },
   'lesson-reflection': {
-    label: 'Lesson Reflection',
-    content: `Lesson Reflection
+    label: 'Lesson Reflection (Teacher Use)',
+    content: `Lesson Reflection (Teacher Use)
+
+Lesson / Topic: 
+Grade Level: 
 Date: ${new Date().toLocaleDateString()}
-Subject/Topic:
 
-What Went Well:
+What worked well:
 
-What Could Be Improved:
 
-Students Who Excelled:
+What didn't work as expected:
 
-Students Needing Support:
 
-Notes for Next Time:
+Student engagement notes:
+
+
+Ideas for improvement next time:
+
 `,
   },
 };
