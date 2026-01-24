@@ -3,24 +3,14 @@
  * QUICK NOTES PAGE (/quick-notes)
  * =============================================================================
  * 
- * NEXT.JS MIGRATION: app/quick-notes/page.tsx
+ * PURPOSE: Simple note-taking for teachers - parent contacts, meetings, reminders.
+ * Designed to be fast, focused, and teacher-friendly.
  * 
- * PURPOSE: Manual lesson notes entry with AI summary and parent message generation.
- * 
- * DATA FLOW:
- * 1. [INPUT] User fills form with lesson details
- * 2. [AI CALL] Generate summary via edge function
- * 3. [AI CALL] Generate parent messages via edge function
- * 4. [SAVE] Persist session with all generated content
- * 
- * FIELD MAPPING (form → database):
- * - subject → notes_json.subject
- * - grade → notes_json.grade  
- * - topic → notes_json.topic
- * - whatWeDid → notes_json.activities
- * - struggles → notes_json.struggles
- * - attentionNeeded → notes_json.attention_needed
- * - nextSteps → notes_json.next_steps
+ * FEATURES:
+ * - Large text area for quick notes
+ * - Template insertion for common note types
+ * - Coming soon: Speech-to-text recording
+ * - Save to history
  * =============================================================================
  */
 
@@ -28,10 +18,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -41,277 +30,142 @@ import {
 } from '@/components/ui/select';
 import {
   ArrowLeft,
-  Sparkles,
-  MessageSquare,
-  Copy,
-  Download,
+  Mic,
   Save,
-  Check,
   Loader2,
   FileText,
 } from 'lucide-react';
-import OrganizerGrader from '@/components/OrganizerGrader';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
-const SUBJECTS = [
-  'Mathematics',
-  'English Language Arts',
-  'Science',
-  'Social Studies',
-  'History',
-  'Geography',
-  'Art',
-  'Music',
-  'Physical Education',
-  'Foreign Language',
-  'Computer Science',
-  'Other',
-];
+// Template definitions
+const TEMPLATES = {
+  'parent-contact': {
+    label: 'Parent Contact Log',
+    content: `Parent Contact Log
+Date: ${new Date().toLocaleDateString()}
+Student: 
+Contact Method: (phone / email / in-person)
+Reason for Contact:
 
-const GRADES = [
-  'Pre-K',
-  'Kindergarten',
-  'Grade 1',
-  'Grade 2',
-  'Grade 3',
-  'Grade 4',
-  'Grade 5',
-  'Grade 6',
-  'Grade 7',
-  'Grade 8',
-  'Grade 9',
-  'Grade 10',
-  'Grade 11',
-  'Grade 12',
-];
+Discussion Summary:
 
-interface QuickNotesForm {
-  subject: string;
-  grade: string;
-  topic: string;
-  whatWeDid: string;
-  struggles: string;
-  attentionNeeded: string;
-  nextSteps: string;
-}
+Follow-up Needed:
+`,
+  },
+  'meeting-notes': {
+    label: 'Meeting Notes',
+    content: `Meeting Notes
+Date: ${new Date().toLocaleDateString()}
+Attendees:
 
-interface GeneratedContent {
-  summary: string | null;
-  parentMessageWarm: string | null;
-  parentMessageSms: string | null;
-}
+Purpose:
+
+Key Discussion Points:
+
+Action Items:
+
+Next Meeting:
+`,
+  },
+  'behavior-incident': {
+    label: 'Behavior / Incident Note',
+    content: `Behavior / Incident Note
+Date: ${new Date().toLocaleDateString()}
+Student(s) Involved:
+Location:
+Time:
+
+Description of Incident:
+
+Actions Taken:
+
+Parent Notified: (yes / no)
+Admin Notified: (yes / no)
+
+Follow-up Plan:
+`,
+  },
+  'lesson-reflection': {
+    label: 'Lesson Reflection',
+    content: `Lesson Reflection
+Date: ${new Date().toLocaleDateString()}
+Subject/Topic:
+
+What Went Well:
+
+What Could Be Improved:
+
+Students Who Excelled:
+
+Students Needing Support:
+
+Notes for Next Time:
+`,
+  },
+};
 
 export default function QuickNotes() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [form, setForm] = useState<QuickNotesForm>({
-    subject: '',
-    grade: '',
-    topic: '',
-    whatWeDid: '',
-    struggles: '',
-    attentionNeeded: '',
-    nextSteps: '',
-  });
-
-  const [generated, setGenerated] = useState<GeneratedContent>({
-    summary: null,
-    parentMessageWarm: null,
-    parentMessageSms: null,
-  });
-
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [showOrganizerGrader, setShowOrganizerGrader] = useState(false);
 
-  const updateForm = (field: keyof QuickNotesForm, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleGenerateSummary = async () => {
-    setLoadingSummary(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('generate-quick-notes-summary', {
-        body: { notes: form },
-      });
-
-      if (error) throw error;
-
-      setGenerated((prev) => ({ ...prev, summary: data.summary }));
-      toast({ title: 'Summary generated!' });
-    } catch (error) {
-      console.error('Error generating summary:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to generate summary. Please try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setLoadingSummary(false);
+  const handleTemplateSelect = (templateKey: string) => {
+    const template = TEMPLATES[templateKey as keyof typeof TEMPLATES];
+    if (template) {
+      // If notes already exist, append template with a separator
+      if (notes.trim()) {
+        setNotes(notes + '\n\n---\n\n' + template.content);
+      } else {
+        setNotes(template.content);
+      }
+      toast({ title: `${template.label} template inserted` });
     }
-  };
-
-  const handleGenerateParentMessages = async () => {
-    if (!generated.summary) {
-      toast({
-        title: 'Generate summary first',
-        description: 'Please generate a summary before creating parent messages.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setLoadingMessages(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('generate-parent-messages', {
-        body: { notes: form, summary: generated.summary },
-      });
-
-      if (error) throw error;
-
-      setGenerated((prev) => ({
-        ...prev,
-        parentMessageWarm: data.warmMessage,
-        parentMessageSms: data.smsMessage,
-      }));
-      toast({ title: 'Parent messages generated!' });
-    } catch (error) {
-      console.error('Error generating parent messages:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to generate parent messages. Please try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setLoadingMessages(false);
-    }
-  };
-
-  const handleCopy = async (text: string, label: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(label);
-    toast({ title: `${label} copied to clipboard!` });
-    setTimeout(() => setCopied(null), 2000);
-  };
-
-  const handleDownloadPDF = () => {
-    const content = buildExportContent();
-    
-    // Create a printable HTML document
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      toast({
-        title: 'Error',
-        description: 'Please allow popups to download PDF.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Lesson Summary - ${form.topic || 'Quick Notes'}</title>
-          <style>
-            body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; line-height: 1.6; }
-            h1 { color: #0d9488; margin-bottom: 8px; }
-            h2 { color: #374151; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
-            .meta { color: #6b7280; margin-bottom: 24px; }
-            .section { margin-bottom: 16px; }
-            .label { font-weight: 600; color: #374151; }
-            .content { white-space: pre-wrap; }
-            .message-box { background: #f3f4f6; padding: 16px; border-radius: 8px; margin-top: 8px; }
-            @media print { body { padding: 20px; } }
-          </style>
-        </head>
-        <body>
-          ${content}
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
-  };
-
-  const buildExportContent = () => {
-    const date = new Date().toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-
-    return `
-      <h1>${form.topic || 'Lesson Summary'}</h1>
-      <p class="meta">${form.subject || 'Not provided'} · ${form.grade || 'Not provided'} · ${date}</p>
-      
-      <h2>Lesson Notes</h2>
-      <div class="section">
-        <p class="label">What we did today:</p>
-        <p class="content">${form.whatWeDid || 'Not provided.'}</p>
-      </div>
-      <div class="section">
-        <p class="label">What students struggled with:</p>
-        <p class="content">${form.struggles || 'Not provided.'}</p>
-      </div>
-      <div class="section">
-        <p class="label">Students needing attention:</p>
-        <p class="content">${form.attentionNeeded || 'Not provided.'}</p>
-      </div>
-      <div class="section">
-        <p class="label">Homework/Next steps:</p>
-        <p class="content">${form.nextSteps || 'Not provided.'}</p>
-      </div>
-      
-      ${generated.summary ? `
-        <h2>AI-Generated Summary</h2>
-        <p class="content">${generated.summary}</p>
-      ` : ''}
-      
-      ${generated.parentMessageWarm ? `
-        <h2>Parent Message (Warm)</h2>
-        <div class="message-box">${generated.parentMessageWarm}</div>
-      ` : ''}
-      
-      ${generated.parentMessageSms ? `
-        <h2>Parent Message (SMS-Ready)</h2>
-        <div class="message-box">${generated.parentMessageSms}</div>
-      ` : ''}
-    `;
   };
 
   const handleSave = async () => {
-    if (!user) return;
+    if (!user) {
+      toast({
+        title: 'Please sign in',
+        description: 'You need to be signed in to save notes.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!notes.trim()) {
+      toast({
+        title: 'No notes to save',
+        description: 'Please enter some notes before saving.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     setSaving(true);
     try {
-      const summaryJson = {
-        lesson_summary: generated.summary || 'Not provided.',
-        student_understanding: {
-          strengths: form.whatWeDid || 'Not provided.',
-          challenges: form.struggles || 'Not provided.',
-        },
-        attention_flags: form.attentionNeeded
-          ? form.attentionNeeded.split(',').map((s) => s.trim()).filter(Boolean)
-          : [],
-        next_steps: form.nextSteps || 'Not provided.',
-      };
+      // Extract a title from the first line or use default
+      const firstLine = notes.split('\n')[0]?.trim() || 'Quick Note';
+      const title = firstLine.length > 50 ? firstLine.slice(0, 50) + '...' : firstLine;
+      
+      // Create a snippet from the content
+      const snippet = notes.slice(0, 150).replace(/\n/g, ' ').trim();
 
       const sessionData = {
         user_id: user.id,
         status: 'completed',
-        title: form.topic || `${form.subject} - ${form.grade}` || 'Quick Notes Session',
-        snippet: form.whatWeDid?.slice(0, 100) || generated.summary?.slice(0, 100) || 'Quick notes session',
-        summary_json: summaryJson,
-        teacher_notes: JSON.stringify(form),
-        parent_message_draft: generated.parentMessageWarm || null,
+        title: title,
+        snippet: snippet,
+        teacher_notes: notes,
+        summary_json: {
+          note_type: 'quick_note',
+          content: notes,
+          created_via: 'quick_notes_page',
+        },
       };
 
       if (sessionId) {
@@ -321,6 +175,7 @@ export default function QuickNotes() {
           .update(sessionData)
           .eq('id', sessionId);
         if (error) throw error;
+        toast({ title: 'Note updated!' });
       } else {
         // Create new
         const { data, error } = await supabase
@@ -330,14 +185,13 @@ export default function QuickNotes() {
           .single();
         if (error) throw error;
         setSessionId(data.id);
+        toast({ title: 'Note saved!' });
       }
-
-      toast({ title: 'Session saved successfully!' });
     } catch (error) {
-      console.error('Error saving session:', error);
+      console.error('Error saving note:', error);
       toast({
         title: 'Error',
-        description: 'Failed to save session. Please try again.',
+        description: 'Failed to save note. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -353,8 +207,6 @@ export default function QuickNotes() {
     );
   }
 
-  const hasNotes = form.whatWeDid || form.struggles || form.attentionNeeded || form.nextSteps;
-
   return (
     <div className="min-h-screen bg-bottor-gradient">
       {/* Header */}
@@ -369,265 +221,99 @@ export default function QuickNotes() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Home
           </Button>
-          <h1 className="text-xl font-bold text-foreground">Quick Notes</h1>
+          <div>
+            <h1 className="text-xl font-bold text-foreground">Quick Notes</h1>
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Quick Action: Grade Organizer */}
-        {!showOrganizerGrader ? (
-          <Button
-            variant="outline"
-            className="w-full border-primary/50 text-primary hover:bg-primary/10"
-            onClick={() => setShowOrganizerGrader(true)}
-          >
-            <FileText className="w-5 h-5 mr-2" />
-            Grade Graphic Organizer (15pt)
-          </Button>
-        ) : (
-          <div className="space-y-4">
+        {/* Page Description */}
+        <div className="text-center space-y-2">
+          <p className="text-muted-foreground">
+            Capture notes fast. Save for later. Great for parent contacts, meetings, and reminders.
+          </p>
+        </div>
+
+        {/* Notes Input Section */}
+        <Card className="border-0 shadow-md bg-card-gradient">
+          <CardContent className="pt-6 space-y-4">
+            {/* Template Helper */}
+            <div className="space-y-2">
+              <Label className="text-sm text-muted-foreground flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Insert a template (optional)
+              </Label>
+              <Select onValueChange={handleTemplateSelect}>
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue placeholder="Choose a template..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TEMPLATES).map(([key, template]) => (
+                    <SelectItem key={key} value={key}>
+                      {template.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Notes Text Area */}
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notes</Label>
+              <Textarea
+                id="notes"
+                placeholder="Type quick notes here… (parent contact, reminders, meeting notes, etc.)"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={12}
+                className="resize-y min-h-[200px]"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Recording Section (Coming Soon) */}
+        <Card className="border-0 shadow-md bg-card-gradient">
+          <CardContent className="pt-6 space-y-4">
+            <Label className="flex items-center gap-2">
+              <Mic className="w-4 h-4" />
+              Record Notes (Speech-to-Text)
+            </Label>
+            
             <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowOrganizerGrader(false)}
-              className="text-muted-foreground"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Quick Notes
-            </Button>
-            <OrganizerGrader />
-          </div>
-        )}
-
-        {/* Form Section - hide when grading organizer */}
-        {!showOrganizerGrader && (
-          <Card className="border-0 shadow-md bg-card-gradient">
-            <CardHeader>
-              <CardTitle className="text-lg">Lesson Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="subject">Subject</Label>
-                  <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
-                    <SelectTrigger id="subject">
-                      <SelectValue placeholder="Select subject" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SUBJECTS.map((subject) => (
-                        <SelectItem key={subject} value={subject}>
-                          {subject}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="grade">Grade</Label>
-                  <Select value={form.grade} onValueChange={(v) => updateForm('grade', v)}>
-                    <SelectTrigger id="grade">
-                      <SelectValue placeholder="Select grade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {GRADES.map((grade) => (
-                        <SelectItem key={grade} value={grade}>
-                          {grade}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="topic">Lesson Topic</Label>
-                <Input
-                  id="topic"
-                  placeholder="e.g., Introduction to Fractions"
-                  value={form.topic}
-                  onChange={(e) => updateForm('topic', e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="whatWeDid">What we did today</Label>
-                <Textarea
-                  id="whatWeDid"
-                  placeholder="Describe the main activities and learning objectives covered..."
-                  value={form.whatWeDid}
-                  onChange={(e) => updateForm('whatWeDid', e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="struggles">What students struggled with</Label>
-                <Textarea
-                  id="struggles"
-                  placeholder="Note any challenging concepts or common difficulties..."
-                  value={form.struggles}
-                  onChange={(e) => updateForm('struggles', e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="attentionNeeded">Names/groups needing attention</Label>
-                <Textarea
-                  id="attentionNeeded"
-                  placeholder="e.g., Sarah (needs extra help with multiplication), Table 3 group..."
-                  value={form.attentionNeeded}
-                  onChange={(e) => updateForm('attentionNeeded', e.target.value)}
-                  rows={2}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="nextSteps">Homework/Assessment/Next steps</Label>
-                <Textarea
-                  id="nextSteps"
-                  placeholder="Upcoming assignments, assessments, or follow-up activities..."
-                  value={form.nextSteps}
-                  onChange={(e) => updateForm('nextSteps', e.target.value)}
-                  rows={2}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Generate Actions - hide when grading organizer */}
-        {!showOrganizerGrader && (
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button
-              onClick={handleGenerateSummary}
-              disabled={!hasNotes || loadingSummary}
-              className="flex-1"
-              size="lg"
-            >
-              {loadingSummary ? (
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              ) : (
-                <Sparkles className="w-5 h-5 mr-2" />
-              )}
-              Generate Summary
-            </Button>
-            <Button
-              onClick={handleGenerateParentMessages}
-              disabled={!generated.summary || loadingMessages}
+              disabled
               variant="secondary"
-              className="flex-1"
               size="lg"
+              className="w-full opacity-60 cursor-not-allowed"
             >
-              {loadingMessages ? (
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              ) : (
-                <MessageSquare className="w-5 h-5 mr-2" />
-              )}
-              Generate Parent Message
+              <Mic className="w-5 h-5 mr-2" />
+              Record (Coming Soon)
             </Button>
-          </div>
-        )}
+            
+            <p className="text-sm text-muted-foreground text-center">
+              Recording is being finalized. For now, type notes or paste a transcript.
+            </p>
+          </CardContent>
+        </Card>
 
-        {/* Generated Summary */}
-        {!showOrganizerGrader && generated.summary && (
-          <Card className="border-0 shadow-md bg-card-gradient animate-fade-in">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">AI Summary</CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleCopy(generated.summary!, 'Summary')}
-              >
-                {copied === 'Summary' ? (
-                  <Check className="w-4 h-4 text-primary" />
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <p className="text-foreground whitespace-pre-wrap">{generated.summary}</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Generated Parent Messages */}
-        {!showOrganizerGrader && generated.parentMessageWarm && (
-          <Card className="border-0 shadow-md bg-card-gradient animate-fade-in">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">Parent Message (Warm & Supportive)</CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleCopy(generated.parentMessageWarm!, 'Warm Message')}
-              >
-                {copied === 'Warm Message' ? (
-                  <Check className="w-4 h-4 text-primary" />
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <p className="text-foreground whitespace-pre-wrap">{generated.parentMessageWarm}</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {!showOrganizerGrader && generated.parentMessageSms && (
-          <Card className="border-0 shadow-md bg-card-gradient animate-fade-in">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg">Parent Message (SMS-Ready)</CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleCopy(generated.parentMessageSms!, 'SMS Message')}
-              >
-                {copied === 'SMS Message' ? (
-                  <Check className="w-4 h-4 text-primary" />
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <p className="text-foreground whitespace-pre-wrap">{generated.parentMessageSms}</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Export Actions */}
-        {!showOrganizerGrader && (generated.summary || hasNotes) && (
-          <div className="flex flex-wrap gap-3 justify-center pb-8">
-            <Button
-              variant="outline"
-              onClick={() =>
-                handleCopy(
-                  `${generated.summary || ''}\n\n${generated.parentMessageWarm || ''}`.trim(),
-                  'All Content'
-                )
-              }
-            >
-              <Copy className="w-4 h-4 mr-2" />
-              Copy All
-            </Button>
-            <Button variant="outline" onClick={handleDownloadPDF}>
-              <Download className="w-4 h-4 mr-2" />
-              Download PDF
-            </Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="w-4 h-4 mr-2" />
-              )}
-              {sessionId ? 'Update' : 'Save'}
-            </Button>
-          </div>
-        )}
+        {/* Save Action */}
+        <div className="flex justify-center pb-8">
+          <Button
+            onClick={handleSave}
+            disabled={saving || !notes.trim()}
+            size="lg"
+            className="min-w-[160px]"
+          >
+            {saving ? (
+              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-5 h-5 mr-2" />
+            )}
+            {sessionId ? 'Update Note' : 'Save Note'}
+          </Button>
+        </div>
       </main>
     </div>
   );
