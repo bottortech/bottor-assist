@@ -1259,15 +1259,15 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* Section 2: Rubric / Grading Criteria (Optional — required for scoring) */}
+        {/* Section 2: Rubric / Grading Criteria */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <span>Rubric / Grading Criteria</span>
-              <Badge variant="secondary" className="text-xs">Optional — required for scoring</Badge>
+              <span className="text-xs font-normal text-muted-foreground">Optional — required for scoring</span>
             </CardTitle>
             <CardDescription className="text-sm text-muted-foreground">
-              Bottor grades strictly using the criteria you provide here. If no rubric is provided, scoring is disabled and Bottor switches to feedback-only mode. If a rubric already exists in uploaded student work, Bottor will attempt to detect it automatically to reduce manual entry.
+              Bottor uses your rubric to assign scores. If no rubric is provided, Bottor will still generate written feedback, but numeric scoring will be disabled.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1304,10 +1304,10 @@ export default function GradePapers() {
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
-                  <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
-                  <span className="text-sm font-medium text-destructive">
-                    No rubric detected — Feedback-only mode (scoring disabled)
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-muted-foreground/20">
+                  <Info className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm text-muted-foreground">
+                    No rubric detected — feedback-only mode enabled (no numeric score).
                   </span>
                 </div>
                 {/* Smart fallback hint */}
