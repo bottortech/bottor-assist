@@ -76,7 +76,7 @@ export default function Index() {
             Teach. I'll handle the notes.
           </p>
           <p className="text-sm text-muted-foreground/70 mb-10">
-            Pilot Version — Feedback Welcome
+            Pilot Version — sample documents only.
           </p>
 
           {/* Actions */}
