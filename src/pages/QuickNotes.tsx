@@ -14,13 +14,14 @@
  * =============================================================================
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -42,16 +43,27 @@ import { useToast } from '@/hooks/use-toast';
 import { isPilotMode } from '@/lib/feature-flags';
 import jsPDF from 'jspdf';
 
+// Contact method options for Parent Contact Log
+const CONTACT_METHODS = [
+  { id: 'call', label: 'Call' },
+  { id: 'email', label: 'Email' },
+  { id: 'in-person', label: 'In-Person' },
+  { id: 'virtual', label: 'Virtual' },
+] as const;
+
+type ContactMethodId = typeof CONTACT_METHODS[number]['id'];
+
 // Template definitions - Teacher-aligned documentation formats
+// Note: Parent Contact Log uses interactive checkboxes, so Method of Contact is handled separately
 const TEMPLATES = {
   'parent-contact': {
     label: 'Parent Contact Log',
+    hasContactMethods: true,
     content: `Parent Contact Log
 
 Parent / Guardian Name: 
 Student (optional): 
 Date & Time: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-Method of Contact: [ ] Call  [ ] Email  [ ] In-Person  [ ] Virtual
 
 Reason for Contact:
 
@@ -240,10 +252,61 @@ export default function QuickNotes() {
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [selectedContactMethods, setSelectedContactMethods] = useState<ContactMethodId[]>([]);
+  const [showContactMethods, setShowContactMethods] = useState(false);
+
+  // Check if the notes contain a Parent Contact Log template
+  useEffect(() => {
+    const hasParentContactTemplate = notes.includes('Parent Contact Log');
+    setShowContactMethods(hasParentContactTemplate);
+    // Reset selections if template is removed
+    if (!hasParentContactTemplate && selectedContactMethods.length > 0) {
+      setSelectedContactMethods([]);
+    }
+  }, [notes]);
+
+  const handleContactMethodToggle = (methodId: ContactMethodId) => {
+    setSelectedContactMethods(prev => 
+      prev.includes(methodId)
+        ? prev.filter(id => id !== methodId)
+        : [...prev, methodId]
+    );
+  };
+
+  // Format contact methods for display in notes/PDF
+  const getFormattedContactMethods = (): string => {
+    if (selectedContactMethods.length === 0) return 'Not specified';
+    return selectedContactMethods
+      .map(id => CONTACT_METHODS.find(m => m.id === id)?.label)
+      .filter(Boolean)
+      .join(', ');
+  };
+
+  // Insert contact methods into note content for save/download
+  const getNotesWithContactMethods = (): string => {
+    if (!showContactMethods || selectedContactMethods.length === 0) return notes;
+    
+    // Find the position after "Date & Time:" line to insert Method of Contact
+    const lines = notes.split('\n');
+    const dateTimeIndex = lines.findIndex(line => line.startsWith('Date & Time:'));
+    
+    if (dateTimeIndex !== -1) {
+      // Insert Method of Contact after Date & Time line
+      const methodLine = `Method of Contact: ${getFormattedContactMethods()}`;
+      lines.splice(dateTimeIndex + 1, 0, methodLine);
+      return lines.join('\n');
+    }
+    
+    return notes;
+  };
 
   const handleTemplateSelect = (templateKey: string) => {
     const template = TEMPLATES[templateKey as keyof typeof TEMPLATES];
     if (template) {
+      // Reset contact methods when selecting parent-contact template
+      if (templateKey === 'parent-contact') {
+        setSelectedContactMethods([]);
+      }
       // If notes already exist, append template with a separator
       if (notes.trim()) {
         setNotes(notes + '\n\n---\n\n' + template.content);
@@ -275,23 +338,27 @@ export default function QuickNotes() {
 
     setSaving(true);
     try {
+      // Get notes with contact methods included
+      const notesWithMethods = getNotesWithContactMethods();
+      
       // Extract a title from the first line or use default
-      const firstLine = notes.split('\n')[0]?.trim() || 'Quick Note';
+      const firstLine = notesWithMethods.split('\n')[0]?.trim() || 'Quick Note';
       const title = firstLine.length > 50 ? firstLine.slice(0, 50) + '...' : firstLine;
       
       // Create a snippet from the content
-      const snippet = notes.slice(0, 150).replace(/\n/g, ' ').trim();
+      const snippet = notesWithMethods.slice(0, 150).replace(/\n/g, ' ').trim();
 
       const sessionData = {
         user_id: user.id,
         status: 'completed',
         title: title,
         snippet: snippet,
-        teacher_notes: notes,
+        teacher_notes: notesWithMethods,
         summary_json: {
           note_type: 'quick_note',
-          content: notes,
+          content: notesWithMethods,
           created_via: 'quick_notes_page',
+          contact_methods: showContactMethods ? selectedContactMethods : undefined,
         },
       };
 
@@ -338,11 +405,14 @@ export default function QuickNotes() {
 
     setDownloading(true);
     try {
+      // Get notes with contact methods included
+      const notesWithMethods = getNotesWithContactMethods();
+      
       // Extract title from first line
-      const firstLine = notes.split('\n')[0]?.trim() || 'Quick Note';
+      const firstLine = notesWithMethods.split('\n')[0]?.trim() || 'Quick Note';
       const title = firstLine.length > 50 ? firstLine.slice(0, 50) + '...' : firstLine;
 
-      const pdfBlob = generateNotePdf(title, notes);
+      const pdfBlob = generateNotePdf(title, notesWithMethods);
       const filename = generateNoteFilename(title);
 
       // Trigger download
@@ -427,6 +497,33 @@ export default function QuickNotes() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Contact Methods - Interactive Checkboxes (for Parent Contact Log) */}
+            {showContactMethods && (
+              <div className="space-y-3 p-4 rounded-lg bg-muted/50 border border-border">
+                <Label className="text-sm font-medium">Method of Contact</Label>
+                <p className="text-xs text-muted-foreground">
+                  Select all methods used for this contact.
+                </p>
+                <div className="flex flex-wrap gap-x-6 gap-y-3">
+                  {CONTACT_METHODS.map((method) => (
+                    <div key={method.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`contact-${method.id}`}
+                        checked={selectedContactMethods.includes(method.id)}
+                        onCheckedChange={() => handleContactMethodToggle(method.id)}
+                      />
+                      <label
+                        htmlFor={`contact-${method.id}`}
+                        className="text-sm font-medium leading-none cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                      >
+                        {method.label}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Notes Text Area */}
             <div className="space-y-2">
