@@ -18,7 +18,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
-import { LogOut, FileText, History, GraduationCap } from 'lucide-react';
+import { LogOut, FileText, History, GraduationCap, Mic } from 'lucide-react';
 
 export default function Index() {
   const { user, loading, signOut } = useAuth();
@@ -64,16 +64,19 @@ export default function Index() {
       <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20">
         <div className="text-center max-w-md mx-auto animate-fade-in">
           {/* Logo */}
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary text-primary-foreground mb-6 shadow-xl">
-            <GraduationCap className="w-10 h-10" />
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-2xl bg-primary text-primary-foreground mb-6 shadow-xl shadow-primary/20">
+            <GraduationCap className="w-12 h-12" />
           </div>
 
           {/* Title */}
           <h1 className="text-4xl font-bold mb-3 text-gradient-primary">
             Bottor Assist
           </h1>
-          <p className="text-xl text-muted-foreground mb-12">
+          <p className="text-xl text-muted-foreground mb-2">
             Teach. I'll handle the notes.
+          </p>
+          <p className="text-sm text-muted-foreground/70 mb-10">
+            Pilot Version — Feedback Welcome
           </p>
 
           {/* Actions */}
@@ -86,7 +89,7 @@ export default function Index() {
               className="w-full"
             >
               <GraduationCap className="w-5 h-5 mr-2" />
-              Grade Papers (Recommended)
+              Grade Papers (Batch Grading)
             </Button>
 
             {/* [ROUTE: /quick-notes] Secondary action - Quick Notes */}
@@ -94,10 +97,16 @@ export default function Index() {
               variant="outline"
               size="lg"
               onClick={() => navigate('/quick-notes')}
-              className="w-full"
+              className="w-full flex-col h-auto py-3"
             >
-              <FileText className="w-5 h-5 mr-2" />
-              Quick Notes
+              <span className="flex items-center">
+                <FileText className="w-5 h-5 mr-2" />
+                <Mic className="w-4 h-4 mr-2 text-muted-foreground" />
+                Quick Notes
+              </span>
+              <span className="text-xs text-muted-foreground font-normal mt-0.5">
+                Type or record
+              </span>
             </Button>
 
             {/* [ROUTE: /history] Tertiary action - View History */}
@@ -117,7 +126,7 @@ export default function Index() {
       {/* Footer */}
       <footer className="p-6 text-center">
         <p className="text-sm text-muted-foreground">
-          Your AI copilot for the classroom
+          Built with teachers to reduce paperwork.
         </p>
       </footer>
     </div>
