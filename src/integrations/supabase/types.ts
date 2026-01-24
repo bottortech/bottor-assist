@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      saved_rubrics: {
+        Row: {
+          content: string
+          created_at: string
+          grade_level: string | null
+          id: string
+          last_used_at: string
+          name: string
+          subject: string | null
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          grade_level?: string | null
+          id?: string
+          last_used_at?: string
+          name: string
+          subject?: string | null
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          grade_level?: string | null
+          id?: string
+          last_used_at?: string
+          name?: string
+          subject?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       sessions: {
         Row: {
           audio_path: string | null
