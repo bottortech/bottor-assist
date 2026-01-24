@@ -120,6 +120,7 @@ export default function GradePapers() {
   const studentFileInputRef = useRef<HTMLInputElement>(null);
   const assignmentFileInputRef = useRef<HTMLInputElement>(null);
   const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
+  const rubricFileInputRef = useRef<HTMLInputElement>(null);
 
   const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
 
@@ -127,6 +128,7 @@ export default function GradePapers() {
   const studentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const assignmentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const answerKeyUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  const rubricUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
 
   const [form, setForm] = useState<GradePapersForm>({
     grade_level: '', subject: '', assignment_type: '', rubric: '', answer_key: '',
@@ -161,6 +163,7 @@ export default function GradePapers() {
   const studentCombinedText = studentUpload.combinedText;
   const assignmentCombinedText = assignmentUpload.combinedText;
   const answerKeyCombinedText = answerKeyUpload.combinedText;
+  const rubricCombinedText = rubricUpload.combinedText;
 
   const detectRubricInText = (text: string): boolean => {
     if (!text.trim()) return false;
@@ -170,7 +173,13 @@ export default function GradePapers() {
   };
 
   useEffect(() => {
-    const hasRubric = form.rubric.trim() || detectRubricInText(assignmentCombinedText) || detectRubricInText(studentCombinedText);
+    // Check rubric sources in priority order: uploaded rubric, pasted rubric, assignment docs, student work
+    const hasUploadedRubric = rubricCombinedText.trim().length > 0;
+    const hasPastedRubric = form.rubric.trim().length > 0;
+    const hasAssignmentRubric = detectRubricInText(assignmentCombinedText);
+    const hasStudentRubric = detectRubricInText(studentCombinedText);
+    const hasRubric = hasUploadedRubric || hasPastedRubric || hasAssignmentRubric || hasStudentRubric;
+    
     setGradingMode(hasRubric ? 'scoring' : 'feedback-only');
     
     // Determine rubric mode based on detection and lock state
@@ -182,11 +191,13 @@ export default function GradePapers() {
       setRubricMode('draft');
     }
     
-    if (form.rubric.trim()) setDetectedRubricSource('Rubric textbox');
-    else if (detectRubricInText(assignmentCombinedText)) setDetectedRubricSource('Assignment documents');
-    else if (detectRubricInText(studentCombinedText)) setDetectedRubricSource('Student work');
+    // Set detected source for user clarity
+    if (hasUploadedRubric) setDetectedRubricSource('Uploaded rubric document');
+    else if (hasPastedRubric) setDetectedRubricSource('Rubric textbox');
+    else if (hasAssignmentRubric) setDetectedRubricSource('Assignment documents');
+    else if (hasStudentRubric) setDetectedRubricSource('Student work');
     else setDetectedRubricSource('');
-  }, [form.rubric, assignmentCombinedText, studentCombinedText, rubricLocked]);
+  }, [form.rubric, assignmentCombinedText, studentCombinedText, rubricLocked, rubricCombinedText]);
 
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -210,6 +221,11 @@ export default function GradePapers() {
     if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = '';
   };
 
+  const handleRubricFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) rubricUpload.addFiles(e.target.files);
+    if (rubricFileInputRef.current) rubricFileInputRef.current.value = '';
+  };
+
   const handleGenerateGrade = async () => {
     if (!studentCombinedText.trim()) {
       toast({ title: 'No student work', description: 'Upload files or paste text.', variant: 'destructive' });
@@ -217,8 +233,10 @@ export default function GradePapers() {
     }
     setGrading(true);
     try {
-      const effectiveRubric = form.rubric || (detectRubricInText(assignmentCombinedText) ? assignmentCombinedText : '');
-      const combinedAnswerKey = [form.answer_key, answerKeyCombinedText].filter(Boolean).join('\n\n');
+      // Priority: uploaded rubric > pasted rubric > detected from assignment docs
+      const combinedRubric = [rubricCombinedText, form.rubric].filter(Boolean).join('\n\n');
+      const effectiveRubric = combinedRubric || (detectRubricInText(assignmentCombinedText) ? assignmentCombinedText : '');
+      const combinedAnswerKey = [answerKeyCombinedText, form.answer_key].filter(Boolean).join('\n\n');
       
       const { data, error } = await supabase.functions.invoke('grade-paper', {
         body: {
@@ -599,16 +617,70 @@ export default function GradePapers() {
                 </Badge>
               )}
             </div>
+            <CardDescription className="text-xs">
+              You may upload a document or paste text — either option works.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Textarea
-              placeholder="Paste your rubric or grading criteria here..."
-              value={form.rubric}
-              onChange={(e) => updateForm('rubric', e.target.value)}
-              rows={6}
-              disabled={rubricMode === 'locked'}
-              className={rubricMode === 'locked' ? 'opacity-75 bg-muted/20' : ''}
-            />
+            {/* Upload Rubric */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Label className="text-sm font-medium">Upload Rubric (PDF or Image)</Label>
+              </div>
+              <input
+                ref={rubricFileInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                multiple
+                className="hidden"
+                onChange={handleRubricFileSelect}
+                disabled={rubricMode === 'locked'}
+              />
+              <div
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+                  rubricMode === 'locked'
+                    ? 'border-muted bg-muted/20 cursor-not-allowed opacity-60'
+                    : 'border-muted hover:border-primary hover:bg-primary/5'
+                }`}
+                onClick={() => rubricMode !== 'locked' && rubricFileInputRef.current?.click()}
+              >
+                <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Click to upload rubric files
+                </p>
+                <p className="text-xs text-muted-foreground/70 mt-1">
+                  PDF, JPG, PNG accepted
+                </p>
+              </div>
+              
+              {/* Rubric file list */}
+              {rubricUpload.files.length > 0 && (
+                <FileUploadList
+                  files={rubricUpload.files}
+                  onRemove={rubricUpload.removeFile}
+                  onRetry={rubricUpload.retryExtraction}
+                  label="Rubric Files"
+                  totalFiles={rubricUpload.totalFiles}
+                  completedFiles={rubricUpload.completedFiles}
+                  failedFiles={rubricUpload.failedFiles}
+                  progress={rubricUpload.progress}
+                  isExtracting={rubricUpload.isExtracting}
+                />
+              )}
+            </div>
+            
+            {/* Paste Rubric */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Or paste rubric text</Label>
+              <Textarea
+                placeholder="Paste your rubric or grading criteria here..."
+                value={form.rubric}
+                onChange={(e) => updateForm('rubric', e.target.value)}
+                rows={6}
+                disabled={rubricMode === 'locked'}
+                className={rubricMode === 'locked' ? 'opacity-75 bg-muted/20' : ''}
+              />
+            </div>
             
             {/* Rubric Mode Status */}
             {rubricMode === 'none' && (
@@ -617,7 +689,7 @@ export default function GradePapers() {
                 <div className="flex-1">
                   <span className="text-sm text-muted-foreground">No rubric detected — Feedback-only mode</span>
                   <p className="text-xs text-muted-foreground/70 mt-0.5">
-                    Paste a rubric above or upload assignment documents to enable scoring.
+                    Upload or paste a rubric above to enable scoring.
                   </p>
                 </div>
               </div>
@@ -765,14 +837,62 @@ export default function GradePapers() {
                     {answerKeyOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                   </Button>
                 </CollapsibleTrigger>
-                <CollapsibleContent className="pt-2 space-y-2">
-                  <Textarea
-                    placeholder="Paste answer key here..."
-                    value={form.answer_key}
-                    onChange={(e) => updateForm('answer_key', e.target.value)}
-                    rows={4}
-                    className="text-sm"
-                  />
+                <CollapsibleContent className="pt-3 space-y-4">
+                  <p className="text-xs text-muted-foreground">
+                    You may upload a document or paste text — either option works.
+                  </p>
+                  
+                  {/* Upload Answer Key */}
+                  <div className="space-y-3">
+                    <Label className="text-sm font-medium">Upload Answer Key (PDF or Image)</Label>
+                    <input
+                      ref={answerKeyFileInputRef}
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      multiple
+                      className="hidden"
+                      onChange={handleAnswerKeyFileSelect}
+                    />
+                    <div
+                      className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors border-muted hover:border-primary hover:bg-primary/5"
+                      onClick={() => answerKeyFileInputRef.current?.click()}
+                    >
+                      <Upload className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">
+                        Click to upload answer key files
+                      </p>
+                      <p className="text-xs text-muted-foreground/70 mt-1">
+                        PDF, JPG, PNG accepted
+                      </p>
+                    </div>
+                    
+                    {/* Answer key file list */}
+                    {answerKeyUpload.files.length > 0 && (
+                      <FileUploadList
+                        files={answerKeyUpload.files}
+                        onRemove={answerKeyUpload.removeFile}
+                        onRetry={answerKeyUpload.retryExtraction}
+                        label="Answer Key Files"
+                        totalFiles={answerKeyUpload.totalFiles}
+                        completedFiles={answerKeyUpload.completedFiles}
+                        failedFiles={answerKeyUpload.failedFiles}
+                        progress={answerKeyUpload.progress}
+                        isExtracting={answerKeyUpload.isExtracting}
+                      />
+                    )}
+                  </div>
+                  
+                  {/* Paste Answer Key */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Or paste answer key</Label>
+                    <Textarea
+                      placeholder="Paste answer key here..."
+                      value={form.answer_key}
+                      onChange={(e) => updateForm('answer_key', e.target.value)}
+                      rows={4}
+                      className="text-sm"
+                    />
+                  </div>
                 </CollapsibleContent>
               </Collapsible>
             </CardContent>
