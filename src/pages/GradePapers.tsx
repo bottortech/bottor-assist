@@ -58,6 +58,7 @@ import {
   CheckCircle2,
   BookOpen,
   History,
+  Printer,
 } from 'lucide-react';
 import { FileUploadList } from '@/components/FileUploadList';
 import { supabase } from '@/integrations/supabase/client';
@@ -133,8 +134,11 @@ export default function GradePapers() {
   const [result, setResult] = useState<GradingResult | null>(null);
   const [grading, setGrading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [studentName, setStudentName] = useState('');
+  const [assignmentName, setAssignmentName] = useState('');
   const [optionalContextOpen, setOptionalContextOpen] = useState(false);
   const [answerKeyOpen, setAnswerKeyOpen] = useState(false);
 
@@ -229,6 +233,160 @@ export default function GradePapers() {
     setTimeout(() => setCopied(null), 2000);
   };
 
+  const handleDownloadPdf = async () => {
+    if (!result) return;
+    setDownloadingPdf(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-pdf-report', {
+        body: {
+          studentName: studentName || 'Student',
+          assignmentName: assignmentName || form.subject || 'Assignment',
+          score: result.score_suggestion,
+          strengths: result.strengths,
+          areasForImprovement: result.areas_for_improvement,
+          feedback: result.feedback_paragraph,
+          gradingMode: gradingMode,
+          subject: form.subject,
+          gradeLevel: form.grade_level,
+          generatedAt: new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }),
+        },
+      });
+
+      if (error) throw error;
+
+      // Check if we got HTML fallback (PDF service unavailable)
+      if (data?.fallback) {
+        // Use client-side HTML-to-PDF fallback
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(data.html);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+          }, 500);
+        }
+        toast({ title: 'PDF generated using print dialog', description: 'Use "Save as PDF" in the print dialog.' });
+        return;
+      }
+
+      // Direct PDF download
+      const blob = new Blob([data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const sanitizedStudent = (studentName || 'Student').replace(/[^a-zA-Z0-9]/g, '_');
+      const sanitizedAssignment = (assignmentName || form.subject || 'Assignment').replace(/[^a-zA-Z0-9]/g, '_');
+      const filename = `${sanitizedStudent}_${sanitizedAssignment}_GradeReport.pdf`;
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      toast({ title: 'PDF downloaded!' });
+    } catch (error) {
+      console.error('PDF download error:', error);
+      toast({ 
+        title: 'PDF download failed', 
+        description: 'Try using "Print Report" instead.', 
+        variant: 'destructive' 
+      });
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  const handlePrintReport = () => {
+    if (!result) return;
+    
+    // Create a print-friendly HTML document
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Grade Report - ${studentName || 'Student'}</title>
+        <style>
+          @page { size: letter portrait; margin: 0.75in; }
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; padding: 20px; }
+          .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 24px; }
+          .header h1 { font-size: 20pt; font-weight: 700; color: #1e40af; margin-bottom: 4px; }
+          .header .subtitle { font-size: 10pt; color: #6b7280; }
+          .meta-info { display: flex; flex-wrap: wrap; gap: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; }
+          .meta-item { flex: 1; min-width: 120px; }
+          .meta-label { font-size: 9pt; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+          .meta-value { font-size: 11pt; font-weight: 600; color: #1a1a1a; }
+          .section { margin-bottom: 20px; page-break-inside: avoid; }
+          .section-title { font-size: 12pt; font-weight: 600; color: #1e40af; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; }
+          .section-content { font-size: 11pt; line-height: 1.6; color: #374151; white-space: pre-wrap; }
+          .score-box { background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%); border: 2px solid #3b82f6; border-radius: 12px; padding: 16px 24px; text-align: center; margin-bottom: 24px; }
+          .score-label { font-size: 10pt; color: #1e40af; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+          .score-value { font-size: 28pt; font-weight: 700; color: #1e40af; }
+          .feedback-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 16px; margin-top: 20px; }
+          .feedback-box .section-title { color: #166534; border-bottom-color: #86efac; }
+          .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 9pt; color: #9ca3af; }
+          @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Grade Report</h1>
+          <div class="subtitle">Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        </div>
+        <div class="meta-info">
+          <div class="meta-item">
+            <div class="meta-label">Student</div>
+            <div class="meta-value">${studentName || 'Not specified'}</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Assignment</div>
+            <div class="meta-value">${assignmentName || form.subject || 'Not specified'}</div>
+          </div>
+          ${form.subject ? `<div class="meta-item"><div class="meta-label">Subject</div><div class="meta-value">${form.subject}</div></div>` : ''}
+          ${form.grade_level ? `<div class="meta-item"><div class="meta-label">Grade Level</div><div class="meta-value">${form.grade_level}</div></div>` : ''}
+        </div>
+        ${gradingMode === 'scoring' && result.score_suggestion !== 'N/A' ? `
+          <div class="score-box">
+            <div class="score-label">Suggested Score</div>
+            <div class="score-value">${result.score_suggestion}</div>
+          </div>
+        ` : ''}
+        <div class="section">
+          <div class="section-title">Strengths</div>
+          <div class="section-content">${result.strengths}</div>
+        </div>
+        <div class="section">
+          <div class="section-title">Areas for Improvement</div>
+          <div class="section-content">${result.areas_for_improvement}</div>
+        </div>
+        <div class="feedback-box">
+          <div class="section">
+            <div class="section-title">Draft Feedback</div>
+            <div class="section-content">${result.feedback_paragraph}</div>
+          </div>
+        </div>
+        <div class="footer">This report was generated using AI assistance. Please review before sharing.</div>
+      </body>
+      </html>
+    `;
+    
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => printWindow.print(), 300);
+    }
+  };
+
   const handleSave = async () => {
     if (!user || !result) return;
     setSaving(true);
@@ -236,9 +394,9 @@ export default function GradePapers() {
       const sessionData = {
         user_id: user.id,
         status: 'completed',
-        title: `${form.subject || 'Assignment'} - Grading`,
+        title: `${studentName || form.subject || 'Assignment'} - Grading`,
         snippet: `Score: ${result.score_suggestion}`,
-        summary_json: { ...result, input_type: 'grading', grading_mode: gradingMode },
+        summary_json: { ...result, input_type: 'grading', grading_mode: gradingMode, studentName, assignmentName },
         teacher_notes: JSON.stringify(form),
         transcript: studentCombinedText,
       };
@@ -378,6 +536,35 @@ export default function GradePapers() {
         {/* Results */}
         {result && (
           <div className="space-y-4 animate-fade-in">
+            {/* PDF Export Info */}
+            <Card className="border border-muted shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Report Details (for PDF export)</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Student Name</Label>
+                    <Input 
+                      placeholder="Enter student name" 
+                      value={studentName} 
+                      onChange={(e) => setStudentName(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Assignment Name</Label>
+                    <Input 
+                      placeholder="Enter assignment name" 
+                      value={assignmentName} 
+                      onChange={(e) => setAssignmentName(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card className="border-0 shadow-md bg-primary/5">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex justify-between">Suggested Score
@@ -403,9 +590,29 @@ export default function GradePapers() {
               <CardContent><Textarea value={result.feedback_paragraph} onChange={(e) => updateResult('feedback_paragraph', e.target.value)} rows={5} /></CardContent>
             </Card>
 
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => window.print()} className="flex-1"><Download className="w-4 h-4 mr-2" />Download PDF</Button>
-              <Button onClick={handleSave} disabled={saving} className="flex-1">
+            <div className="flex flex-wrap gap-3">
+              <Button 
+                variant="outline" 
+                onClick={handleDownloadPdf} 
+                disabled={downloadingPdf}
+                className="flex-1 min-w-[140px]"
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4 mr-2" />
+                )}
+                Download PDF
+              </Button>
+              <Button 
+                variant="ghost" 
+                onClick={handlePrintReport}
+                className="min-w-[120px]"
+              >
+                <Printer className="w-4 h-4 mr-2" />
+                Print Report
+              </Button>
+              <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 {sessionId ? 'Update' : 'Save'}
               </Button>
