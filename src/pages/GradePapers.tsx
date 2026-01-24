@@ -59,7 +59,10 @@ import {
   BookOpen,
   History,
   Printer,
+  Lock,
+  Unlock,
 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { FileUploadList } from '@/components/FileUploadList';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -102,6 +105,7 @@ interface GradingResult {
 }
 
 type GradingMode = 'scoring' | 'feedback-only';
+type RubricMode = 'none' | 'draft' | 'locked';
 
 export default function GradePapers() {
   const { user, loading: authLoading } = useAuth();
@@ -125,6 +129,8 @@ export default function GradePapers() {
   const [autoDetectSources, setAutoDetectSources] = useState(true);
   const [detectedSourceCount, setDetectedSourceCount] = useState(0);
   const [gradingMode, setGradingMode] = useState<GradingMode>('feedback-only');
+  const [rubricMode, setRubricMode] = useState<RubricMode>('none');
+  const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState('');
   const [showSaveRubricPrompt, setShowSaveRubricPrompt] = useState(false);
   const [rubricNameInput, setRubricNameInput] = useState('');
@@ -156,11 +162,21 @@ export default function GradePapers() {
   useEffect(() => {
     const hasRubric = form.rubric.trim() || detectRubricInText(assignmentCombinedText) || detectRubricInText(studentCombinedText);
     setGradingMode(hasRubric ? 'scoring' : 'feedback-only');
+    
+    // Determine rubric mode based on detection and lock state
+    if (!hasRubric) {
+      setRubricMode('none');
+    } else if (rubricLocked) {
+      setRubricMode('locked');
+    } else {
+      setRubricMode('draft');
+    }
+    
     if (form.rubric.trim()) setDetectedRubricSource('Rubric textbox');
     else if (detectRubricInText(assignmentCombinedText)) setDetectedRubricSource('Assignment documents');
     else if (detectRubricInText(studentCombinedText)) setDetectedRubricSource('Student work');
     else setDetectedRubricSource('');
-  }, [form.rubric, assignmentCombinedText, studentCombinedText]);
+  }, [form.rubric, assignmentCombinedText, studentCombinedText, rubricLocked]);
 
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -489,9 +505,32 @@ export default function GradePapers() {
         </Card>
 
         {/* Rubric Section */}
-        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
-          <CardHeader>
-            <CardTitle className="text-lg">Rubric / Grading Criteria <span className="text-xs font-normal text-muted-foreground">Optional</span></CardTitle>
+        <Card className={`border-2 shadow-lg ${
+          rubricMode === 'locked' 
+            ? 'border-green-500/50 bg-green-500/5' 
+            : rubricMode === 'draft' 
+              ? 'border-primary/30 bg-primary/5' 
+              : 'border-muted bg-muted/10'
+        }`}>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg">
+                Rubric / Grading Criteria 
+                <span className="text-xs font-normal text-muted-foreground ml-2">Optional</span>
+              </CardTitle>
+              {rubricMode !== 'none' && (
+                <Badge 
+                  variant={rubricMode === 'locked' ? 'default' : 'secondary'}
+                  className={rubricMode === 'locked' ? 'bg-green-600 hover:bg-green-600' : ''}
+                >
+                  {rubricMode === 'locked' ? (
+                    <><Lock className="w-3 h-3 mr-1" />Locked</>
+                  ) : (
+                    <><Unlock className="w-3 h-3 mr-1" />Draft</>
+                  )}
+                </Badge>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <Textarea
@@ -499,20 +538,188 @@ export default function GradePapers() {
               value={form.rubric}
               onChange={(e) => updateForm('rubric', e.target.value)}
               rows={6}
+              disabled={rubricMode === 'locked'}
+              className={rubricMode === 'locked' ? 'opacity-75 bg-muted/20' : ''}
             />
-            {gradingMode === 'scoring' ? (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
-                <CheckCircle2 className="w-4 h-4 text-primary" />
-                <span className="text-sm text-primary">Rubric detected — Scoring enabled</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30">
+            
+            {/* Rubric Mode Status */}
+            {rubricMode === 'none' && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-muted">
                 <Info className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">No rubric — feedback-only mode</span>
+                <div className="flex-1">
+                  <span className="text-sm text-muted-foreground">No rubric detected — Feedback-only mode</span>
+                  <p className="text-xs text-muted-foreground/70 mt-0.5">
+                    Paste a rubric above or upload assignment documents to enable scoring.
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            {rubricMode === 'draft' && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
+                  <CheckCircle2 className="w-4 h-4 text-primary" />
+                  <div className="flex-1">
+                    <span className="text-sm text-primary">Rubric detected — Scoring enabled</span>
+                    {detectedRubricSource && (
+                      <p className="text-xs text-primary/70 mt-0.5">
+                        Source: {detectedRubricSource}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Lock Toggle */}
+                <div className="flex items-center justify-between p-3 rounded-lg border border-muted bg-background">
+                  <div className="flex items-center gap-2">
+                    <Unlock className="w-4 h-4 text-muted-foreground" />
+                    <div>
+                      <Label htmlFor="lock-rubric" className="text-sm font-medium cursor-pointer">
+                        Lock rubric for auto-grading
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Hides manual options and uses rubric criteria only
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    id="lock-rubric"
+                    checked={rubricLocked}
+                    onCheckedChange={setRubricLocked}
+                  />
+                </div>
+              </div>
+            )}
+            
+            {rubricMode === 'locked' && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/30">
+                  <Lock className="w-4 h-4 text-green-600" />
+                  <div className="flex-1">
+                    <span className="text-sm text-green-700 dark:text-green-400 font-medium">
+                      Rubric locked — Auto-grading enabled
+                    </span>
+                    {detectedRubricSource && (
+                      <p className="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">
+                        Source: {detectedRubricSource}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Unlock Toggle */}
+                <div className="flex items-center justify-between p-3 rounded-lg border border-green-500/30 bg-background">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-green-600" />
+                    <div>
+                      <Label htmlFor="lock-rubric" className="text-sm font-medium cursor-pointer">
+                        Rubric locked for auto-grading
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Manual grading options are hidden
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    id="lock-rubric"
+                    checked={rubricLocked}
+                    onCheckedChange={setRubricLocked}
+                  />
+                </div>
               </div>
             )}
           </CardContent>
         </Card>
+        
+        {/* Manual Grading Options - Hidden when rubric is locked */}
+        {rubricMode !== 'locked' && (
+          <Card className="border border-muted">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Info className="w-4 h-4" />
+                Manual Grading Options
+              </CardTitle>
+              <CardDescription className="text-xs">
+                These options are available when rubric is not locked
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Subject</Label>
+                  <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Select subject" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg z-50">
+                      {SUBJECTS.map(s => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Grade Level</Label>
+                  <Select value={form.grade_level} onValueChange={(v) => updateForm('grade_level', v)}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Select grade" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg z-50">
+                      {GRADES.map(g => (
+                        <SelectItem key={g} value={g}>{g}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Assignment Type</Label>
+                <Select value={form.assignment_type} onValueChange={(v) => updateForm('assignment_type', v)}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-lg z-50">
+                    {ASSIGNMENT_TYPES.map(t => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {/* Answer Key - Only in manual mode */}
+              <Collapsible open={answerKeyOpen} onOpenChange={setAnswerKeyOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between text-muted-foreground hover:text-foreground">
+                    <span className="flex items-center gap-2">
+                      <FileSearch className="w-4 h-4" />
+                      Answer Key (Optional)
+                    </span>
+                    {answerKeyOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-2 space-y-2">
+                  <Textarea
+                    placeholder="Paste answer key here..."
+                    value={form.answer_key}
+                    onChange={(e) => updateForm('answer_key', e.target.value)}
+                    rows={4}
+                    className="text-sm"
+                  />
+                </CollapsibleContent>
+              </Collapsible>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Locked Mode Info */}
+        {rubricMode === 'locked' && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/5 border border-green-500/20">
+            <CheckCircle2 className="w-4 h-4 text-green-600" />
+            <span className="text-sm text-green-700 dark:text-green-400">
+              Auto-grading mode: Manual options hidden. Grading will use rubric criteria only.
+            </span>
+          </div>
+        )}
 
         {/* Generate Button */}
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border">
