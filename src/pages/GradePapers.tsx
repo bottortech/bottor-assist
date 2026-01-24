@@ -63,11 +63,14 @@ import {
   Unlock,
   Link as LinkIcon,
   ExternalLink,
+  Eye,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { FileUploadList } from '@/components/FileUploadList';
+import { GradeReportPreview } from '@/components/GradeReportPreview';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { isPilotMode } from '@/lib/feature-flags';
 import { generateGradeReportPdf, generatePdfFilename } from '@/lib/pdf-generator';
 
 const SUBJECTS = [
@@ -153,6 +156,7 @@ export default function GradePapers() {
   const [savedPdfUrl, setSavedPdfUrl] = useState<string | null>(null);
   const [savedPdfFilename, setSavedPdfFilename] = useState<string | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const studentCombinedText = studentUpload.combinedText;
   const assignmentCombinedText = assignmentUpload.combinedText;
@@ -255,8 +259,20 @@ export default function GradePapers() {
     setTimeout(() => setCopied(null), 2000);
   };
 
+  const handlePreviewReport = () => {
+    if (!result) return;
+    setPreviewOpen(true);
+  };
+
   const handleDownloadPdf = async () => {
     if (!result || !user) return;
+    
+    // In pilot mode, just open preview instead
+    if (isPilotMode()) {
+      handlePreviewReport();
+      return;
+    }
+    
     setDownloadingPdf(true);
     setUploadingPdf(true);
     
@@ -849,11 +865,11 @@ export default function GradePapers() {
               <CardContent><Textarea value={result.feedback_paragraph} onChange={(e) => updateResult('feedback_paragraph', e.target.value)} rows={5} /></CardContent>
             </Card>
 
-            {/* Saved PDF Actions */}
-            {savedPdfUrl && (
-              <Card className="border border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/20">
+            {/* Saved PDF Actions - Only show in non-pilot mode */}
+            {!isPilotMode() && savedPdfUrl && (
+              <Card className="border border-accent bg-accent/30">
                 <CardContent className="py-3 flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                  <div className="flex items-center gap-2 text-accent-foreground">
                     <CheckCircle2 className="w-5 h-5" />
                     <span className="font-medium text-sm">Saved to Reports</span>
                   </div>
@@ -895,46 +911,98 @@ export default function GradePapers() {
               </Card>
             )}
 
-            <div className="flex flex-wrap gap-3">
-              <Button 
-                variant="outline" 
-                onClick={handleDownloadPdf} 
-                disabled={downloadingPdf || uploadingPdf}
-                className="flex-1 min-w-[140px]"
-              >
-                {downloadingPdf ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Generating...
-                  </>
-                ) : uploadingPdf ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download PDF
-                  </>
-                )}
-              </Button>
-              <Button 
-                variant="ghost" 
-                onClick={handlePrintReport}
-                className="min-w-[120px]"
-              >
-                <Printer className="w-4 h-4 mr-2" />
-                Print Report
-              </Button>
-              <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
-                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                {sessionId ? 'Update' : 'Save'}
-              </Button>
-            </div>
+            {/* Action Buttons - Pilot Mode */}
+            {isPilotMode() ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-3">
+                  <Button 
+                    variant="default" 
+                    onClick={handlePreviewReport}
+                    className="flex-1 min-w-[160px]"
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    Preview Grade Report
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    onClick={handlePrintReport}
+                    className="min-w-[180px]"
+                  >
+                    <Printer className="w-4 h-4 mr-2" />
+                    Print / Save (Pilot Mode)
+                  </Button>
+                  <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
+                    {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                    {sessionId ? 'Update' : 'Save'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground text-center">
+                  Pilot mode: PDF downloads and saved reports will be available in the full release.
+                </p>
+              </div>
+            ) : (
+              /* Full Release Buttons */
+              <div className="flex flex-wrap gap-3">
+                <Button 
+                  variant="outline" 
+                  onClick={handleDownloadPdf} 
+                  disabled={downloadingPdf || uploadingPdf}
+                  className="flex-1 min-w-[140px]"
+                >
+                  {downloadingPdf ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Generating...
+                    </>
+                  ) : uploadingPdf ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 mr-2" />
+                      Download PDF
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  onClick={handlePrintReport}
+                  className="min-w-[120px]"
+                >
+                  <Printer className="w-4 h-4 mr-2" />
+                  Print Report
+                </Button>
+                <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
+                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  {sessionId ? 'Update' : 'Save'}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </main>
+
+      {/* Grade Report Preview Modal */}
+      {result && (
+        <GradeReportPreview
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          data={{
+            studentName: studentName || 'Test Subject',
+            assignmentName: assignmentName || form.subject || 'Assignment',
+            score: result.score_suggestion,
+            strengths: result.strengths,
+            areasForImprovement: result.areas_for_improvement,
+            feedback: result.feedback_paragraph,
+            gradingMode: gradingMode,
+            subject: form.subject,
+            gradeLevel: form.grade_level,
+          }}
+          onPrint={handlePrintReport}
+        />
+      )}
     </div>
   );
 }
