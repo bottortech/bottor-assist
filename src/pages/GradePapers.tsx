@@ -35,6 +35,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useSavedRubrics } from '@/hooks/useSavedRubrics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -72,6 +73,9 @@ import {
   Info,
   AlertTriangle,
   CheckCircle2,
+  BookOpen,
+  History,
+  Bookmark,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -243,6 +247,14 @@ export default function GradePapers() {
   const assignmentFileInputRef = useRef<HTMLInputElement>(null);
   const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Saved rubrics hook
+  const { 
+    rubrics: savedRubrics, 
+    loading: rubricsLoading, 
+    saveRubric, 
+    markRubricAsUsed 
+  } = useSavedRubrics();
+
   // Form state
   const [form, setForm] = useState<GradePapersForm>({
     grade_level: '',
@@ -273,6 +285,13 @@ export default function GradePapers() {
   // Rubric detection state
   const [gradingMode, setGradingMode] = useState<GradingMode>('feedback-only');
   const [detectedRubricSource, setDetectedRubricSource] = useState<string>('');
+
+  // Saved rubrics UI state
+  const [showSaveRubricPrompt, setShowSaveRubricPrompt] = useState(false);
+  const [rubricNameInput, setRubricNameInput] = useState('');
+  const [savingRubric, setSavingRubric] = useState(false);
+  const [showDetectedRubricSuggestion, setShowDetectedRubricSuggestion] = useState(false);
+  const [detectedRubricContent, setDetectedRubricContent] = useState('');
 
   // Results state (editable)
   const [result, setResult] = useState<GradingResult | null>(null);
@@ -505,6 +524,32 @@ export default function GradePapers() {
   }, [studentCombinedText, autoDetectSources]);
 
   /**
+   * Trigger rubric detection suggestion when assignment/student docs have rubric content
+   */
+  useEffect(() => {
+    // Only suggest if no rubric is manually entered
+    if (form.rubric.trim()) return;
+    
+    // Check assignment documents first (higher priority)
+    if (assignmentCombinedText.trim() && detectRubricInText(assignmentCombinedText)) {
+      setDetectedRubricContent(assignmentCombinedText);
+      setShowDetectedRubricSuggestion(true);
+      return;
+    }
+    
+    // Then check student work
+    if (studentCombinedText.trim() && detectRubricInText(studentCombinedText)) {
+      setDetectedRubricContent(studentCombinedText);
+      setShowDetectedRubricSuggestion(true);
+      return;
+    }
+    
+    // No rubric detected - clear suggestion
+    setShowDetectedRubricSuggestion(false);
+    setDetectedRubricContent('');
+  }, [assignmentCombinedText, studentCombinedText, form.rubric]);
+
+  /**
    * Update combined text from uploaded files
    */
   const updateCombinedText = (
@@ -527,6 +572,79 @@ export default function GradePapers() {
    */
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  /**
+   * [RUBRIC REUSE] Handle selecting a saved rubric
+   */
+  const handleSelectSavedRubric = async (rubricId: string) => {
+    const selected = savedRubrics.find(r => r.id === rubricId);
+    if (selected) {
+      updateForm('rubric', selected.content);
+      await markRubricAsUsed(rubricId);
+      toast({
+        title: 'Rubric applied',
+        description: `"${selected.name}" has been loaded into the rubric field.`,
+      });
+    }
+  };
+
+  /**
+   * [RUBRIC REUSE] Handle saving current rubric for future use
+   */
+  const handleSaveRubric = async () => {
+    if (!form.rubric.trim()) return;
+    
+    const name = rubricNameInput.trim() || `Rubric - ${new Date().toLocaleDateString()}`;
+    setSavingRubric(true);
+    
+    try {
+      await saveRubric(name, form.rubric, form.subject, form.grade_level);
+      setShowSaveRubricPrompt(false);
+      setRubricNameInput('');
+      toast({
+        title: 'Rubric saved',
+        description: `"${name}" has been saved for future use.`,
+      });
+    } catch (err) {
+      toast({
+        title: 'Failed to save rubric',
+        description: 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingRubric(false);
+    }
+  };
+
+  /**
+   * [RUBRIC DETECTION] Handle using detected rubric from documents
+   */
+  const handleUseDetectedRubric = () => {
+    if (detectedRubricContent) {
+      updateForm('rubric', detectedRubricContent);
+      setShowDetectedRubricSuggestion(false);
+      toast({
+        title: 'Rubric applied',
+        description: 'Detected rubric has been loaded. You can edit it as needed.',
+      });
+    }
+  };
+
+  /**
+   * Format relative time for rubric last used date
+   */
+  const formatRelativeTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return 'Used today';
+    if (diffDays === 1) return 'Used yesterday';
+    if (diffDays < 7) return `Used ${diffDays} days ago`;
+    if (diffDays < 30) return `Used ${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) > 1 ? 's' : ''} ago`;
+    return `Used ${date.toLocaleDateString()}`;
   };
 
   /**
@@ -1271,14 +1389,135 @@ export default function GradePapers() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            
+            {/* Reuse Previous Rubric Section */}
+            {savedRubrics.length > 0 && !form.rubric.trim() && (
+              <div className="space-y-2 p-3 rounded-lg bg-muted/20 border border-muted-foreground/10">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <History className="w-4 h-4" />
+                  <span>Reuse a previous rubric</span>
+                </div>
+                <Select onValueChange={handleSelectSavedRubric}>
+                  <SelectTrigger className="w-full bg-background">
+                    <SelectValue placeholder="Select a saved rubric..." />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-lg z-50">
+                    {savedRubrics.map((rubric) => (
+                      <SelectItem key={rubric.id} value={rubric.id}>
+                        <div className="flex flex-col items-start">
+                          <span className="font-medium">{rubric.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatRelativeTime(rubric.last_used_at)}
+                            {rubric.subject && ` • ${rubric.subject}`}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Detected Rubric Suggestion */}
+            {showDetectedRubricSuggestion && detectedRubricContent && !form.rubric.trim() && (
+              <div className="p-3 rounded-lg bg-secondary/50 border border-secondary">
+                <div className="flex items-start gap-2">
+                  <BookOpen className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <p className="text-sm text-foreground">
+                      Rubric detected from assignment — use this?
+                    </p>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="default"
+                        onClick={handleUseDetectedRubric}
+                        className="h-7 text-xs"
+                      >
+                        Use
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => {
+                          updateForm('rubric', detectedRubricContent);
+                          setShowDetectedRubricSuggestion(false);
+                        }}
+                        className="h-7 text-xs"
+                      >
+                        Edit
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="ghost"
+                        onClick={() => setShowDetectedRubricSuggestion(false)}
+                        className="h-7 text-xs text-muted-foreground"
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <Textarea
               id="rubric"
               placeholder="Paste your grading rubric here. Include criteria, point values, and expectations..."
               value={form.rubric}
-              onChange={(e) => updateForm('rubric', e.target.value)}
+              onChange={(e) => {
+                updateForm('rubric', e.target.value);
+                // Show save prompt when rubric is entered manually
+                if (e.target.value.trim() && !showSaveRubricPrompt) {
+                  setShowSaveRubricPrompt(true);
+                }
+              }}
               rows={6}
               className="font-mono text-sm"
             />
+
+            {/* Save Rubric Prompt */}
+            {showSaveRubricPrompt && form.rubric.trim() && (
+              <div className="p-3 rounded-lg bg-muted/20 border border-muted-foreground/10 space-y-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Bookmark className="w-4 h-4" />
+                  <span>Save this rubric for reuse?</span>
+                  <span className="text-xs">(optional)</span>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Rubric name (optional)"
+                    value={rubricNameInput}
+                    onChange={(e) => setRubricNameInput(e.target.value)}
+                    className="flex-1 h-8 text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleSaveRubric}
+                    disabled={savingRubric}
+                    className="h-8"
+                  >
+                    {savingRubric ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <>
+                        <Save className="w-3 h-3 mr-1" />
+                        Save
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowSaveRubricPrompt(false)}
+                    className="h-8 text-muted-foreground"
+                  >
+                    Skip
+                  </Button>
+                </div>
+              </div>
+            )}
             
             {/* Rubric Status Callout */}
             {gradingMode === 'scoring' ? (
