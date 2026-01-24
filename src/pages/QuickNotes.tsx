@@ -34,9 +34,13 @@ import {
   Save,
   Loader2,
   FileText,
+  Download,
+  FlaskConical,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { isPilotMode } from '@/lib/feature-flags';
+import jsPDF from 'jspdf';
 
 // Template definitions
 const TEMPLATES = {
@@ -105,6 +109,103 @@ Notes for Next Time:
   },
 };
 
+/**
+ * Generates a PDF from the note content
+ */
+function generateNotePdf(noteTitle: string, noteContent: string): Blob {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'letter',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 20;
+  const contentWidth = pageWidth - margin * 2;
+  let yPosition = margin;
+
+  // Header styling
+  doc.setFillColor(245, 247, 250);
+  doc.rect(0, 0, pageWidth, 45, 'F');
+
+  // Title
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(30, 41, 59);
+  doc.text(noteTitle, margin, yPosition + 10);
+
+  // Date
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor(100, 116, 139);
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  doc.text(dateStr, margin, yPosition + 20);
+
+  // Pilot badge
+  if (isPilotMode()) {
+    doc.setFillColor(254, 243, 199);
+    doc.roundedRect(pageWidth - margin - 35, yPosition + 5, 35, 8, 2, 2, 'F');
+    doc.setFontSize(8);
+    doc.setTextColor(146, 64, 14);
+    doc.text('Pilot Mode', pageWidth - margin - 32, yPosition + 10);
+  }
+
+  // Divider
+  yPosition = 50;
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.5);
+  doc.line(margin, yPosition, pageWidth - margin, yPosition);
+
+  // Content
+  yPosition += 10;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor(51, 65, 85);
+
+  const lines = doc.splitTextToSize(noteContent, contentWidth);
+  const lineHeight = 6;
+
+  for (const line of lines) {
+    if (yPosition + lineHeight > pageHeight - margin) {
+      doc.addPage();
+      yPosition = margin;
+    }
+    doc.text(line, margin, yPosition);
+    yPosition += lineHeight;
+  }
+
+  // Footer
+  const footerY = pageHeight - 10;
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    'Generated from Quick Notes • Pilot Version',
+    pageWidth / 2,
+    footerY,
+    { align: 'center' }
+  );
+
+  return doc.output('blob');
+}
+
+/**
+ * Generates a sanitized filename for the note download
+ */
+function generateNoteFilename(title: string): string {
+  const sanitized = title
+    .replace(/[^a-zA-Z0-9\s-]/g, '')
+    .replace(/\s+/g, '_')
+    .slice(0, 40);
+  const date = new Date().toISOString().split('T')[0];
+  return `QuickNote_${sanitized || 'Note'}_${date}.pdf`;
+}
+
 export default function QuickNotes() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -112,6 +213,7 @@ export default function QuickNotes() {
 
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const handleTemplateSelect = (templateKey: string) => {
@@ -196,6 +298,48 @@ export default function QuickNotes() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!notes.trim()) {
+      toast({
+        title: 'No notes to download',
+        description: 'Please enter some notes before downloading.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      // Extract title from first line
+      const firstLine = notes.split('\n')[0]?.trim() || 'Quick Note';
+      const title = firstLine.length > 50 ? firstLine.slice(0, 50) + '...' : firstLine;
+
+      const pdfBlob = generateNotePdf(title, notes);
+      const filename = generateNoteFilename(title);
+
+      // Trigger download
+      const url = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({ title: 'Note downloaded!' });
+    } catch (error) {
+      console.error('Error downloading note:', error);
+      toast({
+        title: 'Download failed',
+        description: 'Could not generate the note file. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -298,21 +442,50 @@ export default function QuickNotes() {
           </CardContent>
         </Card>
 
-        {/* Save Action */}
-        <div className="flex justify-center pb-8">
-          <Button
-            onClick={handleSave}
-            disabled={saving || !notes.trim()}
-            size="lg"
-            className="min-w-[160px]"
-          >
-            {saving ? (
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-            ) : (
-              <Save className="w-5 h-5 mr-2" />
-            )}
-            {sessionId ? 'Update Note' : 'Save Note'}
-          </Button>
+        {/* Actions */}
+        <div className="space-y-4 pb-8">
+          <div className="flex flex-col sm:flex-row justify-center gap-3">
+            {/* Primary: Save Note */}
+            <Button
+              onClick={handleSave}
+              disabled={saving || !notes.trim()}
+              size="lg"
+              className="min-w-[160px]"
+            >
+              {saving ? (
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+              ) : (
+                <Save className="w-5 h-5 mr-2" />
+              )}
+              {sessionId ? 'Update Note' : 'Save Note'}
+            </Button>
+
+            {/* Secondary: Download Note */}
+            <Button
+              onClick={handleDownload}
+              disabled={downloading || !notes.trim()}
+              variant="outline"
+              size="lg"
+              className="min-w-[160px]"
+            >
+              {downloading ? (
+                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+              ) : (
+                <Download className="w-5 h-5 mr-2" />
+              )}
+              Download Note
+            </Button>
+          </div>
+
+          {/* Pilot Mode Helper Text */}
+          {isPilotMode() && (
+            <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <FlaskConical className="w-3.5 h-3.5" />
+              <span>
+                Pilot mode: Notes can be saved and downloaded locally. Cloud history and sharing will be available in the full release.
+              </span>
+            </div>
+          )}
         </div>
       </main>
     </div>
