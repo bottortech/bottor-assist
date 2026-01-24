@@ -20,6 +20,3 @@ verify_jwt = false
 
 [functions.grade-organizer]
 verify_jwt = false
-
-[functions.generate-pdf-report]
-verify_jwt = false

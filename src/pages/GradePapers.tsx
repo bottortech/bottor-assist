@@ -61,11 +61,14 @@ import {
   Printer,
   Lock,
   Unlock,
+  Link as LinkIcon,
+  ExternalLink,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { FileUploadList } from '@/components/FileUploadList';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { generateGradeReportPdf, generatePdfFilename } from '@/lib/pdf-generator';
 
 const SUBJECTS = [
   'Mathematics', 'English Language Arts', 'Science', 'Social Studies', 'History',
@@ -147,6 +150,9 @@ export default function GradePapers() {
   const [assignmentName, setAssignmentName] = useState('');
   const [optionalContextOpen, setOptionalContextOpen] = useState(false);
   const [answerKeyOpen, setAnswerKeyOpen] = useState(false);
+  const [savedPdfUrl, setSavedPdfUrl] = useState<string | null>(null);
+  const [savedPdfFilename, setSavedPdfFilename] = useState<string | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
 
   const studentCombinedText = studentUpload.combinedText;
   const assignmentCombinedText = assignmentUpload.combinedText;
@@ -250,74 +256,105 @@ export default function GradePapers() {
   };
 
   const handleDownloadPdf = async () => {
-    if (!result) return;
+    if (!result || !user) return;
     setDownloadingPdf(true);
+    setUploadingPdf(true);
     
     try {
-      const { data, error } = await supabase.functions.invoke('generate-pdf-report', {
-        body: {
-          studentName: studentName || 'Student',
-          assignmentName: assignmentName || form.subject || 'Assignment',
-          score: result.score_suggestion,
-          strengths: result.strengths,
-          areasForImprovement: result.areas_for_improvement,
-          feedback: result.feedback_paragraph,
-          gradingMode: gradingMode,
-          subject: form.subject,
-          gradeLevel: form.grade_level,
-          generatedAt: new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-          }),
-        },
+      // Generate PDF client-side using jsPDF
+      const pdfBlob = generateGradeReportPdf({
+        studentName: studentName || 'Student',
+        assignmentName: assignmentName || form.subject || 'Assignment',
+        score: result.score_suggestion,
+        strengths: result.strengths,
+        areasForImprovement: result.areas_for_improvement,
+        feedback: result.feedback_paragraph,
+        gradingMode: gradingMode,
+        subject: form.subject,
+        gradeLevel: form.grade_level,
       });
-
-      if (error) throw error;
-
-      // Check if we got HTML fallback (PDF service unavailable)
-      if (data?.fallback) {
-        // Use client-side HTML-to-PDF fallback
-        const printWindow = window.open('', '_blank');
-        if (printWindow) {
-          printWindow.document.write(data.html);
-          printWindow.document.close();
-          printWindow.focus();
-          setTimeout(() => {
-            printWindow.print();
-            printWindow.close();
-          }, 500);
-        }
-        toast({ title: 'PDF generated using print dialog', description: 'Use "Save as PDF" in the print dialog.' });
-        return;
-      }
-
-      // Direct PDF download
-      const blob = new Blob([data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const sanitizedStudent = (studentName || 'Student').replace(/[^a-zA-Z0-9]/g, '_');
-      const sanitizedAssignment = (assignmentName || form.subject || 'Assignment').replace(/[^a-zA-Z0-9]/g, '_');
-      const filename = `${sanitizedStudent}_${sanitizedAssignment}_GradeReport.pdf`;
       
+      const filename = generatePdfFilename(
+        studentName || 'Student',
+        assignmentName || form.subject || 'Assignment'
+      );
+      
+      // Download the PDF immediately
+      const downloadUrl = URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
-      link.href = url;
+      link.href = downloadUrl;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(downloadUrl);
       
+      setDownloadingPdf(false);
       toast({ title: 'PDF downloaded!' });
+      
+      // Upload to Supabase Storage in the background
+      const reportId = crypto.randomUUID();
+      const storagePath = `${user.id}/${reportId}.pdf`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('grade-reports')
+        .upload(storagePath, pdfBlob, {
+          contentType: 'application/pdf',
+          upsert: false,
+        });
+      
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError);
+        toast({
+          title: 'PDF saved locally',
+          description: 'Could not save to cloud storage.',
+        });
+      } else {
+        // Get public URL
+        const { data: urlData } = supabase.storage
+          .from('grade-reports')
+          .getPublicUrl(storagePath);
+        
+        setSavedPdfUrl(urlData.publicUrl);
+        setSavedPdfFilename(filename);
+        
+        toast({
+          title: 'Saved to Reports',
+          description: 'PDF has been saved and can be accessed anytime.',
+        });
+      }
     } catch (error) {
-      console.error('PDF download error:', error);
+      console.error('PDF generation error:', error);
       toast({ 
-        title: 'PDF download failed', 
-        description: 'Try using "Print Report" instead.', 
+        title: 'PDF generation failed', 
+        description: 'Please try again.', 
         variant: 'destructive' 
       });
     } finally {
       setDownloadingPdf(false);
+      setUploadingPdf(false);
     }
+  };
+  
+  const handleDownloadAgain = () => {
+    if (!savedPdfUrl || !savedPdfFilename) return;
+    
+    const link = document.createElement('a');
+    link.href = savedPdfUrl;
+    link.download = savedPdfFilename;
+    link.target = '_blank';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  
+  const handleCopyLink = async () => {
+    if (!savedPdfUrl) return;
+    
+    await navigator.clipboard.writeText(savedPdfUrl);
+    setCopied('link');
+    toast({ title: 'Link copied!' });
+    setTimeout(() => setCopied(null), 2000);
   };
 
   const handlePrintReport = () => {
@@ -797,19 +834,75 @@ export default function GradePapers() {
               <CardContent><Textarea value={result.feedback_paragraph} onChange={(e) => updateResult('feedback_paragraph', e.target.value)} rows={5} /></CardContent>
             </Card>
 
+            {/* Saved PDF Actions */}
+            {savedPdfUrl && (
+              <Card className="border border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/20">
+                <CardContent className="py-3 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span className="font-medium text-sm">Saved to Reports</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleDownloadAgain}
+                      className="gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download again
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={handleCopyLink}
+                      className="gap-1.5"
+                    >
+                      {copied === 'link' ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <LinkIcon className="w-3.5 h-3.5" />
+                      )}
+                      Copy link
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      asChild
+                    >
+                      <a href={savedPdfUrl} target="_blank" rel="noopener noreferrer" className="gap-1.5">
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Open
+                      </a>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <div className="flex flex-wrap gap-3">
               <Button 
                 variant="outline" 
                 onClick={handleDownloadPdf} 
-                disabled={downloadingPdf}
+                disabled={downloadingPdf || uploadingPdf}
                 className="flex-1 min-w-[140px]"
               >
                 {downloadingPdf ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Generating...
+                  </>
+                ) : uploadingPdf ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
                 ) : (
-                  <Download className="w-4 h-4 mr-2" />
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Download PDF
+                  </>
                 )}
-                Download PDF
               </Button>
               <Button 
                 variant="ghost" 
