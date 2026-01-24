@@ -439,25 +439,25 @@ export default function GradePapers() {
         </div>
         ${gradingMode === 'scoring' && result.score_suggestion !== 'N/A' ? `
           <div class="score-box">
-            <div class="score-label">Suggested Score</div>
+            <div class="score-label">Suggested Score <span style="font-size: 8pt; text-transform: none; opacity: 0.7;">(AI-assisted)</span></div>
             <div class="score-value">${result.score_suggestion}</div>
           </div>
         ` : ''}
         <div class="section">
-          <div class="section-title">Strengths</div>
+          <div class="section-title">Observed Strengths</div>
           <div class="section-content">${result.strengths}</div>
         </div>
         <div class="section">
-          <div class="section-title">Areas for Improvement</div>
+          <div class="section-title">Areas for Growth</div>
           <div class="section-content">${result.areas_for_improvement}</div>
         </div>
         <div class="feedback-box">
           <div class="section">
-            <div class="section-title">Draft Feedback</div>
+            <div class="section-title">Teacher Feedback Summary</div>
             <div class="section-content">${result.feedback_paragraph}</div>
           </div>
         </div>
-        <div class="footer">This report was generated using AI assistance. Please review before sharing.</div>
+        <div class="footer">This report was generated using AI assistance and is intended as a draft for teacher review.</div>
       </body>
       </html>
     `;
@@ -842,7 +842,8 @@ export default function GradePapers() {
 
             <Card className="border-0 shadow-md bg-primary/5">
               <CardHeader className="pb-2">
-                <CardTitle className="text-lg flex justify-between">Suggested Score
+                <CardTitle className="text-lg flex justify-between">
+                  Suggested Score <span className="text-xs font-normal text-muted-foreground ml-1">(AI-assisted)</span>
                   <Button variant="ghost" size="sm" onClick={() => handleCopy(result.score_suggestion, 'Score')}>
                     {copied === 'Score' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                   </Button>
@@ -853,15 +854,18 @@ export default function GradePapers() {
               </CardContent>
             </Card>
 
-            <Card className="border-0 shadow-md"><CardHeader className="pb-2"><CardTitle className="text-lg">Strengths</CardTitle></CardHeader>
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2"><CardTitle className="text-lg">Observed Strengths</CardTitle></CardHeader>
               <CardContent><Textarea value={result.strengths} onChange={(e) => updateResult('strengths', e.target.value)} rows={3} /></CardContent>
             </Card>
 
-            <Card className="border-0 shadow-md"><CardHeader className="pb-2"><CardTitle className="text-lg">Areas for Improvement</CardTitle></CardHeader>
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2"><CardTitle className="text-lg">Areas for Growth</CardTitle></CardHeader>
               <CardContent><Textarea value={result.areas_for_improvement} onChange={(e) => updateResult('areas_for_improvement', e.target.value)} rows={3} /></CardContent>
             </Card>
 
-            <Card className="border-0 shadow-md"><CardHeader className="pb-2"><CardTitle className="text-lg">Draft Feedback</CardTitle></CardHeader>
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2"><CardTitle className="text-lg">Teacher Feedback Summary</CardTitle></CardHeader>
               <CardContent><Textarea value={result.feedback_paragraph} onChange={(e) => updateResult('feedback_paragraph', e.target.value)} rows={5} /></CardContent>
             </Card>
 
@@ -926,10 +930,10 @@ export default function GradePapers() {
                   <Button 
                     variant="outline" 
                     onClick={handlePrintReport}
-                    className="min-w-[180px]"
+                    className="min-w-[160px]"
                   >
                     <Printer className="w-4 h-4 mr-2" />
-                    Print / Save (Pilot Mode)
+                    Print / Save Preview
                   </Button>
                   <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
                     {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
@@ -937,7 +941,7 @@ export default function GradePapers() {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground text-center">
-                  Pilot mode: PDF downloads and saved reports will be available in the full release.
+                  Pilot mode: Saved PDF downloads and report history will be available in the full release.
                 </p>
               </div>
             ) : (
