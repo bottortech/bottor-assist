@@ -1134,382 +1134,11 @@ export default function GradePapers() {
 
       {/* Main Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Section 1: Optional Context (collapsed by default) */}
-        <Collapsible open={optionalContextOpen} onOpenChange={setOptionalContextOpen}>
-          <Card className="border-0 shadow-md bg-card-gradient">
-            <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {optionalContextOpen ? (
-                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                    )}
-                    <CardTitle className="text-lg">Optional Context (Improves Feedback Quality)</CardTitle>
-                  </div>
-                  <Badge variant="outline" className="text-xs">Optional</Badge>
-                </div>
-                <CardDescription className="text-xs text-muted-foreground ml-6">
-                  These fields are optional and help tailor feedback tone and language. They do not affect scoring rules.
-                </CardDescription>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="space-y-4 pt-0">
-                <div className="space-y-2">
-                  <Label htmlFor="subject">Subject (optional)</Label>
-                  <Select 
-                    value={form.subject} 
-                    onValueChange={(v) => updateForm('subject', v)}
-                  >
-                    <SelectTrigger id="subject">
-                      <SelectValue placeholder="Select subject" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SUBJECTS.map((subject) => (
-                        <SelectItem key={subject} value={subject}>
-                          {subject}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Optional context to improve clarity of feedback.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="grade_level">Grade Level (optional)</Label>
-                  <Select 
-                    value={form.grade_level} 
-                    onValueChange={(v) => updateForm('grade_level', v)}
-                  >
-                    <SelectTrigger id="grade_level">
-                      <SelectValue placeholder="Select grade" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {GRADES.map((grade) => (
-                        <SelectItem key={grade} value={grade}>
-                          {grade}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Used only to adjust feedback language. Not required for scoring.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="assignment_type">Assignment Type (optional)</Label>
-                  <Select 
-                    value={form.assignment_type} 
-                    onValueChange={(v) => updateForm('assignment_type', v)}
-                  >
-                    <SelectTrigger id="assignment_type">
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ASSIGNMENT_TYPES.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          {type.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Helps format comments. Does not change scoring criteria.
-                  </p>
-                </div>
-              </CardContent>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
-
-        {/* Section 2: Rubric / Grading Criteria (REQUIRED for scoring - visually dominant) */}
-        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <span>Rubric / Grading Criteria</span>
-              <Badge variant="secondary" className="text-xs">Required for scoring</Badge>
-            </CardTitle>
-            <CardDescription className="text-sm text-muted-foreground">
-              Bottor grades strictly using the criteria you provide here. If no rubric is provided, scoring is disabled and Bottor switches to feedback-only mode. If a rubric already exists in uploaded student work, Bottor will attempt to detect it automatically to reduce manual entry.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Textarea
-              id="rubric"
-              placeholder="Paste your grading rubric here. Include criteria, point values, and expectations..."
-              value={form.rubric}
-              onChange={(e) => updateForm('rubric', e.target.value)}
-              rows={6}
-              className="font-mono text-sm"
-            />
-            
-            {/* Rubric Status Callout */}
-            {gradingMode === 'scoring' ? (
-              <div className="space-y-2">
-                <div className="flex flex-col gap-1 p-3 rounded-lg bg-primary/10 border border-primary/30">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span className="text-sm font-medium text-primary">
-                      {detectedRubricSource === 'Rubric textbox' 
-                        ? 'Rubric detected — Scoring enabled'
-                        : 'Rubric detected automatically — Scoring enabled'}
-                    </span>
-                  </div>
-                  {detectedRubricSource && detectedRubricSource !== 'Rubric textbox' && (
-                    <span className="text-xs text-muted-foreground ml-6">
-                      Detected from {detectedRubricSource}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground ml-1">
-                  You can edit, replace, or override the detected rubric at any time.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
-                  <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
-                  <span className="text-sm font-medium text-destructive">
-                    No rubric detected — Feedback-only mode (scoring disabled)
-                  </span>
-                </div>
-                {/* Smart fallback hint */}
-                {(form.answer_key.trim() || answerKeyCombinedText.trim()) && detectedContentType === 'objective' && (
-                  <p className="text-xs text-muted-foreground ml-1 flex items-center gap-1">
-                    <Info className="w-3 h-3" />
-                    Answer key detected — will be used to evaluate objective questions.
-                  </p>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Section 3: Answer Key (collapsed by default) */}
-        <Collapsible open={answerKeyOpen} onOpenChange={setAnswerKeyOpen}>
-          <Card className="border-0 shadow-md bg-card-gradient">
-            <CollapsibleTrigger asChild>
-              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {answerKeyOpen ? (
-                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                    )}
-                    <CardTitle className="text-lg">Answer Key (Optional)</CardTitle>
-                  </div>
-                  <Badge variant="outline" className="text-xs">Optional</Badge>
-                </div>
-                <CardDescription className="text-xs text-muted-foreground ml-6">
-                  Optional reference for objective questions (e.g., math, multiple choice). Uploading an answer key can improve Bottor Assist accuracy.
-                </CardDescription>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="pt-0 space-y-6">
-                {/* A) Answer Key Text (paste, optional) */}
-                <div className="space-y-2">
-                  <Label htmlFor="answer_key">Answer Key (paste, optional)</Label>
-                  <Textarea
-                    id="answer_key"
-                    placeholder="Paste answer key or correct responses for reference..."
-                    value={form.answer_key}
-                    onChange={(e) => updateForm('answer_key', e.target.value)}
-                    rows={4}
-                    className="font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Paste correct answers or scoring reference. Optional.
-                  </p>
-                </div>
-
-                {/* B) Answer Key Upload (optional) */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Answer Key File (upload, optional)</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Upload an answer key as PDF/JPG/PNG (multiple files allowed). Optional, but improves accuracy for objective grading.
-                      </p>
-                    </div>
-                    {answerKeyFiles.length > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => clearAllFiles(setAnswerKeyFiles, setAnswerKeyCombinedText, answerKeyFileInputRef)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        Clear all
-                      </Button>
-                    )}
-                  </div>
-
-                  {/* Upload Zone */}
-                  <div className="relative">
-                    <input
-                      ref={answerKeyFileInputRef}
-                      type="file"
-                      multiple
-                      accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                      onChange={handleAnswerKeyFileSelect}
-                      className="hidden"
-                      id="answer-key-file-upload"
-                    />
-                    
-                    <label
-                      htmlFor="answer-key-file-upload"
-                      className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
-                    >
-                      {convertingHeic && isAnswerKeyExtracting ? (
-                        <>
-                          <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
-                          <span className="text-sm text-muted-foreground">Converting HEIC...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5 text-muted-foreground mb-1" />
-                          <span className="text-sm text-muted-foreground">
-                            Upload answer key document
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            PDF, JPG, PNG, HEIC/HEIF • Multiple files allowed • Max 10MB each
-                          </span>
-                        </>
-                      )}
-                    </label>
-                  </div>
-
-                  {/* Uploaded Answer Key Files List */}
-                  {answerKeyFiles.length > 0 && (
-                    <FileList
-                      files={answerKeyFiles}
-                      setFiles={setAnswerKeyFiles}
-                      setCombinedText={setAnswerKeyCombinedText}
-                      label="Uploaded Answer Key Files"
-                    />
-                  )}
-
-                  {/* Extracted Answer Key Text */}
-                  {answerKeyCombinedText && (
-                    <div className="space-y-2">
-                      <Label htmlFor="answer_key_extracted_text">
-                        Extracted Answer Key Text {isAnswerKeyExtracting && '(Extracting...)'}
-                      </Label>
-                      <Textarea
-                        id="answer_key_extracted_text"
-                        value={answerKeyCombinedText}
-                        onChange={(e) => setAnswerKeyCombinedText(e.target.value)}
-                        rows={4}
-                        disabled={isAnswerKeyExtracting}
-                        className="font-mono text-sm"
-                      />
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
-
-        {/* Section 4: Assignment/Rubric Document Upload (optional) */}
-        <Card className="border-0 shadow-md bg-card-gradient">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-lg flex items-center gap-2">
-                Upload Assignment / Rubric Document
-                <Badge variant="outline" className="text-xs">Optional</Badge>
-              </CardTitle>
-              <CardDescription className="text-xs text-muted-foreground mt-1">
-                Upload rubric or assignment directions (PDF/JPG/PNG). Optional.
-              </CardDescription>
-            </div>
-            {assignmentFiles.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => clearAllFiles(setAssignmentFiles, setAssignmentCombinedText, assignmentFileInputRef)}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                Clear all
-              </Button>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Upload Zone */}
-            <div className="relative">
-              <input
-                ref={assignmentFileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                onChange={handleAssignmentFileSelect}
-                className="hidden"
-                id="assignment-file-upload"
-              />
-              
-              <label
-                htmlFor="assignment-file-upload"
-                className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
-              >
-                {convertingHeic && isAssignmentExtracting ? (
-                  <>
-                    <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
-                    <span className="text-sm text-muted-foreground">Converting HEIC...</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-5 h-5 text-muted-foreground mb-1" />
-                    <span className="text-sm text-muted-foreground">
-                      Upload rubric or assignment directions
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      PDF, JPG, PNG, HEIC/HEIF • Multiple files allowed
-                    </span>
-                  </>
-                )}
-              </label>
-            </div>
-
-            {/* Uploaded Files List */}
-            {assignmentFiles.length > 0 && (
-              <FileList
-                files={assignmentFiles}
-                setFiles={setAssignmentFiles}
-                setCombinedText={setAssignmentCombinedText}
-                label="Uploaded Documents"
-              />
-            )}
-
-            {/* Combined Extracted Text for Assignment Docs */}
-            {assignmentCombinedText && (
-              <div className="space-y-2">
-                <Label htmlFor="assignment_extracted_text">
-                  Extracted Text {isAssignmentExtracting && '(Extracting...)'}
-                </Label>
-                <Textarea
-                  id="assignment_extracted_text"
-                  value={assignmentCombinedText}
-                  onChange={(e) => setAssignmentCombinedText(e.target.value)}
-                  rows={6}
-                  disabled={isAssignmentExtracting}
-                  className="font-mono text-sm"
-                />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Section 5: Student Work Upload (primary) */}
+        {/* Section 1: Student Work Upload (Required - primary) */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Student Work</CardTitle>
+              <CardTitle className="text-lg">Student Work (Required)</CardTitle>
               <CardDescription className="text-xs text-muted-foreground mt-1">
                 Upload student work as PDFs or images. Review and edit extracted text before grading.
               </CardDescription>
@@ -1629,6 +1258,366 @@ export default function GradePapers() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Section 2: Rubric / Grading Criteria (Optional — required for scoring) */}
+        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <span>Rubric / Grading Criteria</span>
+              <Badge variant="secondary" className="text-xs">Optional — required for scoring</Badge>
+            </CardTitle>
+            <CardDescription className="text-sm text-muted-foreground">
+              Bottor grades strictly using the criteria you provide here. If no rubric is provided, scoring is disabled and Bottor switches to feedback-only mode. If a rubric already exists in uploaded student work, Bottor will attempt to detect it automatically to reduce manual entry.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Textarea
+              id="rubric"
+              placeholder="Paste your grading rubric here. Include criteria, point values, and expectations..."
+              value={form.rubric}
+              onChange={(e) => updateForm('rubric', e.target.value)}
+              rows={6}
+              className="font-mono text-sm"
+            />
+            
+            {/* Rubric Status Callout */}
+            {gradingMode === 'scoring' ? (
+              <div className="space-y-2">
+                <div className="flex flex-col gap-1 p-3 rounded-lg bg-primary/10 border border-primary/30">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
+                    <span className="text-sm font-medium text-primary">
+                      {detectedRubricSource === 'Rubric textbox' 
+                        ? 'Rubric detected — Scoring enabled'
+                        : 'Rubric detected automatically — Scoring enabled'}
+                    </span>
+                  </div>
+                  {detectedRubricSource && detectedRubricSource !== 'Rubric textbox' && (
+                    <span className="text-xs text-muted-foreground ml-6">
+                      Detected from {detectedRubricSource}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground ml-1">
+                  You can edit, replace, or override the detected rubric at any time.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+                  <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />
+                  <span className="text-sm font-medium text-destructive">
+                    No rubric detected — Feedback-only mode (scoring disabled)
+                  </span>
+                </div>
+                {/* Smart fallback hint */}
+                {(form.answer_key.trim() || answerKeyCombinedText.trim()) && detectedContentType === 'objective' && (
+                  <p className="text-xs text-muted-foreground ml-1 flex items-center gap-1">
+                    <Info className="w-3 h-3" />
+                    Answer key detected — will be used to evaluate objective questions.
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Section 3: Answer Key (Optional - collapsed by default) */}
+        <Collapsible open={answerKeyOpen} onOpenChange={setAnswerKeyOpen}>
+          <Card className="border-0 shadow-md bg-card-gradient">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {answerKeyOpen ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <CardTitle className="text-lg">Answer Key (Optional)</CardTitle>
+                  </div>
+                  <Badge variant="outline" className="text-xs">Optional</Badge>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground ml-6">
+                  Optional reference for objective questions (e.g., math, multiple choice). Uploading an answer key can improve Bottor Assist accuracy.
+                </CardDescription>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0 space-y-6">
+                {/* A) Answer Key Text (paste, optional) */}
+                <div className="space-y-2">
+                  <Label htmlFor="answer_key">Answer Key (paste/type)</Label>
+                  <Textarea
+                    id="answer_key"
+                    placeholder="e.g., 1. A, 2. B, 3. 42, 4. True..."
+                    value={form.answer_key}
+                    onChange={(e) => updateForm('answer_key', e.target.value)}
+                    rows={4}
+                    className="font-mono text-sm"
+                  />
+                </div>
+
+                {/* B) Or upload answer key document */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label>Or upload answer key document</Label>
+                    {answerKeyFiles.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => clearAllFiles(setAnswerKeyFiles, setAnswerKeyCombinedText, answerKeyFileInputRef)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        Clear all
+                      </Button>
+                    )}
+                  </div>
+                  
+                  {/* Upload Zone */}
+                  <div className="relative">
+                    <input
+                      ref={answerKeyFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      onChange={handleAnswerKeyFileSelect}
+                      className="hidden"
+                      id="answer-key-file-upload"
+                    />
+                    
+                    <label
+                      htmlFor="answer-key-file-upload"
+                      className="flex flex-col items-center justify-center w-full h-20 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                    >
+                      {convertingHeic && isAnswerKeyExtracting ? (
+                        <>
+                          <Loader2 className="w-5 h-5 text-primary mb-1 animate-spin" />
+                          <span className="text-sm text-muted-foreground">Converting HEIC...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-5 h-5 text-muted-foreground mb-1" />
+                          <span className="text-sm text-muted-foreground">
+                            Upload answer key (PDF, image)
+                          </span>
+                        </>
+                      )}
+                    </label>
+                  </div>
+
+                  {/* Uploaded Files List */}
+                  {answerKeyFiles.length > 0 && (
+                    <FileList
+                      files={answerKeyFiles}
+                      setFiles={setAnswerKeyFiles}
+                      setCombinedText={setAnswerKeyCombinedText}
+                      label="Answer Key Documents"
+                    />
+                  )}
+
+                  {/* Extracted Text for Answer Key */}
+                  {answerKeyCombinedText && (
+                    <div className="space-y-2">
+                      <Label htmlFor="answer_key_extracted_text">
+                        Extracted Answer Key Text {isAnswerKeyExtracting && '(Extracting...)'}
+                      </Label>
+                      <Textarea
+                        id="answer_key_extracted_text"
+                        value={answerKeyCombinedText}
+                        onChange={(e) => setAnswerKeyCombinedText(e.target.value)}
+                        rows={4}
+                        disabled={isAnswerKeyExtracting}
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
+        {/* Section 4: Assignment/Rubric Document Upload (Optional) */}
+        <Card className="border-0 shadow-md bg-card-gradient">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                Upload Assignment / Rubric Document
+                <Badge variant="outline" className="text-xs">Optional</Badge>
+              </CardTitle>
+              <CardDescription className="text-xs text-muted-foreground mt-1">
+                Upload rubric or assignment directions (PDF/JPG/PNG). Optional.
+              </CardDescription>
+            </div>
+            {assignmentFiles.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => clearAllFiles(setAssignmentFiles, setAssignmentCombinedText, assignmentFileInputRef)}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                Clear all
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Upload Zone */}
+            <div className="relative">
+              <input
+                ref={assignmentFileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                onChange={handleAssignmentFileSelect}
+                className="hidden"
+                id="assignment-file-upload"
+              />
+              
+              <label
+                htmlFor="assignment-file-upload"
+                className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+              >
+                {convertingHeic && isAssignmentExtracting ? (
+                  <>
+                    <Loader2 className="w-6 h-6 text-primary mb-2 animate-spin" />
+                    <span className="text-sm text-muted-foreground">Converting HEIC...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5 text-muted-foreground mb-1" />
+                    <span className="text-sm text-muted-foreground">
+                      Upload rubric or assignment directions
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      PDF, JPG, PNG, HEIC/HEIF • Multiple files allowed
+                    </span>
+                  </>
+                )}
+              </label>
+            </div>
+
+            {/* Uploaded Files List */}
+            {assignmentFiles.length > 0 && (
+              <FileList
+                files={assignmentFiles}
+                setFiles={setAssignmentFiles}
+                setCombinedText={setAssignmentCombinedText}
+                label="Uploaded Documents"
+              />
+            )}
+
+            {/* Combined Extracted Text for Assignment Docs */}
+            {assignmentCombinedText && (
+              <div className="space-y-2">
+                <Label htmlFor="assignment_extracted_text">
+                  Extracted Text {isAssignmentExtracting && '(Extracting...)'}
+                </Label>
+                <Textarea
+                  id="assignment_extracted_text"
+                  value={assignmentCombinedText}
+                  onChange={(e) => setAssignmentCombinedText(e.target.value)}
+                  rows={6}
+                  disabled={isAssignmentExtracting}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Section 5: Optional Context (collapsed by default - moved to bottom) */}
+        <Collapsible open={optionalContextOpen} onOpenChange={setOptionalContextOpen}>
+          <Card className="border-0 shadow-md bg-card-gradient">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {optionalContextOpen ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <CardTitle className="text-lg">Optional Context (Improves Feedback Quality)</CardTitle>
+                  </div>
+                  <Badge variant="outline" className="text-xs">Optional</Badge>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground ml-6">
+                  These fields are optional and help tailor feedback tone and language. They do not affect scoring rules.
+                </CardDescription>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="space-y-4 pt-0">
+                <div className="space-y-2">
+                  <Label htmlFor="subject">Subject (optional)</Label>
+                  <Select 
+                    value={form.subject} 
+                    onValueChange={(v) => updateForm('subject', v)}
+                  >
+                    <SelectTrigger id="subject">
+                      <SelectValue placeholder="Select subject" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUBJECTS.map((subject) => (
+                        <SelectItem key={subject} value={subject}>
+                          {subject}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Optional context to improve clarity of feedback.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="grade_level">Grade Level (optional)</Label>
+                  <Select 
+                    value={form.grade_level} 
+                    onValueChange={(v) => updateForm('grade_level', v)}
+                  >
+                    <SelectTrigger id="grade_level">
+                      <SelectValue placeholder="Select grade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GRADES.map((grade) => (
+                        <SelectItem key={grade} value={grade}>
+                          {grade}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Used only to adjust feedback language. Not required for scoring.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="assignment_type">Assignment Type (optional)</Label>
+                  <Select 
+                    value={form.assignment_type} 
+                    onValueChange={(v) => updateForm('assignment_type', v)}
+                  >
+                    <SelectTrigger id="assignment_type">
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ASSIGNMENT_TYPES.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Helps format comments. Does not change scoring criteria.
+                  </p>
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
 
         {/* Section 6: Generate Button (sticky at bottom) */}
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border border-border">
