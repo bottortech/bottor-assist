@@ -261,75 +261,90 @@ export default function GradePapers() {
     setUploadingPdf(true);
     
     try {
-      // Generate PDF client-side using jsPDF
-      const pdfBlob = generateGradeReportPdf({
-        studentName: studentName || 'Student',
-        assignmentName: assignmentName || form.subject || 'Assignment',
-        score: result.score_suggestion,
-        strengths: result.strengths,
-        areasForImprovement: result.areas_for_improvement,
-        feedback: result.feedback_paragraph,
-        gradingMode: gradingMode,
-        subject: form.subject,
-        gradeLevel: form.grade_level,
+      // Call server-side PDF generation edge function
+      const { data, error } = await supabase.functions.invoke('generate-pdf-report', {
+        body: {
+          studentName: studentName || 'Student',
+          assignmentName: assignmentName || form.subject || 'Assignment',
+          score: result.score_suggestion,
+          strengths: result.strengths,
+          areasForImprovement: result.areas_for_improvement,
+          feedback: result.feedback_paragraph,
+          gradingMode: gradingMode,
+          subject: form.subject,
+          gradeLevel: form.grade_level,
+        },
       });
+
+      if (error) throw error;
+
+      if (!data?.success) {
+        throw new Error(data?.details || 'PDF generation failed');
+      }
+
+      // Download the PDF from signed URL
+      const response = await fetch(data.signedUrl);
+      if (!response.ok) throw new Error('Failed to download PDF');
       
-      const filename = generatePdfFilename(
-        studentName || 'Student',
-        assignmentName || form.subject || 'Assignment'
-      );
-      
-      // Download the PDF immediately
+      const pdfBlob = await response.blob();
       const downloadUrl = URL.createObjectURL(pdfBlob);
+      
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = filename;
+      link.download = data.filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(downloadUrl);
       
-      setDownloadingPdf(false);
-      toast({ title: 'PDF downloaded!' });
+      // Store URLs for re-download
+      setSavedPdfUrl(data.publicUrl);
+      setSavedPdfFilename(data.filename);
       
-      // Upload to Supabase Storage in the background
-      const reportId = crypto.randomUUID();
-      const storagePath = `${user.id}/${reportId}.pdf`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('grade-reports')
-        .upload(storagePath, pdfBlob, {
-          contentType: 'application/pdf',
-          upsert: false,
-        });
-      
-      if (uploadError) {
-        console.error('Storage upload error:', uploadError);
-        toast({
-          title: 'PDF saved locally',
-          description: 'Could not save to cloud storage.',
-        });
-      } else {
-        // Get public URL
-        const { data: urlData } = supabase.storage
-          .from('grade-reports')
-          .getPublicUrl(storagePath);
-        
-        setSavedPdfUrl(urlData.publicUrl);
-        setSavedPdfFilename(filename);
-        
-        toast({
-          title: 'Saved to Reports',
-          description: 'PDF has been saved and can be accessed anytime.',
-        });
-      }
+      toast({
+        title: 'Saved to Reports',
+        description: 'PDF has been generated and saved.',
+      });
     } catch (error) {
       console.error('PDF generation error:', error);
-      toast({ 
-        title: 'PDF generation failed', 
-        description: 'Please try again.', 
-        variant: 'destructive' 
-      });
+      
+      // Fallback to client-side generation
+      try {
+        const pdfBlob = generateGradeReportPdf({
+          studentName: studentName || 'Student',
+          assignmentName: assignmentName || form.subject || 'Assignment',
+          score: result.score_suggestion,
+          strengths: result.strengths,
+          areasForImprovement: result.areas_for_improvement,
+          feedback: result.feedback_paragraph,
+          gradingMode: gradingMode,
+          subject: form.subject,
+          gradeLevel: form.grade_level,
+        });
+        
+        const filename = generatePdfFilename(
+          studentName || 'Student',
+          assignmentName || form.subject || 'Assignment'
+        );
+        
+        const downloadUrl = URL.createObjectURL(pdfBlob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(downloadUrl);
+        
+        toast({ title: 'PDF downloaded (local generation)' });
+      } catch (fallbackError) {
+        console.error('Fallback PDF error:', fallbackError);
+        toast({ 
+          title: 'PDF generation failed', 
+          description: 'Please try again or use Print Report.', 
+          variant: 'destructive' 
+        });
+      }
     } finally {
       setDownloadingPdf(false);
       setUploadingPdf(false);
