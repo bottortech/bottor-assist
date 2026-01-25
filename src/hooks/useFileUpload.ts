@@ -493,8 +493,12 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   const hasReadyFiles = files.some(f => f.status === 'ready');
   const progress = totalFiles > 0 ? (completedFiles / totalFiles) * 100 : 0;
 
+  // isProcessing alias for convenience (same as isExtracting)
+  const isProcessing = isExtracting;
+
   return {
     files,
+    setFiles,
     combinedText,
     setCombinedText: setCombinedTextManual,
     addFiles,
@@ -506,6 +510,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     completedFiles,
     failedFiles,
     isExtracting,
+    isProcessing,
     hasReadyFiles,
     progress,
   };
