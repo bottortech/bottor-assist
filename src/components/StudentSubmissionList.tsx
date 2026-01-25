@@ -160,26 +160,39 @@ function FilePreviewDialog({
   const { file, studentName, pageNumber } = previewFile;
   const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
   
-  // Build PDF data URL from base64 if available
+  // Use dataUrl for PDF preview (base64 data URL generated during upload)
   const pdfDataUrl = isPdf && file.dataUrl ? file.dataUrl : null;
   
+  // Create object URL from original file as fallback for PDFs without dataUrl
+  const pdfObjectUrl = isPdf && !pdfDataUrl && file.file ? URL.createObjectURL(file.file) : null;
+  const effectivePdfUrl = pdfDataUrl || pdfObjectUrl;
+  
   return (
-    <Dialog open={!!previewFile} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+    <Dialog open={!!previewFile} onOpenChange={(open) => {
+      if (!open) {
+        // Clean up object URL if we created one
+        if (pdfObjectUrl) URL.revokeObjectURL(pdfObjectUrl);
+        onClose();
+      }
+    }}>
+      <DialogContent 
+        className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+        aria-describedby={undefined}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             <span className="truncate">{file.fileName}</span>
             {studentName && (
-              <Badge className="bg-primary/20 text-primary">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/20 text-primary">
                 <User className="w-3 h-3 mr-1" />
                 {studentName}
                 {pageNumber !== undefined && ` • Page ${pageNumber}`}
-              </Badge>
+              </span>
             )}
             {!studentName && (
-              <Badge variant="outline" className="border-orange-500 text-orange-600">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border border-orange-500 text-orange-600">
                 Ungrouped
-              </Badge>
+              </span>
             )}
             {file.extractedText && (
               <Button
@@ -207,18 +220,19 @@ function FilePreviewDialog({
                 alt={file.fileName}
                 className="w-full h-full object-contain rounded"
               />
-            ) : isPdf && pdfDataUrl ? (
+            ) : isPdf && effectivePdfUrl ? (
               <iframe
-                src={`${pdfDataUrl}#toolbar=1&navpanes=0&scrollbar=1`}
+                src={`${effectivePdfUrl}#toolbar=1&navpanes=0&scrollbar=1&view=FitH`}
                 className="w-full h-full rounded border-0"
                 title={`PDF Preview: ${file.fileName}`}
+                style={{ minHeight: '500px' }}
               />
             ) : isPdf ? (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-4">
                 <FileText className="w-16 h-16 text-destructive/50" />
-                <p className="text-sm font-medium">PDF preview loading...</p>
-                <p className="text-xs text-center">
-                  If preview doesn't load, check the extracted text below for content verification.
+                <p className="text-sm font-medium">PDF preview unavailable</p>
+                <p className="text-xs text-center max-w-xs">
+                  Unable to display PDF. Use the "Show Extracted Text" button above to view the document content.
                 </p>
               </div>
             ) : (
@@ -234,10 +248,10 @@ function FilePreviewDialog({
             <div className="w-1/2 flex flex-col bg-muted/20 rounded-lg border overflow-hidden">
               <div className="px-3 py-2 bg-muted/50 border-b flex items-center gap-2">
                 <FileText className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground">Extracted Text</span>
+                <span className="text-xs font-medium text-muted-foreground">Extracted Text (OCR)</span>
               </div>
               <div className="flex-1 overflow-auto p-3">
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{file.extractedText}</p>
+                <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">{file.extractedText}</p>
               </div>
             </div>
           )}
