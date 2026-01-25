@@ -858,76 +858,71 @@ export default function GradePapers() {
                   </SelectContent>
                 </Select>
               </div>
-            </CardContent>
-          </Card>
-        )}
 
-        {/* ===== ANSWER KEY (OPTIONAL) ===== */}
-        {rubricMode !== 'locked' && (
-          <Card className="border border-muted">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <FileSearch className="w-4 h-4" />
-                Answer Key
-                <span className="text-xs font-normal">Optional</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Answer Key File Upload */}
-              <div className="space-y-2">
-                <div className="relative">
-                  <input 
-                    ref={answerKeyFileInputRef} 
-                    type="file" 
-                    multiple 
-                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif" 
-                    onChange={handleAnswerKeyFileSelect} 
-                    className="hidden" 
-                    id="answerkey-file-upload" 
-                  />
-                  <label 
-                    htmlFor="answerkey-file-upload" 
-                    className="flex items-center justify-center w-full h-14 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
-                  >
-                    <Upload className="w-4 h-4 text-muted-foreground mr-2" />
-                    <span className="text-sm text-muted-foreground">Upload answer key files</span>
-                  </label>
+              {/* Answer Key (Optional) - inside Manual Grading Options */}
+              <div className="pt-3 border-t border-muted space-y-3">
+                <Label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                  <FileSearch className="w-4 h-4" />
+                  Answer Key
+                  <span className="text-xs font-normal">Optional</span>
+                </Label>
+                
+                {/* Answer Key File Upload */}
+                <div className="space-y-2">
+                  <div className="relative">
+                    <input 
+                      ref={answerKeyFileInputRef} 
+                      type="file" 
+                      multiple 
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif" 
+                      onChange={handleAnswerKeyFileSelect} 
+                      className="hidden" 
+                      id="answerkey-file-upload" 
+                    />
+                    <label 
+                      htmlFor="answerkey-file-upload" 
+                      className="flex items-center justify-center w-full h-14 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                    >
+                      <Upload className="w-4 h-4 text-muted-foreground mr-2" />
+                      <span className="text-sm text-muted-foreground">Upload answer key files</span>
+                    </label>
+                  </div>
+                  
+                  {/* Uploaded Answer Key Files List */}
+                  {answerKeyUpload.files.length > 0 && (
+                    <div className="space-y-1">
+                      {answerKeyUpload.files.map(file => (
+                        <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                            <span className="text-sm truncate">{file.fileName}</span>
+                            <Badge variant="outline" className="text-xs flex-shrink-0">
+                              {file.status === 'ready' ? 'Ready' : file.status}
+                            </Badge>
+                          </div>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => answerKeyUpload.removeFile(file.id)}
+                            className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 
-                {/* Uploaded Answer Key Files List */}
-                {answerKeyUpload.files.length > 0 && (
-                  <div className="space-y-1">
-                    {answerKeyUpload.files.map(file => (
-                      <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                          <span className="text-sm truncate">{file.fileName}</span>
-                          <Badge variant="outline" className="text-xs flex-shrink-0">
-                            {file.status === 'ready' ? 'Ready' : file.status}
-                          </Badge>
-                        </div>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => answerKeyUpload.removeFile(file.id)}
-                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                        >
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {/* Answer Key Textarea */}
+                <Textarea
+                  placeholder="Or paste answer key here..."
+                  value={form.answer_key}
+                  onChange={(e) => updateForm('answer_key', e.target.value)}
+                  rows={3}
+                  className="text-sm"
+                />
               </div>
-              
-              {/* Answer Key Textarea */}
-              <Textarea
-                placeholder="Or paste answer key here..."
-                value={form.answer_key}
-                onChange={(e) => updateForm('answer_key', e.target.value)}
-                rows={3}
-                className="text-sm"
-              />
             </CardContent>
           </Card>
         )}
