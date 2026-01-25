@@ -1,8 +1,9 @@
 /**
  * Student Submissions Hook
  * 
- * Manages student work uploads with MANDATORY grouping step.
- * Files start as UNGROUPED and must be explicitly assigned to students before grading.
+ * Manages student work uploads with AUTOMATIC student name detection.
+ * Detects student names from extracted text and auto-groups files by detected name.
+ * Files without detected names go to "Ungrouped" pool for manual assignment.
  * Each submission can contain multiple files (multi-page PDF or multiple images).
  * Files within a submission are graded together; different submissions are graded separately.
  */
@@ -11,6 +12,7 @@ import { useState, useCallback, useRef } from 'react';
 import heic2any from 'heic2any';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { detectStudentName, normalizeStudentName, type DetectedStudentName } from '@/lib/student-name-detector';
 
 export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'ready' | 'failed';
 
@@ -27,6 +29,8 @@ export interface UploadedFileItem {
   extractedText: string;
   error?: string;
   createdAt: Date;
+  // Auto-detected student name from extracted text
+  detectedStudentName?: DetectedStudentName | null;
 }
 
 export interface StudentSubmission {
@@ -36,6 +40,8 @@ export interface StudentSubmission {
   files: UploadedFileItem[];
   combinedText: string;
   createdAt: Date;
+  // Whether this submission was auto-created from detected student name
+  autoDetected?: boolean;
 }
 
 /**
@@ -313,6 +319,61 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, [fileToBase64]);
 
   /**
+   * Auto-group a file by detected student name
+   * Creates a new submission or adds to existing one with matching name
+   */
+  const autoGroupFileByDetectedName = useCallback((fileId: string, detectedName: string) => {
+    setUngroupedFiles(prev => {
+      const fileToGroup = prev.find(f => f.id === fileId);
+      if (!fileToGroup) return prev;
+
+      // Check if there's an existing submission with this student name
+      const normalizedDetected = normalizeStudentName(detectedName);
+      
+      setSubmissions(prevSubs => {
+        const existingSubmission = prevSubs.find(
+          sub => normalizeStudentName(sub.studentName) === normalizedDetected
+        );
+
+        if (existingSubmission) {
+          // Add to existing submission
+          return prevSubs.map(sub => {
+            if (sub.id !== existingSubmission.id) return sub;
+            return { ...sub, files: [...sub.files, fileToGroup] };
+          });
+        } else {
+          // Create new submission
+          const newSubmission: StudentSubmission = {
+            id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            studentName: detectedName,
+            files: [fileToGroup],
+            combinedText: '',
+            createdAt: new Date(),
+            autoDetected: true,
+          };
+          return [...prevSubs, newSubmission];
+        }
+      });
+
+      // Remove from ungrouped
+      return prev.filter(f => f.id !== fileId);
+    });
+
+    // Update combined text for the submission after a tick
+    setTimeout(() => {
+      setSubmissions(currentSubs => {
+        const sub = currentSubs.find(
+          s => normalizeStudentName(s.studentName) === normalizeStudentName(detectedName)
+        );
+        if (sub) {
+          updateSubmissionCombinedText(sub.id);
+        }
+        return currentSubs;
+      });
+    }, 50);
+  }, [updateSubmissionCombinedText]);
+
+  /**
    * Process extraction queue with concurrency limiting
    */
   const processExtractionQueue = useCallback(async () => {
@@ -342,11 +403,20 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
             
             try {
               const text = await extractTextFromFile(fileItem.file);
+              // Detect student name from extracted text
+              const detectedName = detectStudentName(text);
+              
               updateUngroupedFileStatus(fileId, { 
                 status: 'ready', 
                 extractedText: text,
+                detectedStudentName: detectedName,
                 error: undefined 
               });
+              
+              // Auto-group if name detected
+              if (detectedName) {
+                autoGroupFileByDetectedName(fileId, detectedName.name);
+              }
             } catch (err) {
               console.error('Extraction failed for', fileItem.fileName, err);
               updateUngroupedFileStatus(fileId, { 
@@ -377,9 +447,13 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
             
             try {
               const text = await extractTextFromFile(fileItem.file);
+              // Detect student name from extracted text
+              const detectedName = detectStudentName(text);
+              
               updateFileStatus(submissionId, fileId, { 
                 status: 'ready', 
                 extractedText: text,
+                detectedStudentName: detectedName,
                 error: undefined 
               });
             } catch (err) {
