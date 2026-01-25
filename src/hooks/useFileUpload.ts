@@ -149,9 +149,10 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   }, [compressImage, jpegQuality]);
 
   /**
-   * Update combined text from all files
+   * Compute combined text from files
+   * This is a pure function, no side effects
    */
-  const updateCombinedText = useCallback((fileList: UploadedFileItem[]) => {
+  const computeCombinedText = useCallback((fileList: UploadedFileItem[]): string => {
     const parts = fileList.map((uf, idx) => {
       const header = `--- Page ${idx + 1}: ${uf.fileName} ---`;
       let body: string;
@@ -178,24 +179,29 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
       return `${header}\n${body}`;
     });
     
-    setCombinedText(parts.join('\n\n'));
+    return parts.join('\n\n');
   }, []);
 
   /**
-   * Update file status
+   * Effect to update combined text whenever files change
+   * This replaces manual calls to updateCombinedText inside state setters
+   */
+  useEffect(() => {
+    setCombinedText(computeCombinedText(files));
+  }, [files, computeCombinedText]);
+
+  /**
+   * Update file status - simplified, no nested state updates
    */
   const updateFileStatus = useCallback((
     fileId: string, 
     updates: Partial<UploadedFileItem>
   ) => {
-    setFiles(prev => {
-      const updated = prev.map(f => 
-        f.id === fileId ? { ...f, ...updates } : f
-      );
-      updateCombinedText(updated);
-      return updated;
-    });
-  }, [updateCombinedText]);
+    setFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, ...updates } : f
+    ));
+    // Combined text will update automatically via useEffect
+  }, []);
 
   /**
    * Convert file to base64
@@ -355,16 +361,13 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
    * Retry extraction for a failed file
    */
   const retryExtraction = useCallback((fileId: string) => {
-    setFiles(prev => {
-      const updated = prev.map(f => 
-        f.id === fileId ? { ...f, status: 'uploaded' as FileStatus, error: undefined } : f
-      );
-      updateCombinedText(updated);
-      return updated;
-    });
+    setFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, status: 'uploaded' as FileStatus, error: undefined } : f
+    ));
+    // Combined text will update automatically via useEffect
     queueExtraction(fileId);
     toast({ title: 'Retrying extraction...' });
-  }, [queueExtraction, updateCombinedText, toast]);
+  }, [queueExtraction, toast]);
 
   /**
    * Add files to the upload list
@@ -438,11 +441,8 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     if (newFileItems.length === 0) return;
 
     // Add files immediately to state (optimistic)
-    setFiles(prev => {
-      const updated = [...prev, ...newFileItems];
-      updateCombinedText(updated);
-      return updated;
-    });
+    // Combined text will update automatically via useEffect
+    setFiles(prev => [...prev, ...newFileItems]);
 
     toast({ title: `${newFileItems.length} file(s) added` });
 
@@ -518,7 +518,6 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     compressImage,
     updateFileStatus, 
     queueExtraction,
-    updateCombinedText,
     toast
   ]);
 
@@ -531,11 +530,10 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
       if (fileToRemove?.thumbnailUrl) {
         URL.revokeObjectURL(fileToRemove.thumbnailUrl);
       }
-      const updated = prev.filter(f => f.id !== fileId);
-      updateCombinedText(updated);
-      return updated;
+      return prev.filter(f => f.id !== fileId);
+      // Combined text will update automatically via useEffect
     });
-  }, [updateCombinedText]);
+  }, []);
 
   /**
    * Clear all files
@@ -577,7 +575,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
         
         if (!hasStuck) return prev;
         
-        const updated = prev.map(f => {
+        return prev.map(f => {
           if (
             f.status === 'extracting' && 
             f.extractionStartedAt && 
@@ -594,14 +592,12 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
           }
           return f;
         });
-        
-        updateCombinedText(updated);
-        return updated;
+        // Combined text will update automatically via useEffect on files change
       });
     }, 5000); // Check every 5 seconds
     
     return () => clearInterval(watchdogInterval);
-  }, [extractionTimeoutMs, updateCombinedText]);
+  }, [extractionTimeoutMs]);
 
   // Calculate statistics - DERIVED from file statuses
   const stats = useMemo(() => {
