@@ -4,6 +4,9 @@
  * Manages student work uploads with AUTOMATIC student grouping.
  * No manual "assign pages to students" step required by default.
  * 
+ * FIXED: Uses Promise.allSettled() for batch extraction to prevent stuck states.
+ * Per-file status tracking ensures one failure doesn't block others.
+ * 
  * Auto-grouping rules:
  * 1. Parse assignmentId from filename (first token before _ or -)
  * 2. Detect student name from filename OR extracted text
@@ -14,7 +17,7 @@
  * Files with no detected student name are marked as "Unknown Student" with needs_review = true
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import heic2any from 'heic2any';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -26,6 +29,10 @@ import {
 } from '@/lib/student-name-detector';
 
 export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'ready' | 'failed';
+
+// Helper to check if a status is "processing"
+const isProcessingStatus = (status: FileStatus): boolean => 
+  ['queued', 'uploading', 'uploaded', 'extracting'].includes(status);
 
 export interface PageRecord {
   id: string;
@@ -305,88 +312,100 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, [updateGroupCombinedText]);
 
   /**
+   * Process a single extraction (used by queue processor)
+   * Returns a promise that resolves when extraction completes (success or fail)
+   */
+  const processExtraction = useCallback(async (pageId: string): Promise<void> => {
+    // Get current page data
+    let pageToProcess: PageRecord | undefined;
+    
+    setPendingPages(prev => {
+      pageToProcess = prev.find(p => p.id === pageId);
+      return prev;
+    });
+    
+    if (!pageToProcess || pageToProcess.status !== 'uploaded') {
+      return;
+    }
+    
+    // Update to extracting
+    setPendingPages(prev => prev.map(p => 
+      p.id === pageId ? { ...p, status: 'extracting' as FileStatus } : p
+    ));
+    
+    try {
+      const text = await extractTextFromFile(pageToProcess.file);
+      const parsedInfo = parseFileInfo(pageToProcess.originalFileName, text);
+      
+      // Get fresh page data and update to ready
+      setPendingPages(prev => {
+        const freshPage = prev.find(p => p.id === pageId);
+        if (!freshPage) return prev;
+        
+        const updatedPage: PageRecord = {
+          ...freshPage,
+          status: 'ready',
+          extractedText: text,
+          parsedInfo,
+          pageNumber: parsedInfo.pageNumber ?? undefined,
+          error: undefined,
+        };
+        
+        // Schedule move to group (do it after state update)
+        setTimeout(() => addPageToGroup(updatedPage), 0);
+        
+        // Remove from pending since it's moving to a group
+        return prev.filter(p => p.id !== pageId);
+      });
+      
+    } catch (err) {
+      console.error('Extraction failed for', pageToProcess.originalFileName, err);
+      setPendingPages(prev => prev.map(p => 
+        p.id === pageId ? { 
+          ...p, 
+          status: 'failed' as FileStatus,
+          error: err instanceof Error ? err.message : 'Unknown error'
+        } : p
+      ));
+    }
+  }, [extractTextFromFile, addPageToGroup]);
+
+  /**
    * Process extraction queue with concurrency limiting
+   * Uses Promise.allSettled to ensure one failure doesn't block others
    */
   const processExtractionQueue = useCallback(async () => {
+    // Get pages ready for extraction
+    const pagesToExtract: string[] = [];
+    
     while (
       extractionQueue.current.length > 0 && 
-      activeExtractions.current < maxConcurrentExtractions
+      activeExtractions.current + pagesToExtract.length < maxConcurrentExtractions
     ) {
       const pageId = extractionQueue.current.shift();
-      if (!pageId) continue;
-      
-      activeExtractions.current++;
-      
-      // Find the page in pending
-      setPendingPages(prev => {
-        const page = prev.find(p => p.id === pageId);
-        
-        if (!page || page.status !== 'uploaded') {
-          activeExtractions.current--;
-          return prev;
-        }
-        
-        // Start extraction in background
-        (async () => {
-          updatePendingPageStatus(pageId, { status: 'extracting' });
-          
-          try {
-            const text = await extractTextFromFile(page.file);
-            
-            // Parse file info with extracted text
-            const parsedInfo = parseFileInfo(page.originalFileName, text);
-            
-            const updatedPage: PageRecord = {
-              ...page,
-              status: 'ready',
-              extractedText: text,
-              parsedInfo,
-              pageNumber: parsedInfo.pageNumber ?? undefined,
-              error: undefined,
-            };
-            
-            // Update the page first
-            updatePendingPageStatus(pageId, {
-              status: 'ready',
-              extractedText: text,
-              parsedInfo,
-              pageNumber: parsedInfo.pageNumber ?? undefined,
-              error: undefined,
-            });
-            
-            // Then move to appropriate group
-            setTimeout(() => {
-              setPendingPages(current => {
-                const pageToMove = current.find(p => p.id === pageId);
-                if (pageToMove) {
-                  addPageToGroup({
-                    ...pageToMove,
-                    status: 'ready',
-                    extractedText: text,
-                    parsedInfo,
-                    pageNumber: parsedInfo.pageNumber ?? undefined,
-                  });
-                }
-                return current;
-              });
-            }, 100);
-            
-          } catch (err) {
-            console.error('Extraction failed for', page.originalFileName, err);
-            updatePendingPageStatus(pageId, { 
-              status: 'failed',
-              error: err instanceof Error ? err.message : 'Unknown error'
-            });
-          } finally {
-            activeExtractions.current--;
-            processExtractionQueue();
-          }
-        })();
-        
-        return prev;
-      });
+      if (pageId) {
+        pagesToExtract.push(pageId);
+        activeExtractions.current++;
+      }
     }
-  }, [maxConcurrentExtractions, extractTextFromFile, updatePendingPageStatus, addPageToGroup]);
+    
+    if (pagesToExtract.length === 0) return;
+    
+    // Process all concurrently with Promise.allSettled
+    const results = await Promise.allSettled(
+      pagesToExtract.map(pageId => processExtraction(pageId))
+    );
+    
+    // Decrease active count for each completed extraction
+    results.forEach(() => {
+      activeExtractions.current--;
+    });
+    
+    // Continue processing queue if there are more items
+    if (extractionQueue.current.length > 0) {
+      processExtractionQueue();
+    }
+  }, [maxConcurrentExtractions, processExtraction]);
 
   /**
    * Queue page for extraction
@@ -624,30 +643,52 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
     return null;
   }, [groups]);
 
-  // Calculate statistics
-  const totalPendingPages = pendingPages.length;
-  const totalGroups = groups.length;
-  const totalGroupedPages = groups.reduce((acc, g) => acc + g.pages.length, 0);
-  const totalPages = totalPendingPages + totalGroupedPages;
-  
-  const readyPages = groups.reduce((acc, g) => 
-    acc + g.pages.filter(p => p.status === 'ready').length, 0
-  );
-  const failedPages = groups.reduce((acc, g) => 
-    acc + g.pages.filter(p => p.status === 'failed').length, 0
-  ) + pendingPages.filter(p => p.status === 'failed').length;
-  
-  const isExtracting = pendingPages.some(p => 
-    p.status === 'queued' || p.status === 'uploading' || p.status === 'uploaded' || p.status === 'extracting'
-  );
-  
-  const needsReviewCount = groups.filter(g => g.needsReview).length;
-  
-  // Can grade if: no pending pages, at least one group with ready pages
-  const hasReadyGroups = groups.some(g => g.pages.some(p => p.status === 'ready'));
-  const canGrade = totalPendingPages === 0 && hasReadyGroups && !isExtracting;
-  
-  const progress = totalPages > 0 ? ((readyPages) / totalPages) * 100 : 0;
+  // Calculate statistics using useMemo for performance and proper derivation
+  const stats = useMemo(() => {
+    const totalPendingPages = pendingPages.length;
+    const totalGroups = groups.length;
+    const totalGroupedPages = groups.reduce((acc, g) => acc + g.pages.length, 0);
+    const totalPages = totalPendingPages + totalGroupedPages;
+    
+    const readyPages = groups.reduce((acc, g) => 
+      acc + g.pages.filter(p => p.status === 'ready').length, 0
+    );
+    
+    const failedPendingPages = pendingPages.filter(p => p.status === 'failed').length;
+    const failedGroupPages = groups.reduce((acc, g) => 
+      acc + g.pages.filter(p => p.status === 'failed').length, 0
+    );
+    const failedPages = failedPendingPages + failedGroupPages;
+    
+    // DERIVED isExtracting: true if ANY file is in a processing state
+    const isExtracting = pendingPages.some(p => isProcessingStatus(p.status)) ||
+      groups.some(g => g.pages.some(p => isProcessingStatus(p.status)));
+    
+    const needsReviewCount = groups.filter(g => g.needsReview).length;
+    
+    // Can grade if: no pending pages in processing state, at least one group with ready pages
+    const hasReadyGroups = groups.some(g => g.pages.some(p => p.status === 'ready'));
+    
+    // Processing pending pages are those not yet failed or ready
+    const processingPendingCount = pendingPages.filter(p => isProcessingStatus(p.status)).length;
+    const canGrade = processingPendingCount === 0 && hasReadyGroups && !isExtracting;
+    
+    const progress = totalPages > 0 ? ((readyPages + failedPages) / totalPages) * 100 : 0;
+    
+    return {
+      totalPendingPages,
+      totalGroups,
+      totalGroupedPages,
+      totalPages,
+      readyPages,
+      failedPages,
+      isExtracting,
+      needsReviewCount,
+      hasReadyGroups,
+      canGrade,
+      progress,
+    };
+  }, [pendingPages, groups]);
 
   // Multiple students warning
   const multipleStudentsWarning = getMultipleStudentsWarning();
@@ -669,18 +710,18 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
     addFiles,
     clearAll,
     
-    // Statistics
-    totalPages,
-    totalPendingPages,
-    totalGroups,
-    totalGroupedPages,
-    readyPages,
-    failedPages,
-    isExtracting,
-    needsReviewCount,
-    hasReadyGroups,
-    canGrade,
-    progress,
+    // Statistics (derived from useMemo)
+    totalPages: stats.totalPages,
+    totalPendingPages: stats.totalPendingPages,
+    totalGroups: stats.totalGroups,
+    totalGroupedPages: stats.totalGroupedPages,
+    readyPages: stats.readyPages,
+    failedPages: stats.failedPages,
+    isExtracting: stats.isExtracting,
+    needsReviewCount: stats.needsReviewCount,
+    hasReadyGroups: stats.hasReadyGroups,
+    canGrade: stats.canGrade,
+    progress: stats.progress,
     
     // Warnings
     multipleStudentsWarning,
@@ -716,10 +757,10 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       createdAt: p.uploadedAt,
       error: p.error,
     })),
-    totalUngroupedFiles: totalPendingPages,
-    allFilesAssigned: totalPendingPages === 0,
-    hasReadySubmissions: hasReadyGroups,
-    totalFiles: totalPages,
-    completedFiles: readyPages,
+    totalUngroupedFiles: stats.totalPendingPages,
+    allFilesAssigned: stats.totalPendingPages === 0,
+    hasReadySubmissions: stats.hasReadyGroups,
+    totalFiles: stats.totalPages,
+    completedFiles: stats.readyPages,
   };
 }
