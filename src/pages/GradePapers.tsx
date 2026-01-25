@@ -6,8 +6,8 @@
  * PURPOSE: Upload student work (PDF/image), provide rubric, and generate 
  * AI-powered draft grades with feedback.
  * 
- * OPTIMISTIC UI: Uses useFileUpload hook for immediate display with status chips,
- * thumbnails, background extraction with concurrency limiting, and progress bar.
+ * BATCH GRADING: Supports multi-page student submissions with separate grading per student.
+ * Each student submission is graded independently - never combined across students.
  * =============================================================================
  */
 
@@ -16,12 +16,12 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSavedRubrics } from '@/hooks/useSavedRubrics';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { useStudentSubmissions, StudentSubmission } from '@/hooks/useStudentSubmissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import {
   Tooltip,
@@ -54,19 +54,17 @@ import {
   ChevronDown,
   ChevronRight,
   Info,
-  AlertTriangle,
   CheckCircle2,
-  BookOpen,
-  History,
   Printer,
   Lock,
   Unlock,
-  Link as LinkIcon,
-  ExternalLink,
   Eye,
+  Users,
+  Plus,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { FileUploadList } from '@/components/FileUploadList';
+import { StudentSubmissionList } from '@/components/StudentSubmissionList';
 import { GradeReportPreview } from '@/components/GradeReportPreview';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -110,6 +108,14 @@ interface GradingResult {
   feedback_paragraph: string;
 }
 
+interface SubmissionGradingResult {
+  submissionId: string;
+  studentName: string;
+  result: GradingResult | null;
+  grading: boolean;
+  error?: string;
+}
+
 type GradingMode = 'scoring' | 'feedback-only';
 type RubricMode = 'none' | 'draft' | 'locked';
 
@@ -117,15 +123,17 @@ export default function GradePapers() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const studentFileInputRef = useRef<HTMLInputElement>(null);
+  const newSubmissionFileInputRef = useRef<HTMLInputElement>(null);
   const assignmentFileInputRef = useRef<HTMLInputElement>(null);
   const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
   const rubricFileInputRef = useRef<HTMLInputElement>(null);
 
   const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
 
-  // Optimistic file upload hooks
-  const studentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  // Student submissions hook (grouped by student)
+  const studentSubmissions = useStudentSubmissions({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  
+  // Other file upload hooks
   const assignmentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const answerKeyUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const rubricUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
@@ -134,36 +142,29 @@ export default function GradePapers() {
     grade_level: '', subject: '', assignment_type: '', rubric: '', answer_key: '',
   });
 
-  const [autoDetectSources, setAutoDetectSources] = useState(true);
-  const [detectedSourceCount, setDetectedSourceCount] = useState(0);
   const [gradingMode, setGradingMode] = useState<GradingMode>('feedback-only');
   const [rubricMode, setRubricMode] = useState<RubricMode>('none');
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState('');
-  const [showSaveRubricPrompt, setShowSaveRubricPrompt] = useState(false);
-  const [rubricNameInput, setRubricNameInput] = useState('');
-  const [savingRubric, setSavingRubric] = useState(false);
-  const [showDetectedRubricSuggestion, setShowDetectedRubricSuggestion] = useState(false);
-  const [detectedRubricContent, setDetectedRubricContent] = useState('');
-  const [result, setResult] = useState<GradingResult | null>(null);
+  
+  // Per-submission grading results
+  const [submissionResults, setSubmissionResults] = useState<SubmissionGradingResult[]>([]);
+  const [activeSubmissionIndex, setActiveSubmissionIndex] = useState(0);
+  
   const [grading, setGrading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [studentName, setStudentName] = useState('');
   const [assignmentName, setAssignmentName] = useState('');
-  const [optionalContextOpen, setOptionalContextOpen] = useState(false);
   const [answerKeyOpen, setAnswerKeyOpen] = useState(false);
-  const [savedPdfUrl, setSavedPdfUrl] = useState<string | null>(null);
-  const [savedPdfFilename, setSavedPdfFilename] = useState<string | null>(null);
-  const [uploadingPdf, setUploadingPdf] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  const studentCombinedText = studentUpload.combinedText;
   const assignmentCombinedText = assignmentUpload.combinedText;
   const answerKeyCombinedText = answerKeyUpload.combinedText;
   const rubricCombinedText = rubricUpload.combinedText;
+
+  // Get combined text from all submissions for rubric detection
+  const allSubmissionsCombinedText = studentSubmissions.submissions.map(s => s.combinedText).join('\n\n');
 
   const detectRubricInText = (text: string): boolean => {
     if (!text.trim()) return false;
@@ -173,16 +174,14 @@ export default function GradePapers() {
   };
 
   useEffect(() => {
-    // Check rubric sources in priority order: uploaded rubric, pasted rubric, assignment docs, student work
     const hasUploadedRubric = rubricCombinedText.trim().length > 0;
     const hasPastedRubric = form.rubric.trim().length > 0;
     const hasAssignmentRubric = detectRubricInText(assignmentCombinedText);
-    const hasStudentRubric = detectRubricInText(studentCombinedText);
+    const hasStudentRubric = detectRubricInText(allSubmissionsCombinedText);
     const hasRubric = hasUploadedRubric || hasPastedRubric || hasAssignmentRubric || hasStudentRubric;
     
     setGradingMode(hasRubric ? 'scoring' : 'feedback-only');
     
-    // Determine rubric mode based on detection and lock state
     if (!hasRubric) {
       setRubricMode('none');
     } else if (rubricLocked) {
@@ -191,24 +190,23 @@ export default function GradePapers() {
       setRubricMode('draft');
     }
     
-    // Set detected source for user clarity
     if (hasUploadedRubric) setDetectedRubricSource('Uploaded rubric document');
     else if (hasPastedRubric) setDetectedRubricSource('Rubric textbox');
     else if (hasAssignmentRubric) setDetectedRubricSource('Assignment documents');
     else if (hasStudentRubric) setDetectedRubricSource('Student work');
     else setDetectedRubricSource('');
-  }, [form.rubric, assignmentCombinedText, studentCombinedText, rubricLocked, rubricCombinedText]);
+  }, [form.rubric, assignmentCombinedText, allSubmissionsCombinedText, rubricLocked, rubricCombinedText]);
 
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleStudentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      studentUpload.addFiles(e.target.files);
-      setResult(null);
+  const handleNewSubmissionFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      studentSubmissions.createSubmission(e.target.files);
+      setSubmissionResults([]);
     }
-    if (studentFileInputRef.current) studentFileInputRef.current.value = '';
+    if (newSubmissionFileInputRef.current) newSubmissionFileInputRef.current.value = '';
   };
 
   const handleAssignmentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,48 +224,92 @@ export default function GradePapers() {
     if (rubricFileInputRef.current) rubricFileInputRef.current.value = '';
   };
 
-  const handleGenerateGrade = async () => {
-    if (!studentCombinedText.trim()) {
-      toast({ title: 'No student work', description: 'Upload files or paste text.', variant: 'destructive' });
+  // Grade all submissions separately
+  const handleGenerateGrades = async () => {
+    if (studentSubmissions.submissions.length === 0) {
+      toast({ title: 'No student submissions', description: 'Add at least one student submission.', variant: 'destructive' });
       return;
     }
-    setGrading(true);
-    try {
-      // Priority: uploaded rubric > pasted rubric > detected from assignment docs
-      const combinedRubric = [rubricCombinedText, form.rubric].filter(Boolean).join('\n\n');
-      const effectiveRubric = combinedRubric || (detectRubricInText(assignmentCombinedText) ? assignmentCombinedText : '');
-      const combinedAnswerKey = [answerKeyCombinedText, form.answer_key].filter(Boolean).join('\n\n');
-      
-      const { data, error } = await supabase.functions.invoke('grade-paper', {
-        body: {
-          student_work: studentCombinedText,
-          grade_level: form.grade_level,
-          subject: form.subject,
-          assignment_type: form.assignment_type,
-          rubric: effectiveRubric,
-          answer_key: combinedAnswerKey || null,
-          assignment_doc_text: assignmentCombinedText || null,
-          grading_mode: gradingMode,
-        },
-      });
-      if (error) throw error;
-      setResult({
-        score_suggestion: data.score_suggestion || 'N/A',
-        strengths: data.strengths || 'Not provided',
-        areas_for_improvement: data.areas_for_improvement || 'Not provided',
-        feedback_paragraph: data.feedback_paragraph || 'Not provided',
-      });
-      toast({ title: 'Grade and feedback generated!' });
-    } catch (error) {
-      console.error('Grading error:', error);
-      toast({ title: 'Error', description: 'Failed to generate grade.', variant: 'destructive' });
-    } finally {
-      setGrading(false);
+
+    const readySubmissions = studentSubmissions.submissions.filter(s => 
+      s.files.some(f => f.status === 'ready')
+    );
+
+    if (readySubmissions.length === 0) {
+      toast({ title: 'No ready submissions', description: 'Wait for file extraction to complete.', variant: 'destructive' });
+      return;
     }
+
+    setGrading(true);
+    
+    // Initialize results for all submissions
+    const initialResults: SubmissionGradingResult[] = readySubmissions.map(sub => ({
+      submissionId: sub.id,
+      studentName: sub.studentName,
+      result: null,
+      grading: true,
+    }));
+    setSubmissionResults(initialResults);
+
+    const combinedRubric = [rubricCombinedText, form.rubric].filter(Boolean).join('\n\n');
+    const effectiveRubric = combinedRubric || (detectRubricInText(assignmentCombinedText) ? assignmentCombinedText : '');
+    const combinedAnswerKey = [answerKeyCombinedText, form.answer_key].filter(Boolean).join('\n\n');
+
+    // Grade each submission separately
+    for (const submission of readySubmissions) {
+      try {
+        const { data, error } = await supabase.functions.invoke('grade-paper', {
+          body: {
+            student_work: submission.combinedText,
+            grade_level: form.grade_level,
+            subject: form.subject,
+            assignment_type: form.assignment_type,
+            rubric: effectiveRubric,
+            answer_key: combinedAnswerKey || null,
+            assignment_doc_text: assignmentCombinedText || null,
+            grading_mode: gradingMode,
+          },
+        });
+
+        if (error) throw error;
+
+        setSubmissionResults(prev => prev.map(r => 
+          r.submissionId === submission.id ? {
+            ...r,
+            grading: false,
+            result: {
+              score_suggestion: data.score_suggestion || 'N/A',
+              strengths: data.strengths || 'Not provided',
+              areas_for_improvement: data.areas_for_improvement || 'Not provided',
+              feedback_paragraph: data.feedback_paragraph || 'Not provided',
+            }
+          } : r
+        ));
+      } catch (error) {
+        console.error('Grading error for', submission.studentName, error);
+        setSubmissionResults(prev => prev.map(r => 
+          r.submissionId === submission.id ? {
+            ...r,
+            grading: false,
+            error: 'Grading failed'
+          } : r
+        ));
+      }
+    }
+
+    setGrading(false);
+    toast({ title: `Graded ${readySubmissions.length} submission(s)!` });
   };
 
-  const updateResult = (field: keyof GradingResult, value: string) => {
-    if (result) setResult(prev => prev ? { ...prev, [field]: value } : null);
+  const activeResult = submissionResults[activeSubmissionIndex];
+
+  const updateActiveResult = (field: keyof GradingResult, value: string) => {
+    setSubmissionResults(prev => prev.map((r, idx) => 
+      idx === activeSubmissionIndex && r.result ? {
+        ...r,
+        result: { ...r.result, [field]: value }
+      } : r
+    ));
   };
 
   const handleCopy = async (text: string, label: string) => {
@@ -278,204 +320,39 @@ export default function GradePapers() {
   };
 
   const handlePreviewReport = () => {
-    if (!result) return;
+    if (!activeResult?.result) return;
     setPreviewOpen(true);
   };
 
-  const handleDownloadPdf = async () => {
-    if (!result || !user) return;
-    
-    // In pilot mode, just open preview instead
-    if (isPilotMode()) {
-      handlePreviewReport();
-      return;
-    }
-    
-    setDownloadingPdf(true);
-    setUploadingPdf(true);
-    
-    try {
-      // Call server-side PDF generation edge function
-      const { data, error } = await supabase.functions.invoke('generate-pdf-report', {
-        body: {
-          studentName: studentName || 'Student',
-          assignmentName: assignmentName || form.subject || 'Assignment',
-          score: result.score_suggestion,
-          strengths: result.strengths,
-          areasForImprovement: result.areas_for_improvement,
-          feedback: result.feedback_paragraph,
-          gradingMode: gradingMode,
-          subject: form.subject,
-          gradeLevel: form.grade_level,
-        },
-      });
-
-      if (error) throw error;
-
-      if (!data?.success) {
-        throw new Error(data?.details || 'PDF generation failed');
-      }
-
-      // Download the PDF from signed URL
-      const response = await fetch(data.signedUrl);
-      if (!response.ok) throw new Error('Failed to download PDF');
-      
-      const pdfBlob = await response.blob();
-      const downloadUrl = URL.createObjectURL(pdfBlob);
-      
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = data.filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(downloadUrl);
-      
-      // Store URLs for re-download
-      setSavedPdfUrl(data.publicUrl);
-      setSavedPdfFilename(data.filename);
-      
-      toast({
-        title: 'Saved to Reports',
-        description: 'PDF has been generated and saved.',
-      });
-    } catch (error) {
-      console.error('PDF generation error:', error);
-      
-      // Fallback to client-side generation
-      try {
-        const pdfBlob = generateGradeReportPdf({
-          studentName: studentName || 'Student',
-          assignmentName: assignmentName || form.subject || 'Assignment',
-          score: result.score_suggestion,
-          strengths: result.strengths,
-          areasForImprovement: result.areas_for_improvement,
-          feedback: result.feedback_paragraph,
-          gradingMode: gradingMode,
-          subject: form.subject,
-          gradeLevel: form.grade_level,
-        });
-        
-        const filename = generatePdfFilename(
-          studentName || 'Student',
-          assignmentName || form.subject || 'Assignment'
-        );
-        
-        const downloadUrl = URL.createObjectURL(pdfBlob);
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(downloadUrl);
-        
-        toast({ title: 'PDF downloaded (local generation)' });
-      } catch (fallbackError) {
-        console.error('Fallback PDF error:', fallbackError);
-        toast({ 
-          title: 'PDF generation failed', 
-          description: 'Please try again or use Print Report.', 
-          variant: 'destructive' 
-        });
-      }
-    } finally {
-      setDownloadingPdf(false);
-      setUploadingPdf(false);
-    }
-  };
-  
-  const handleDownloadAgain = () => {
-    if (!savedPdfUrl || !savedPdfFilename) return;
-    
-    const link = document.createElement('a');
-    link.href = savedPdfUrl;
-    link.download = savedPdfFilename;
-    link.target = '_blank';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-  
-  const handleCopyLink = async () => {
-    if (!savedPdfUrl) return;
-    
-    await navigator.clipboard.writeText(savedPdfUrl);
-    setCopied('link');
-    toast({ title: 'Link copied!' });
-    setTimeout(() => setCopied(null), 2000);
-  };
-
   const handlePrintReport = () => {
-    if (!result) return;
+    if (!activeResult?.result) return;
+    const result = activeResult.result;
+    const studentName = activeResult.studentName;
     
-    // Create a print-friendly HTML document
     const printContent = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Grade Report - ${studentName || 'Student'}</title>
+        <title>Grade Report - ${studentName}</title>
         <style>
           @page { size: letter portrait; margin: 0.75in; }
           * { box-sizing: border-box; margin: 0; padding: 0; }
           body { font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; padding: 20px; }
           .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 24px; }
           .header h1 { font-size: 20pt; font-weight: 700; color: #1e40af; margin-bottom: 4px; }
-          .header .subtitle { font-size: 10pt; color: #6b7280; }
-          .meta-info { display: flex; flex-wrap: wrap; gap: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; }
-          .meta-item { flex: 1; min-width: 120px; }
-          .meta-label { font-size: 9pt; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
-          .meta-value { font-size: 11pt; font-weight: 600; color: #1a1a1a; }
-          .section { margin-bottom: 20px; page-break-inside: avoid; }
+          .section { margin-bottom: 20px; }
           .section-title { font-size: 12pt; font-weight: 600; color: #1e40af; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; }
           .section-content { font-size: 11pt; line-height: 1.6; color: #374151; white-space: pre-wrap; }
-          .score-box { background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%); border: 2px solid #3b82f6; border-radius: 12px; padding: 16px 24px; text-align: center; margin-bottom: 24px; }
-          .score-label { font-size: 10pt; color: #1e40af; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+          .score-box { background: #dbeafe; border: 2px solid #3b82f6; border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 24px; }
           .score-value { font-size: 28pt; font-weight: 700; color: #1e40af; }
-          .feedback-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 16px; margin-top: 20px; }
-          .feedback-box .section-title { color: #166534; border-bottom-color: #86efac; }
-          .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 9pt; color: #9ca3af; }
-          @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
         </style>
       </head>
       <body>
-        <div class="header">
-          <h1>Grade Report</h1>
-          <div class="subtitle">Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-        </div>
-        <div class="meta-info">
-          <div class="meta-item">
-            <div class="meta-label">Student</div>
-            <div class="meta-value">${studentName || 'Not specified'}</div>
-          </div>
-          <div class="meta-item">
-            <div class="meta-label">Assignment</div>
-            <div class="meta-value">${assignmentName || form.subject || 'Not specified'}</div>
-          </div>
-          ${form.subject ? `<div class="meta-item"><div class="meta-label">Subject</div><div class="meta-value">${form.subject}</div></div>` : ''}
-          ${form.grade_level ? `<div class="meta-item"><div class="meta-label">Grade Level</div><div class="meta-value">${form.grade_level}</div></div>` : ''}
-        </div>
-        ${gradingMode === 'scoring' && result.score_suggestion !== 'N/A' ? `
-          <div class="score-box">
-            <div class="score-label">Suggested Score <span style="font-size: 8pt; text-transform: none; opacity: 0.7;">(AI-assisted)</span></div>
-            <div class="score-value">${result.score_suggestion}</div>
-          </div>
-        ` : ''}
-        <div class="section">
-          <div class="section-title">Observed Strengths</div>
-          <div class="section-content">${result.strengths}</div>
-        </div>
-        <div class="section">
-          <div class="section-title">Areas for Growth</div>
-          <div class="section-content">${result.areas_for_improvement}</div>
-        </div>
-        <div class="feedback-box">
-          <div class="section">
-            <div class="section-title">Teacher Feedback Summary</div>
-            <div class="section-content">${result.feedback_paragraph}</div>
-          </div>
-        </div>
-        <div class="footer">This report was generated using AI assistance and is intended as a draft for teacher review.</div>
+        <div class="header"><h1>Grade Report - ${studentName}</h1></div>
+        ${gradingMode === 'scoring' ? `<div class="score-box"><div class="score-value">${result.score_suggestion}</div></div>` : ''}
+        <div class="section"><div class="section-title">Strengths</div><div class="section-content">${result.strengths}</div></div>
+        <div class="section"><div class="section-title">Areas for Growth</div><div class="section-content">${result.areas_for_improvement}</div></div>
+        <div class="section"><div class="section-title">Feedback</div><div class="section-content">${result.feedback_paragraph}</div></div>
       </body>
       </html>
     `;
@@ -489,33 +366,6 @@ export default function GradePapers() {
     }
   };
 
-  const handleSave = async () => {
-    if (!user || !result) return;
-    setSaving(true);
-    try {
-      const sessionData = {
-        user_id: user.id,
-        status: 'completed',
-        title: `${studentName || form.subject || 'Assignment'} - Grading`,
-        snippet: `Score: ${result.score_suggestion}`,
-        summary_json: { ...result, input_type: 'grading', grading_mode: gradingMode, studentName, assignmentName },
-        teacher_notes: JSON.stringify(form),
-        transcript: studentCombinedText,
-      };
-      if (sessionId) {
-        await supabase.from('sessions').update(sessionData).eq('id', sessionId);
-      } else {
-        const { data } = await supabase.from('sessions').insert(sessionData).select().single();
-        if (data) setSessionId(data.id);
-      }
-      toast({ title: 'Saved successfully!' });
-    } catch (error) {
-      toast({ title: 'Save failed', variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (authLoading) {
     return (
       <div className="min-h-screen bg-bottor-gradient flex items-center justify-center">
@@ -524,8 +374,8 @@ export default function GradePapers() {
     );
   }
 
-  const isExtracting = studentUpload.isExtracting || assignmentUpload.isExtracting || answerKeyUpload.isExtracting;
-  const canGenerate = studentUpload.hasReadyFiles && !isExtracting;
+  const isExtracting = studentSubmissions.isExtracting || assignmentUpload.isExtracting || answerKeyUpload.isExtracting;
+  const canGenerate = studentSubmissions.hasReadySubmissions && !isExtracting;
 
   return (
     <div className="min-h-screen bg-bottor-gradient">
@@ -539,54 +389,63 @@ export default function GradePapers() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Student Work Upload */}
+        {/* Student Submissions */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Student Work (Required)</CardTitle>
-              <CardDescription className="text-xs">Upload PDFs or images. Text will be extracted automatically.</CardDescription>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Student Submissions (Required)
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Each submission is graded separately. Upload files for one student at a time.
+              </CardDescription>
             </div>
-            {studentUpload.files.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={studentUpload.clearAllFiles} className="text-muted-foreground hover:text-destructive">
+            {studentSubmissions.submissions.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={studentSubmissions.clearAllSubmissions} className="text-muted-foreground hover:text-destructive">
                 Clear all
               </Button>
             )}
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Add New Submission */}
             <div className="relative">
-              <input ref={studentFileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif" onChange={handleStudentFileSelect} className="hidden" id="student-file-upload" />
-              <label htmlFor="student-file-upload" className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20">
-                <Upload className="w-6 h-6 text-muted-foreground mb-2" />
-                <span className="text-sm text-muted-foreground">Click to upload PDFs or images</span>
-                <span className="text-xs text-muted-foreground mt-1">Multiple files • Max 10MB each</span>
+              <input 
+                ref={newSubmissionFileInputRef} 
+                type="file" 
+                multiple 
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif" 
+                onChange={handleNewSubmissionFileSelect} 
+                className="hidden" 
+                id="new-submission-upload" 
+              />
+              <label 
+                htmlFor="new-submission-upload" 
+                className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+              >
+                <Plus className="w-6 h-6 text-muted-foreground mb-2" />
+                <span className="text-sm text-muted-foreground font-medium">Add New Student Submission</span>
+                <span className="text-xs text-muted-foreground mt-1">Upload PDFs or images for one student</span>
               </label>
             </div>
 
-            {studentUpload.files.length > 0 && (
-              <FileUploadList
-                files={studentUpload.files}
-                onRemove={studentUpload.removeFile}
-                onRetry={studentUpload.retryExtraction}
-                label="Uploaded Files"
-                totalFiles={studentUpload.totalFiles}
-                completedFiles={studentUpload.completedFiles}
-                failedFiles={studentUpload.failedFiles}
-                progress={studentUpload.progress}
-                isExtracting={studentUpload.isExtracting}
+            {/* Submission List */}
+            {studentSubmissions.submissions.length > 0 && (
+              <StudentSubmissionList
+                submissions={studentSubmissions.submissions}
+                onRename={studentSubmissions.renameSubmission}
+                onMoveFile={studentSubmissions.moveFileBetweenSubmissions}
+                onRemoveFile={studentSubmissions.removeFile}
+                onRetryFile={studentSubmissions.retryExtraction}
+                onDeleteSubmission={studentSubmissions.deleteSubmission}
+                onAddFiles={(subId, files) => studentSubmissions.addFilesToSubmission(subId, files)}
+                totalFiles={studentSubmissions.totalFiles}
+                completedFiles={studentSubmissions.completedFiles}
+                failedFiles={studentSubmissions.failedFiles}
+                progress={studentSubmissions.progress}
+                isExtracting={studentSubmissions.isExtracting}
               />
             )}
-
-            <div className="space-y-2">
-              <Label>Extracted Text (combined) {studentUpload.isExtracting && '(Extracting...)'}</Label>
-              <Textarea
-                placeholder="Text extracted from files will appear here..."
-                value={studentCombinedText}
-                onChange={(e) => studentUpload.setCombinedText(e.target.value)}
-                rows={10}
-                disabled={studentUpload.isExtracting}
-                className="font-mono text-sm"
-              />
-            </div>
           </CardContent>
         </Card>
 
@@ -605,309 +464,37 @@ export default function GradePapers() {
                 <span className="text-xs font-normal text-muted-foreground ml-2">Optional</span>
               </CardTitle>
               {rubricMode !== 'none' && (
-                <Badge 
-                  variant={rubricMode === 'locked' ? 'default' : 'secondary'}
-                  className={rubricMode === 'locked' ? 'bg-green-600 hover:bg-green-600' : ''}
-                >
-                  {rubricMode === 'locked' ? (
-                    <><Lock className="w-3 h-3 mr-1" />Locked</>
-                  ) : (
-                    <><Unlock className="w-3 h-3 mr-1" />Draft</>
-                  )}
+                <Badge variant={rubricMode === 'locked' ? 'default' : 'secondary'}>
+                  {rubricMode === 'locked' ? <><Lock className="w-3 h-3 mr-1" />Locked</> : <><Unlock className="w-3 h-3 mr-1" />Draft</>}
                 </Badge>
               )}
             </div>
-            <CardDescription className="text-xs">
-              You may upload a document or paste text — either option works.
-            </CardDescription>
+            <CardDescription className="text-xs">Upload or paste rubric — applies to all submissions.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Upload Rubric */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Label className="text-sm font-medium">Upload Rubric (PDF or Image)</Label>
-              </div>
-              <input
-                ref={rubricFileInputRef}
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                multiple
-                className="hidden"
-                onChange={handleRubricFileSelect}
-                disabled={rubricMode === 'locked'}
-              />
-              <div
-                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
-                  rubricMode === 'locked'
-                    ? 'border-muted bg-muted/20 cursor-not-allowed opacity-60'
-                    : 'border-muted hover:border-primary hover:bg-primary/5'
-                }`}
-                onClick={() => rubricMode !== 'locked' && rubricFileInputRef.current?.click()}
-              >
-                <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Click to upload rubric files
-                </p>
-                <p className="text-xs text-muted-foreground/70 mt-1">
-                  PDF, JPG, PNG accepted
-                </p>
-              </div>
-              
-              {/* Rubric file list */}
-              {rubricUpload.files.length > 0 && (
-                <FileUploadList
-                  files={rubricUpload.files}
-                  onRemove={rubricUpload.removeFile}
-                  onRetry={rubricUpload.retryExtraction}
-                  label="Rubric Files"
-                  totalFiles={rubricUpload.totalFiles}
-                  completedFiles={rubricUpload.completedFiles}
-                  failedFiles={rubricUpload.failedFiles}
-                  progress={rubricUpload.progress}
-                  isExtracting={rubricUpload.isExtracting}
-                />
-              )}
+            <input ref={rubricFileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif" multiple className="hidden" onChange={handleRubricFileSelect} disabled={rubricMode === 'locked'} />
+            <div className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${rubricMode === 'locked' ? 'border-muted bg-muted/20 cursor-not-allowed opacity-60' : 'border-muted hover:border-primary hover:bg-primary/5'}`} onClick={() => rubricMode !== 'locked' && rubricFileInputRef.current?.click()}>
+              <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Click to upload rubric files</p>
             </div>
             
-            {/* Paste Rubric */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Or paste rubric text</Label>
-              <Textarea
-                placeholder="Paste your rubric or grading criteria here..."
-                value={form.rubric}
-                onChange={(e) => updateForm('rubric', e.target.value)}
-                rows={6}
-                disabled={rubricMode === 'locked'}
-                className={rubricMode === 'locked' ? 'opacity-75 bg-muted/20' : ''}
-              />
-            </div>
-            
-            {/* Rubric Mode Status */}
-            {rubricMode === 'none' && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-muted">
-                <Info className="w-4 h-4 text-muted-foreground" />
-                <div className="flex-1">
-                  <span className="text-sm text-muted-foreground">No rubric detected — Feedback-only mode</span>
-                  <p className="text-xs text-muted-foreground/70 mt-0.5">
-                    Upload or paste a rubric above to enable scoring.
-                  </p>
-                </div>
-              </div>
+            {rubricUpload.files.length > 0 && (
+              <FileUploadList files={rubricUpload.files} onRemove={rubricUpload.removeFile} onRetry={rubricUpload.retryExtraction} label="Rubric Files" totalFiles={rubricUpload.totalFiles} completedFiles={rubricUpload.completedFiles} failedFiles={rubricUpload.failedFiles} progress={rubricUpload.progress} isExtracting={rubricUpload.isExtracting} />
             )}
+            
+            <Textarea placeholder="Or paste rubric text..." value={form.rubric} onChange={(e) => updateForm('rubric', e.target.value)} rows={4} disabled={rubricMode === 'locked'} />
             
             {rubricMode === 'draft' && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
-                  <CheckCircle2 className="w-4 h-4 text-primary" />
-                  <div className="flex-1">
-                    <span className="text-sm text-primary">Rubric detected — Scoring enabled</span>
-                    {detectedRubricSource && (
-                      <p className="text-xs text-primary/70 mt-0.5">
-                        Source: {detectedRubricSource}
-                      </p>
-                    )}
-                  </div>
+              <div className="flex items-center justify-between p-3 rounded-lg border border-muted bg-background">
+                <div className="flex items-center gap-2">
+                  <Unlock className="w-4 h-4 text-muted-foreground" />
+                  <Label htmlFor="lock-rubric" className="text-sm cursor-pointer">Lock rubric for auto-grading</Label>
                 </div>
-                
-                {/* Lock Toggle */}
-                <div className="flex items-center justify-between p-3 rounded-lg border border-muted bg-background">
-                  <div className="flex items-center gap-2">
-                    <Unlock className="w-4 h-4 text-muted-foreground" />
-                    <div>
-                      <Label htmlFor="lock-rubric" className="text-sm font-medium cursor-pointer">
-                        Lock rubric for auto-grading
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        Hides manual options and uses rubric criteria only
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    id="lock-rubric"
-                    checked={rubricLocked}
-                    onCheckedChange={setRubricLocked}
-                  />
-                </div>
-              </div>
-            )}
-            
-            {rubricMode === 'locked' && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/30">
-                  <Lock className="w-4 h-4 text-green-600" />
-                  <div className="flex-1">
-                    <span className="text-sm text-green-700 dark:text-green-400 font-medium">
-                      Rubric locked — Auto-grading enabled
-                    </span>
-                    {detectedRubricSource && (
-                      <p className="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">
-                        Source: {detectedRubricSource}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Unlock Toggle */}
-                <div className="flex items-center justify-between p-3 rounded-lg border border-green-500/30 bg-background">
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-green-600" />
-                    <div>
-                      <Label htmlFor="lock-rubric" className="text-sm font-medium cursor-pointer">
-                        Rubric locked for auto-grading
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        Manual grading options are hidden
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    id="lock-rubric"
-                    checked={rubricLocked}
-                    onCheckedChange={setRubricLocked}
-                  />
-                </div>
+                <Switch id="lock-rubric" checked={rubricLocked} onCheckedChange={setRubricLocked} />
               </div>
             )}
           </CardContent>
         </Card>
-        
-        {/* Manual Grading Options - Hidden when rubric is locked */}
-        {rubricMode !== 'locked' && (
-          <Card className="border border-muted">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Info className="w-4 h-4" />
-                Manual Grading Options
-              </CardTitle>
-              <CardDescription className="text-xs">
-                These options are available when rubric is not locked
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Subject</Label>
-                  <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select subject" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background border shadow-lg z-50">
-                      {SUBJECTS.map(s => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Grade Level</Label>
-                  <Select value={form.grade_level} onValueChange={(v) => updateForm('grade_level', v)}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select grade" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background border shadow-lg z-50">
-                      {GRADES.map(g => (
-                        <SelectItem key={g} value={g}>{g}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Assignment Type</Label>
-                <Select value={form.assignment_type} onValueChange={(v) => updateForm('assignment_type', v)}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background border shadow-lg z-50">
-                    {ASSIGNMENT_TYPES.map(t => (
-                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Answer Key - Only in manual mode */}
-              <Collapsible open={answerKeyOpen} onOpenChange={setAnswerKeyOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-between text-muted-foreground hover:text-foreground">
-                    <span className="flex items-center gap-2">
-                      <FileSearch className="w-4 h-4" />
-                      Answer Key (Optional)
-                    </span>
-                    {answerKeyOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="pt-3 space-y-4">
-                  <p className="text-xs text-muted-foreground">
-                    You may upload a document or paste text — either option works.
-                  </p>
-                  
-                  {/* Upload Answer Key */}
-                  <div className="space-y-3">
-                    <Label className="text-sm font-medium">Upload Answer Key (PDF or Image)</Label>
-                    <input
-                      ref={answerKeyFileInputRef}
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                      multiple
-                      className="hidden"
-                      onChange={handleAnswerKeyFileSelect}
-                    />
-                    <div
-                      className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors border-muted hover:border-primary hover:bg-primary/5"
-                      onClick={() => answerKeyFileInputRef.current?.click()}
-                    >
-                      <Upload className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">
-                        Click to upload answer key files
-                      </p>
-                      <p className="text-xs text-muted-foreground/70 mt-1">
-                        PDF, JPG, PNG accepted
-                      </p>
-                    </div>
-                    
-                    {/* Answer key file list */}
-                    {answerKeyUpload.files.length > 0 && (
-                      <FileUploadList
-                        files={answerKeyUpload.files}
-                        onRemove={answerKeyUpload.removeFile}
-                        onRetry={answerKeyUpload.retryExtraction}
-                        label="Answer Key Files"
-                        totalFiles={answerKeyUpload.totalFiles}
-                        completedFiles={answerKeyUpload.completedFiles}
-                        failedFiles={answerKeyUpload.failedFiles}
-                        progress={answerKeyUpload.progress}
-                        isExtracting={answerKeyUpload.isExtracting}
-                      />
-                    )}
-                  </div>
-                  
-                  {/* Paste Answer Key */}
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Or paste answer key</Label>
-                    <Textarea
-                      placeholder="Paste answer key here..."
-                      value={form.answer_key}
-                      onChange={(e) => updateForm('answer_key', e.target.value)}
-                      rows={4}
-                      className="text-sm"
-                    />
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </CardContent>
-          </Card>
-        )}
-        
-        {/* Locked Mode Info */}
-        {rubricMode === 'locked' && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/5 border border-green-500/20">
-            <CheckCircle2 className="w-4 h-4 text-green-600" />
-            <span className="text-sm text-green-700 dark:text-green-400">
-              Auto-grading mode: Manual options hidden. Grading will use rubric criteria only.
-            </span>
-          </div>
-        )}
 
         {/* Generate Button */}
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border">
@@ -915,211 +502,105 @@ export default function GradePapers() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <Button onClick={handleGenerateGrade} disabled={!canGenerate || grading} className="w-full" size="lg">
+                  <Button onClick={handleGenerateGrades} disabled={!canGenerate || grading} className="w-full" size="lg">
                     {grading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Sparkles className="w-5 h-5 mr-2" />}
-                    Generate Draft Grade + Feedback
+                    Grade All Submissions ({studentSubmissions.submissions.length})
                   </Button>
                 </div>
               </TooltipTrigger>
               {!canGenerate && isExtracting && (
-                <TooltipContent><p>Waiting for text extraction to complete...</p></TooltipContent>
+                <TooltipContent><p>Waiting for text extraction...</p></TooltipContent>
               )}
             </Tooltip>
           </TooltipProvider>
         </div>
 
         {/* Results */}
-        {result && (
+        {submissionResults.length > 0 && (
           <div className="space-y-4 animate-fade-in">
-            {/* PDF Export Info */}
-            <Card className="border border-muted shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Report Details (for PDF export)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Student Name</Label>
-                    <Input 
-                      placeholder="Enter student name" 
-                      value={studentName} 
-                      onChange={(e) => setStudentName(e.target.value)}
-                      className="h-9"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Assignment Name</Label>
-                    <Input 
-                      placeholder="Enter assignment name" 
-                      value={assignmentName} 
-                      onChange={(e) => setAssignmentName(e.target.value)}
-                      className="h-9"
-                    />
-                  </div>
+            {/* Submission Tabs */}
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {submissionResults.map((r, idx) => (
+                <Button
+                  key={r.submissionId}
+                  variant={activeSubmissionIndex === idx ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setActiveSubmissionIndex(idx)}
+                  className="whitespace-nowrap"
+                >
+                  {r.studentName}
+                  {r.grading && <Loader2 className="w-3 h-3 ml-1 animate-spin" />}
+                  {r.result && <Check className="w-3 h-3 ml-1" />}
+                </Button>
+              ))}
+            </div>
+
+            {activeResult?.result && (
+              <>
+                <Card className="border-0 shadow-md bg-primary/5">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg flex justify-between">
+                      {activeResult.studentName} - Score
+                      <Button variant="ghost" size="sm" onClick={() => handleCopy(activeResult.result!.score_suggestion, 'Score')}>
+                        {copied === 'Score' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Input value={activeResult.result.score_suggestion} onChange={(e) => updateActiveResult('score_suggestion', e.target.value)} className="text-xl font-bold text-primary" />
+                  </CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-md">
+                  <CardHeader className="pb-2"><CardTitle className="text-lg">Strengths</CardTitle></CardHeader>
+                  <CardContent><Textarea value={activeResult.result.strengths} onChange={(e) => updateActiveResult('strengths', e.target.value)} rows={3} /></CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-md">
+                  <CardHeader className="pb-2"><CardTitle className="text-lg">Areas for Growth</CardTitle></CardHeader>
+                  <CardContent><Textarea value={activeResult.result.areas_for_improvement} onChange={(e) => updateActiveResult('areas_for_improvement', e.target.value)} rows={3} /></CardContent>
+                </Card>
+
+                <Card className="border-0 shadow-md">
+                  <CardHeader className="pb-2"><CardTitle className="text-lg">Feedback</CardTitle></CardHeader>
+                  <CardContent><Textarea value={activeResult.result.feedback_paragraph} onChange={(e) => updateActiveResult('feedback_paragraph', e.target.value)} rows={5} /></CardContent>
+                </Card>
+
+                <div className="flex gap-2 flex-wrap">
+                  <Button variant="outline" onClick={handlePreviewReport}><Eye className="w-4 h-4 mr-2" />Preview</Button>
+                  <Button variant="ghost" onClick={handlePrintReport}><Printer className="w-4 h-4 mr-2" />Print</Button>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-md bg-primary/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg flex justify-between">
-                  Suggested Score <span className="text-xs font-normal text-muted-foreground ml-1">(AI-assisted)</span>
-                  <Button variant="ghost" size="sm" onClick={() => handleCopy(result.score_suggestion, 'Score')}>
-                    {copied === 'Score' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Input value={result.score_suggestion} onChange={(e) => updateResult('score_suggestion', e.target.value)} className="text-xl font-bold text-primary" />
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-md">
-              <CardHeader className="pb-2"><CardTitle className="text-lg">Observed Strengths</CardTitle></CardHeader>
-              <CardContent><Textarea value={result.strengths} onChange={(e) => updateResult('strengths', e.target.value)} rows={3} /></CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-md">
-              <CardHeader className="pb-2"><CardTitle className="text-lg">Areas for Growth</CardTitle></CardHeader>
-              <CardContent><Textarea value={result.areas_for_improvement} onChange={(e) => updateResult('areas_for_improvement', e.target.value)} rows={3} /></CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-md">
-              <CardHeader className="pb-2"><CardTitle className="text-lg">Teacher Feedback Summary</CardTitle></CardHeader>
-              <CardContent><Textarea value={result.feedback_paragraph} onChange={(e) => updateResult('feedback_paragraph', e.target.value)} rows={5} /></CardContent>
-            </Card>
-
-            {/* Saved PDF Actions - Only show in non-pilot mode */}
-            {!isPilotMode() && savedPdfUrl && (
-              <Card className="border border-accent bg-accent/30">
-                <CardContent className="py-3 flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-2 text-accent-foreground">
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span className="font-medium text-sm">Saved to Reports</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={handleDownloadAgain}
-                      className="gap-1.5"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Download again
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={handleCopyLink}
-                      className="gap-1.5"
-                    >
-                      {copied === 'link' ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <LinkIcon className="w-3.5 h-3.5" />
-                      )}
-                      Copy link
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      asChild
-                    >
-                      <a href={savedPdfUrl} target="_blank" rel="noopener noreferrer" className="gap-1.5">
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        Open
-                      </a>
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+              </>
             )}
 
-            {/* Action Buttons - Pilot Mode */}
-            {isPilotMode() ? (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-3">
-                  <Button 
-                    variant="default" 
-                    onClick={handlePreviewReport}
-                    className="flex-1 min-w-[160px]"
-                  >
-                    <Eye className="w-4 h-4 mr-2" />
-                    Preview Grade Report
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={handlePrintReport}
-                    className="min-w-[160px]"
-                  >
-                    <Printer className="w-4 h-4 mr-2" />
-                    Print / Save Preview
-                  </Button>
-                  <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
-                    {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                    {sessionId ? 'Update' : 'Save'}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground text-center">
-                  Pilot mode: Saved PDF downloads and report history will be available in the full release.
-                </p>
+            {activeResult?.grading && (
+              <div className="text-center py-8">
+                <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-2" />
+                <p className="text-muted-foreground">Grading {activeResult.studentName}...</p>
               </div>
-            ) : (
-              /* Full Release Buttons */
-              <div className="flex flex-wrap gap-3">
-                <Button 
-                  variant="outline" 
-                  onClick={handleDownloadPdf} 
-                  disabled={downloadingPdf || uploadingPdf}
-                  className="flex-1 min-w-[140px]"
-                >
-                  {downloadingPdf ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : uploadingPdf ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4 mr-2" />
-                      Download PDF
-                    </>
-                  )}
-                </Button>
-                <Button 
-                  variant="ghost" 
-                  onClick={handlePrintReport}
-                  className="min-w-[120px]"
-                >
-                  <Printer className="w-4 h-4 mr-2" />
-                  Print Report
-                </Button>
-                <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
-                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  {sessionId ? 'Update' : 'Save'}
-                </Button>
+            )}
+
+            {activeResult?.error && (
+              <div className="text-center py-8 text-destructive">
+                <p>Failed to grade {activeResult.studentName}</p>
               </div>
             )}
           </div>
         )}
       </main>
 
-      {/* Grade Report Preview Modal */}
-      {result && (
+      {/* Preview Modal */}
+      {activeResult?.result && (
         <GradeReportPreview
           open={previewOpen}
           onOpenChange={setPreviewOpen}
           data={{
-            studentName: studentName || 'Test Subject',
+            studentName: activeResult.studentName,
             assignmentName: assignmentName || form.subject || 'Assignment',
-            score: result.score_suggestion,
-            strengths: result.strengths,
-            areasForImprovement: result.areas_for_improvement,
-            feedback: result.feedback_paragraph,
+            score: activeResult.result.score_suggestion,
+            strengths: activeResult.result.strengths,
+            areasForImprovement: activeResult.result.areas_for_improvement,
+            feedback: activeResult.result.feedback_paragraph,
             gradingMode: gradingMode,
             subject: form.subject,
             gradeLevel: form.grade_level,
