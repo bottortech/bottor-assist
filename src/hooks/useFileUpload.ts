@@ -1,5 +1,15 @@
-// src/hooks/useFileUpload.ts
+/**
+ * Optimistic File Upload Hook (v2 - Resilient Non-Blocking Pipeline)
+ *
+ * Fixes “Processing… 0%” hangs by:
+ * - Concurrency limiting (default 2 at a time)
+ * - Hard timeout on extraction (default 15s)
+ * - Watchdog that auto-fails stuck extractions
+ * - Never leaving files in an “in-progress” state forever
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import heic2any from "heic2any";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -9,7 +19,6 @@ export type UploadedFileItem = {
   id: string;
   file: File;
   fileName: string;
-  fileType: string;
   size: number;
   status: FileStatus;
   extractedText?: string;
@@ -19,275 +28,286 @@ export type UploadedFileItem = {
 
 export type UseFileUploadOptions = {
   maxConcurrentExtractions?: number; // default 2
-  extractionTimeoutMs?: number; // default 30000
+  maxDimension?: number; // default 1600 (image downscale)
+  jpegQuality?: number; // default 0.75
+  extractionTimeoutMs?: number; // default 15000
 };
 
-function isProcessingStatus(status: FileStatus) {
-  return ["queued", "uploading", "uploaded", "extracting"].includes(status);
+const DEFAULT_OPTIONS: Required<UseFileUploadOptions> = {
+  maxConcurrentExtractions: 2,
+  maxDimension: 1600,
+  jpegQuality: 0.75,
+  extractionTimeoutMs: 15000,
+};
+
+const isProcessingStatus = (status: FileStatus) => ["queued", "uploading", "uploaded", "extracting"].includes(status);
+
+const safeId = () => `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label = "timeout"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(label)), ms);
+    promise
+      .then((v) => {
+        clearTimeout(t);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+  });
 }
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.onerror = () => reject(new Error("FileReader failed"));
     reader.onload = () => {
-      const result = reader.result as string;
-      // result is data:<mime>;base64,<data>
-      const base64 = result.split(",")[1] ?? "";
-      resolve(base64);
+      const result = reader.result;
+      if (typeof result !== "string") return reject(new Error("Bad FileReader result"));
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
     };
     reader.readAsDataURL(file);
   });
 }
 
+async function downscaleImageIfNeeded(file: File, maxDimension: number, jpegQuality: number): Promise<File> {
+  // Only for images. PDFs pass through.
+  if (!file.type.startsWith("image/")) return file;
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Image read failed"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error("Image decode failed"));
+    i.src = dataUrl;
+  });
+
+  const { width, height } = img;
+  const scale = Math.min(1, maxDimension / Math.max(width, height));
+  if (scale >= 1) return file;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const blob: Blob = await new Promise((resolve) => {
+    canvas.toBlob((b) => resolve(b ?? new Blob()), "image/jpeg", jpegQuality);
+  });
+
+  return new File([blob], file.name.replace(/\.(png|jpg|jpeg|webp)$/i, ".jpg"), {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
+async function convertHeicIfNeeded(file: File): Promise<File> {
+  const isHeic =
+    file.type === "image/heic" ||
+    file.type === "image/heif" ||
+    /\.heic$/i.test(file.name) ||
+    /\.heif$/i.test(file.name);
+
+  if (!isHeic) return file;
+
+  const converted = (await heic2any({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.85,
+  })) as Blob;
+
+  return new File([converted], file.name.replace(/\.(heic|heif)$/i, ".jpg"), {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
 export function useFileUpload(options: UseFileUploadOptions = {}) {
   const { toast } = useToast();
-
-  const DEFAULT_OPTIONS = useMemo(
-    () => ({
-      maxConcurrentExtractions: 2,
-      extractionTimeoutMs: 30000,
-    }),
-    [],
-  );
-
-  const { maxConcurrentExtractions, extractionTimeoutMs } = {
-    ...DEFAULT_OPTIONS,
-    ...options,
-  };
+  const opts = { ...DEFAULT_OPTIONS, ...options };
 
   const [files, setFiles] = useState<UploadedFileItem[]>([]);
   const [combinedText, setCombinedText] = useState<string>("");
-  const [isExtracting, setIsExtracting] = useState<boolean>(false);
-
-  // Always-current state ref (prevents stale-closure bugs)
-  const filesRef = useRef<UploadedFileItem[]>([]);
-  useEffect(() => {
-    filesRef.current = files;
-  }, [files]);
 
   // Concurrency control
-  const activeExtractions = useRef<number>(0);
-  const extractionQueue = useRef<string[]>([]);
-  const pumpingQueue = useRef<boolean>(false);
+  const activeExtractions = useRef(0);
+  const queueTick = useRef(0);
 
-  const updateFileStatus = useCallback((fileId: string, patch: Partial<UploadedFileItem>) => {
-    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, ...patch } : f)));
+  const updateFile = useCallback((id: string, patch: Partial<UploadedFileItem>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
   }, []);
 
-  const getFileId = useCallback((file: File): string => {
-    // Stable-ish unique id for this session
-    return `${file.name}_${file.lastModified}_${Math.random().toString(36).slice(2, 9)}`;
-  }, []);
-
-  // Calls your Supabase edge function to extract text
-  const extractTextFromFile = useCallback(
-    async (file: File): Promise<{ success: true; text: string } | { success: false; error: string }> => {
-      try {
-        const base64 = await fileToBase64(file);
-
-        const { data, error } = await supabase.functions.invoke("extract-text", {
-          body: {
-            file_data: base64,
-            file_type: file.type,
-            file_name: file.name,
-          },
-        });
-
-        if (error) {
-          return { success: false, error: error.message || "Extraction failed" };
-        }
-
-        const text = (data as any)?.text ?? "";
-        return { success: true, text: typeof text === "string" ? text : "" };
-      } catch (err: any) {
-        return { success: false, error: err?.message || "Extraction failed" };
-      }
-    },
-    [],
-  );
-
-  const processExtraction = useCallback(
-    async (fileId: string): Promise<void> => {
-      const fileItem = filesRef.current.find((f) => f.id === fileId);
-      if (!fileItem) return;
-
-      // Only run extraction when uploaded/queued states
-      if (fileItem.status !== "uploaded" && fileItem.status !== "queued") return;
-
-      updateFileStatus(fileId, {
-        status: "extracting",
-        extractionStartedAt: Date.now(),
-        error: undefined,
-      });
-
-      const result = await Promise.race([
-        extractTextFromFile(fileItem.file),
-        new Promise<{ success: false; error: string }>((resolve) =>
-          setTimeout(() => resolve({ success: false, error: "Extraction timeout" }), extractionTimeoutMs),
-        ),
-      ]);
-
-      if (result.success === true) {
-        updateFileStatus(fileId, { status: "ready", extractedText: result.text, error: undefined });
-      } else {
-        updateFileStatus(fileId, { status: "failed", error: (result as { success: false; error: string }).error });
-      }
-    },
-    [extractTextFromFile, extractionTimeoutMs, updateFileStatus],
-  );
-
-  const pumpQueue = useCallback(async () => {
-    if (pumpingQueue.current) return;
-    pumpingQueue.current = true;
-
-    try {
-      while (activeExtractions.current < maxConcurrentExtractions && extractionQueue.current.length > 0) {
-        const nextId = extractionQueue.current.shift()!;
-        activeExtractions.current += 1;
-        setIsExtracting(true);
-
-        // Fire and await so we can decrement properly
-        await processExtraction(nextId);
-
-        activeExtractions.current -= 1;
-
-        // Update combined text progressively
-        const snapshot = filesRef.current;
-        const combined = snapshot
-          .filter((f) => f.status === "ready" && (f.extractedText?.trim()?.length ?? 0) > 0)
-          .map((f) => `--- ${f.fileName} ---\n${f.extractedText}\n`)
-          .join("\n");
-        setCombinedText(combined);
-
-        // Loop continues for remaining queue items
-      }
-    } finally {
-      pumpingQueue.current = false;
-
-      const stillProcessing =
-        extractionQueue.current.length > 0 || filesRef.current.some((f) => f.status === "extracting");
-      setIsExtracting(stillProcessing);
-    }
-  }, [maxConcurrentExtractions, processExtraction]);
-
-  const enqueueForExtraction = useCallback(
-    (fileId: string) => {
-      // prevent duplicates
-      if (!extractionQueue.current.includes(fileId)) {
-        extractionQueue.current.push(fileId);
-      }
-      void pumpQueue();
-    },
-    [pumpQueue],
-  );
-
-  const addFiles = useCallback(
-    async (incomingFiles: File[]) => {
-      if (!incomingFiles?.length) return;
-
-      const newItems: UploadedFileItem[] = incomingFiles.map((file) => {
-        const id = getFileId(file);
-        return {
-          id,
-          file,
-          fileName: file.name,
-          fileType: file.type,
-          size: file.size,
-          status: "uploaded", // we treat client upload as instant; extraction is the real work
-        };
-      });
-
-      setFiles((prev) => [...prev, ...newItems]);
-
-      // Enqueue extractions
-      newItems.forEach((item) => enqueueForExtraction(item.id));
-    },
-    [enqueueForExtraction, getFileId],
-  );
-
-  const removeFile = useCallback((fileId: string) => {
-    // Remove from queue too
-    extractionQueue.current = extractionQueue.current.filter((id) => id !== fileId);
-    setFiles((prev) => prev.filter((f) => f.id !== fileId));
+  const removeFile = useCallback((id: string) => {
+    setFiles((prev) => prev.filter((f) => f.id !== id));
   }, []);
 
   const clearAll = useCallback(() => {
-    extractionQueue.current = [];
-    activeExtractions.current = 0;
-    pumpingQueue.current = false;
     setFiles([]);
     setCombinedText("");
-    setIsExtracting(false);
   }, []);
 
-  const retryExtraction = useCallback(
-    (fileId: string) => {
-      updateFileStatus(fileId, { status: "uploaded", error: undefined, extractedText: undefined });
-      enqueueForExtraction(fileId);
-      toast({
-        title: "Retrying extraction",
-        description: "Trying again…",
-      });
+  const addFiles = useCallback((incoming: File[]) => {
+    const items: UploadedFileItem[] = incoming.map((file) => ({
+      id: safeId(),
+      file,
+      fileName: file.name,
+      size: file.size,
+      status: "queued",
+    }));
+    setFiles((prev) => [...prev, ...items]);
+    queueTick.current++;
+  }, []);
+
+  const extractTextFromFile = useCallback(
+    async (file: File): Promise<{ success: true; text: string } | { success: false; error: string }> => {
+      try {
+        // Normalize images (HEIC -> JPG, downscale)
+        let normalized = await convertHeicIfNeeded(file);
+        normalized = await downscaleImageIfNeeded(normalized, opts.maxDimension, opts.jpegQuality);
+
+        const base64 = await fileToBase64(normalized);
+
+        // IMPORTANT: Your Edge Function must accept:
+        // { file_data: base64, file_type: normalized.type, file_name: normalized.name }
+        const res = await withTimeout(
+          supabase.functions.invoke("extract-text", {
+            body: {
+              file_data: base64,
+              file_type: normalized.type,
+              file_name: normalized.name,
+            },
+          }),
+          opts.extractionTimeoutMs,
+          "Extraction timed out",
+        );
+
+        const err = (res as any)?.error;
+        if (err) return { success: false, error: err.message ?? "Extraction failed" };
+
+        const text = (res as any)?.data?.text;
+        if (typeof text !== "string") return { success: false, error: "No text returned" };
+
+        return { success: true, text };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? "Extraction error" };
+      }
     },
-    [enqueueForExtraction, toast, updateFileStatus],
+    [opts.extractionTimeoutMs, opts.jpegQuality, opts.maxDimension],
   );
 
-  const retryAllFailed = useCallback(() => {
-    const failed = filesRef.current.filter((f) => f.status === "failed").map((f) => f.id);
-    failed.forEach((id) => retryExtraction(id));
-  }, [retryExtraction]);
+  const processOne = useCallback(
+    async (item: UploadedFileItem) => {
+      // If user removed it, skip.
+      // Also, only process if queued/uploaded/uploading
+      if (!isProcessingStatus(item.status)) return;
 
-  // Watchdog: if anything is "extracting" > timeout+5s, mark failed
+      activeExtractions.current += 1;
+
+      try {
+        updateFile(item.id, { status: "uploading", error: undefined });
+
+        // For this app, “uploading” is just local prep → then “uploaded”
+        updateFile(item.id, { status: "uploaded" });
+
+        // Start extraction
+        updateFile(item.id, { status: "extracting", extractionStartedAt: Date.now() });
+
+        const result = await extractTextFromFile(item.file);
+
+        if (result.success) {
+          updateFile(item.id, { status: "ready", extractedText: result.text, error: undefined });
+        } else {
+          updateFile(item.id, { status: "failed", error: result.error });
+        }
+      } catch (e: any) {
+        updateFile(item.id, { status: "failed", error: e?.message ?? "Unknown error" });
+      } finally {
+        activeExtractions.current = Math.max(0, activeExtractions.current - 1);
+        queueTick.current++;
+      }
+    },
+    [extractTextFromFile, updateFile],
+  );
+
+  // Watchdog: if an item sits in extracting too long, fail it so UI never hangs
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
-      const snapshot = filesRef.current;
-
-      snapshot.forEach((f) => {
-        if (f.status === "extracting" && f.extractionStartedAt) {
-          if (now - f.extractionStartedAt > extractionTimeoutMs + 5000) {
-            updateFileStatus(f.id, { status: "failed", error: "Extraction timeout" });
+      setFiles((prev) =>
+        prev.map((f) => {
+          if (
+            f.status === "extracting" &&
+            f.extractionStartedAt &&
+            now - f.extractionStartedAt > opts.extractionTimeoutMs + 3000
+          ) {
+            return { ...f, status: "failed", error: "Extraction stuck — auto-failed" };
           }
-        }
-      });
-
-      // Also keep combined text updated
-      const combined = snapshot
-        .filter((f) => f.status === "ready" && (f.extractedText?.trim()?.length ?? 0) > 0)
-        .map((f) => `--- ${f.fileName} ---\n${f.extractedText}\n`)
-        .join("\n");
-      setCombinedText(combined);
-
-      const stillProcessing = extractionQueue.current.length > 0 || snapshot.some((f) => isProcessingStatus(f.status));
-      setIsExtracting(stillProcessing);
+          return f;
+        }),
+      );
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [extractionTimeoutMs, updateFileStatus]);
+  }, [opts.extractionTimeoutMs]);
 
-  // Computed stats
-  const totalFiles = files.length;
-  const completedFiles = files.filter(f => f.status === 'ready').length;
-  const failedFiles = files.filter(f => f.status === 'failed').length;
-  const progress = totalFiles > 0 ? ((completedFiles + failedFiles) / totalFiles) * 100 : 0;
+  // Queue runner (non-blocking, concurrency-limited)
+  useEffect(() => {
+    const runnable = files.filter((f) => f.status === "queued" || f.status === "uploaded");
+    if (runnable.length === 0) return;
+
+    if (activeExtractions.current >= opts.maxConcurrentExtractions) return;
+
+    const slots = opts.maxConcurrentExtractions - activeExtractions.current;
+    const nextBatch = runnable.slice(0, Math.max(0, slots));
+
+    nextBatch.forEach((item) => {
+      // fire-and-forget; state updates handle UI
+      void processOne(item);
+    });
+  }, [files, opts.maxConcurrentExtractions, processOne]);
+
+  // Keep combinedText updated as files complete
+  useEffect(() => {
+    const readyTexts = files
+      .filter((f) => f.status === "ready" && typeof f.extractedText === "string")
+      .map((f) => f.extractedText ?? "");
+
+    setCombinedText(readyTexts.join("\n\n---\n\n"));
+  }, [files]);
+
+  const isProcessing = useMemo(() => files.some((f) => isProcessingStatus(f.status)), [files]);
+
+  const retryFailed = useCallback(() => {
+    const failed = files.filter((f) => f.status === "failed");
+    if (failed.length === 0) {
+      toast({ title: "No failed files", description: "Nothing to retry." });
+      return;
+    }
+    failed.forEach((f) => updateFile(f.id, { status: "queued", error: undefined, extractedText: undefined }));
+    queueTick.current++;
+    toast({ title: "Retry started", description: `Retrying ${failed.length} file(s).` });
+  }, [files, toast, updateFile]);
 
   return {
     files,
-    combinedText,
-    isExtracting,
-
     addFiles,
     removeFile,
     clearAll,
-
-    retryExtraction,
-    retryAllFailed,
-
-    // Stats for FileUploadList
-    totalFiles,
-    completedFiles,
-    failedFiles,
-    progress,
+    retryFailed,
+    isProcessing,
+    combinedText,
   };
 }
