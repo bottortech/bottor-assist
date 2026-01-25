@@ -1,16 +1,14 @@
 /**
  * =============================================================================
- * GRADE PAPERS PAGE (/grade)
+ * GRADE PAPERS PAGE (/grade) - v2 Automatic Grouping
  * =============================================================================
  * 
  * PURPOSE: Upload student work (PDF/image), provide rubric, and generate 
  * AI-powered draft grades with feedback.
  * 
- * BATCH GRADING: Supports multi-page student submissions with separate grading per student.
- * Each student submission is graded independently - never combined across students.
- * 
- * MANDATORY STUDENT GROUPING: Files start as ungrouped and MUST be assigned to students
- * before grading can proceed. This is a required step for Pilot Mode.
+ * AUTOMATIC GROUPING: No manual "assign pages to students" step required.
+ * Files are auto-grouped by detected student names from filenames or extracted text.
+ * Each SubmissionGroup is graded independently - never combined across students.
  * =============================================================================
  */
 
@@ -19,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSavedRubrics } from '@/hooks/useSavedRubrics';
 import { useFileUpload } from '@/hooks/useFileUpload';
-import { useStudentSubmissions, parseFilenameConvention } from '@/hooks/useStudentSubmissions';
+import { useStudentSubmissions } from '@/hooks/useStudentSubmissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -113,9 +111,9 @@ interface GradingResult {
 }
 
 interface SubmissionGradingResult {
-  submissionId: string;
+  groupId: string;
   studentName: string;
-  assignmentName?: string; // Auto-filled from filename convention
+  assignmentName?: string;
   result: GradingResult | null;
   grading: boolean;
   error?: string;
@@ -135,7 +133,7 @@ export default function GradePapers() {
 
   const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
 
-  // Student submissions hook (with mandatory grouping)
+  // Student submissions hook (automatic grouping)
   const studentSubmissions = useStudentSubmissions({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   
   // Other file upload hooks
@@ -152,7 +150,7 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState('');
   
-  // Per-submission grading results
+  // Per-group grading results
   const [submissionResults, setSubmissionResults] = useState<SubmissionGradingResult[]>([]);
   const [activeSubmissionIndex, setActiveSubmissionIndex] = useState(0);
   
@@ -168,8 +166,8 @@ export default function GradePapers() {
   const answerKeyCombinedText = answerKeyUpload.combinedText;
   const rubricCombinedText = rubricUpload.combinedText;
 
-  // Get combined text from all submissions for rubric detection
-  const allSubmissionsCombinedText = studentSubmissions.submissions.map(s => s.combinedText).join('\n\n');
+  // Get combined text from all groups for rubric detection
+  const allGroupsCombinedText = studentSubmissions.groups.map(g => g.combinedText).join('\n\n');
 
   const detectRubricInText = (text: string): boolean => {
     if (!text.trim()) return false;
@@ -182,7 +180,7 @@ export default function GradePapers() {
     const hasUploadedRubric = rubricCombinedText.trim().length > 0;
     const hasPastedRubric = form.rubric.trim().length > 0;
     const hasAssignmentRubric = detectRubricInText(assignmentCombinedText);
-    const hasStudentRubric = detectRubricInText(allSubmissionsCombinedText);
+    const hasStudentRubric = detectRubricInText(allGroupsCombinedText);
     const hasRubric = hasUploadedRubric || hasPastedRubric || hasAssignmentRubric || hasStudentRubric;
     
     setGradingMode(hasRubric ? 'scoring' : 'feedback-only');
@@ -200,15 +198,15 @@ export default function GradePapers() {
     else if (hasAssignmentRubric) setDetectedRubricSource('Assignment documents');
     else if (hasStudentRubric) setDetectedRubricSource('Student work');
     else setDetectedRubricSource('');
-  }, [form.rubric, assignmentCombinedText, allSubmissionsCombinedText, rubricLocked, rubricCombinedText]);
+  }, [form.rubric, assignmentCombinedText, allGroupsCombinedText, rubricLocked, rubricCombinedText]);
 
-  // Auto-fill assignment name from first submission's assignmentName (from filename convention)
+  // Auto-fill assignment name from first group's assignmentId
   useEffect(() => {
-    const firstSubmission = studentSubmissions.submissions[0];
-    if (firstSubmission?.assignmentName && !assignmentName) {
-      setAssignmentName(firstSubmission.assignmentName);
+    const firstGroup = studentSubmissions.groups[0];
+    if (firstGroup?.assignmentId && firstGroup.assignmentId !== 'default' && !assignmentName) {
+      setAssignmentName(firstGroup.assignmentId);
     }
-  }, [studentSubmissions.submissions, assignmentName]);
+  }, [studentSubmissions.groups, assignmentName]);
 
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -237,16 +235,26 @@ export default function GradePapers() {
     if (rubricFileInputRef.current) rubricFileInputRef.current.value = '';
   };
 
-  // Grade all submissions separately
+  // Grade all groups separately
   const handleGenerateGrades = async () => {
+    // Check for multiple students warning
+    if (studentSubmissions.multipleStudentsWarning) {
+      toast({ 
+        title: 'Multiple students detected', 
+        description: studentSubmissions.multipleStudentsWarning, 
+        variant: 'destructive' 
+      });
+      return;
+    }
+
     if (!studentSubmissions.canGrade) {
-      if (!studentSubmissions.allFilesAssigned) {
+      if (studentSubmissions.isExtracting) {
         toast({ 
-          title: 'Files not assigned', 
-          description: 'All uploaded pages must be assigned to students before grading.', 
+          title: 'Still processing', 
+          description: 'Wait for file extraction to complete.', 
           variant: 'destructive' 
         });
-      } else if (!studentSubmissions.hasReadySubmissions) {
+      } else if (!studentSubmissions.hasReadyGroups) {
         toast({ 
           title: 'No ready submissions', 
           description: 'Wait for file extraction to complete.', 
@@ -256,22 +264,22 @@ export default function GradePapers() {
       return;
     }
 
-    const readySubmissions = studentSubmissions.submissions.filter(s => 
-      s.files.some(f => f.status === 'ready')
+    const readyGroups = studentSubmissions.groups.filter(g => 
+      g.pages.some(p => p.status === 'ready')
     );
 
-    if (readySubmissions.length === 0) {
+    if (readyGroups.length === 0) {
       toast({ title: 'No ready submissions', description: 'Wait for file extraction to complete.', variant: 'destructive' });
       return;
     }
 
     setGrading(true);
     
-    // Initialize results for all submissions
-    const initialResults: SubmissionGradingResult[] = readySubmissions.map(sub => ({
-      submissionId: sub.id,
-      studentName: sub.studentName,
-      assignmentName: sub.assignmentName,
+    // Initialize results for all groups
+    const initialResults: SubmissionGradingResult[] = readyGroups.map(group => ({
+      groupId: group.groupId,
+      studentName: group.studentName,
+      assignmentName: group.assignmentId !== 'default' ? group.assignmentId : undefined,
       result: null,
       grading: true,
     }));
@@ -281,12 +289,12 @@ export default function GradePapers() {
     const effectiveRubric = combinedRubric || (detectRubricInText(assignmentCombinedText) ? assignmentCombinedText : '');
     const combinedAnswerKey = [answerKeyCombinedText, form.answer_key].filter(Boolean).join('\n\n');
 
-    // Grade each submission separately
-    for (const submission of readySubmissions) {
+    // Grade each group separately
+    for (const group of readyGroups) {
       try {
         const { data, error } = await supabase.functions.invoke('grade-paper', {
           body: {
-            student_work: submission.combinedText,
+            student_work: group.combinedText,
             grade_level: form.grade_level,
             subject: form.subject,
             assignment_type: form.assignment_type,
@@ -300,7 +308,7 @@ export default function GradePapers() {
         if (error) throw error;
 
         setSubmissionResults(prev => prev.map(r => 
-          r.submissionId === submission.id ? {
+          r.groupId === group.groupId ? {
             ...r,
             grading: false,
             result: {
@@ -312,9 +320,9 @@ export default function GradePapers() {
           } : r
         ));
       } catch (error) {
-        console.error('Grading error for', submission.studentName, error);
+        console.error('Grading error for', group.studentName, error);
         setSubmissionResults(prev => prev.map(r => 
-          r.submissionId === submission.id ? {
+          r.groupId === group.groupId ? {
             ...r,
             grading: false,
             error: 'Grading failed'
@@ -324,7 +332,7 @@ export default function GradePapers() {
     }
 
     setGrading(false);
-    toast({ title: `Graded ${readySubmissions.length} submission(s)!` });
+    toast({ title: `Graded ${readyGroups.length} submission(s)!` });
   };
 
   const activeResult = submissionResults[activeSubmissionIndex];
@@ -400,20 +408,22 @@ export default function GradePapers() {
     );
   }
 
-  const hasAnyFiles = studentSubmissions.totalFiles > 0;
+  const hasAnyFiles = studentSubmissions.totalPages > 0;
   const isExtracting = studentSubmissions.isExtracting || assignmentUpload.isExtracting || answerKeyUpload.isExtracting;
   
-  // Grading is disabled if: no files, files still ungrouped, extraction in progress, or no ready submissions
-  const canGenerate = studentSubmissions.canGrade && !isExtracting;
+  // Grading is enabled when all files are processed and we have ready groups
+  const canGenerate = studentSubmissions.canGrade && !studentSubmissions.multipleStudentsWarning;
   const gradingBlockedReason = !hasAnyFiles 
     ? 'Upload student work first'
-    : !studentSubmissions.allFilesAssigned 
-      ? 'Assign all pages to students first'
-      : isExtracting 
-        ? 'Waiting for text extraction...'
-        : !studentSubmissions.hasReadySubmissions 
+    : studentSubmissions.isExtracting 
+      ? 'Waiting for text extraction...'
+      : studentSubmissions.totalPendingPages > 0
+        ? 'Processing files...'
+        : !studentSubmissions.hasReadyGroups 
           ? 'No ready submissions'
-          : null;
+          : studentSubmissions.multipleStudentsWarning
+            ? 'Resolve student grouping first'
+            : null;
 
   return (
     <div className="min-h-screen bg-bottor-gradient">
@@ -438,7 +448,7 @@ export default function GradePapers() {
                 <Badge variant="destructive" className="text-xs ml-2">Required</Badge>
               </CardTitle>
               <CardDescription className="text-xs mt-1">
-                Upload PDFs or images. All pages start ungrouped and must be assigned to students.
+                Upload PDFs or images. Students are auto-detected and grouped.
               </CardDescription>
             </div>
             {hasAnyFiles && (
@@ -469,24 +479,21 @@ export default function GradePapers() {
               </label>
             </div>
 
-            {/* Student Submission List with Ungrouped Files */}
+            {/* Student Submission List */}
             {hasAnyFiles && (
               <StudentSubmissionList
-                ungroupedFiles={studentSubmissions.ungroupedFiles}
-                submissions={studentSubmissions.submissions}
-                onCreateStudentWithFiles={studentSubmissions.createStudentWithFiles}
-                onAssignFilesToStudent={studentSubmissions.assignFilesToStudent}
-                onUnassignFiles={studentSubmissions.unassignFilesFromStudent}
-                onRemoveUngroupedFile={studentSubmissions.removeUngroupedFile}
-                onRetryUngroupedFile={studentSubmissions.retryUngroupedExtraction}
-                onRename={studentSubmissions.renameSubmission}
-                onMoveFile={studentSubmissions.moveFileBetweenSubmissions}
-                onRemoveFile={studentSubmissions.removeFile}
-                onRetryFile={studentSubmissions.retryExtraction}
-                onDeleteSubmission={studentSubmissions.deleteSubmission}
-                allFilesAssigned={studentSubmissions.allFilesAssigned}
+                pendingPages={studentSubmissions.pendingPages}
+                groups={studentSubmissions.groups}
+                onRemovePendingPage={studentSubmissions.removePendingPage}
+                onRetryPendingExtraction={studentSubmissions.retryPendingExtraction}
+                onRenameStudent={studentSubmissions.renameStudent}
+                onRemovePage={studentSubmissions.removePage}
+                onDeleteGroup={studentSubmissions.deleteGroup}
+                onRetryExtraction={studentSubmissions.retryExtraction}
                 isExtracting={studentSubmissions.isExtracting}
                 progress={studentSubmissions.progress}
+                needsReviewCount={studentSubmissions.needsReviewCount}
+                multipleStudentsWarning={studentSubmissions.multipleStudentsWarning}
               />
             )}
           </CardContent>
@@ -554,14 +561,16 @@ export default function GradePapers() {
                   >
                     {grading ? (
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    ) : !studentSubmissions.allFilesAssigned ? (
+                    ) : studentSubmissions.multipleStudentsWarning ? (
                       <AlertTriangle className="w-5 h-5 mr-2" />
                     ) : (
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
-                    {!studentSubmissions.allFilesAssigned 
-                      ? `Assign All Pages First (${studentSubmissions.totalUngroupedFiles} ungrouped)`
-                      : `Grade All Submissions (${studentSubmissions.submissions.length})`
+                    {studentSubmissions.multipleStudentsWarning 
+                      ? 'Resolve Student Grouping First'
+                      : studentSubmissions.totalGroups === 0
+                        ? 'Upload Student Work'
+                        : `Grade All Submissions (${studentSubmissions.totalGroups})`
                     }
                   </Button>
                 </div>
@@ -572,11 +581,11 @@ export default function GradePapers() {
             </Tooltip>
           </TooltipProvider>
           
-          {/* Grouping status indicator */}
-          {hasAnyFiles && !studentSubmissions.allFilesAssigned && (
-            <p className="text-xs text-center text-orange-600 mt-2 flex items-center justify-center gap-1">
-              <AlertTriangle className="w-3 h-3" />
-              {studentSubmissions.totalUngroupedFiles} page{studentSubmissions.totalUngroupedFiles !== 1 ? 's' : ''} must be assigned to students before grading
+          {/* Processing status indicator */}
+          {hasAnyFiles && studentSubmissions.totalPendingPages > 0 && (
+            <p className="text-xs text-center text-muted-foreground mt-2 flex items-center justify-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Processing {studentSubmissions.totalPendingPages} file{studentSubmissions.totalPendingPages !== 1 ? 's' : ''}...
             </p>
           )}
         </div>
@@ -588,7 +597,7 @@ export default function GradePapers() {
             <div className="flex gap-2 overflow-x-auto pb-2">
               {submissionResults.map((r, idx) => (
                 <Button
-                  key={r.submissionId}
+                  key={r.groupId}
                   variant={activeSubmissionIndex === idx ? 'default' : 'outline'}
                   size="sm"
                   onClick={() => setActiveSubmissionIndex(idx)}
