@@ -813,6 +813,55 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
+        {/* ===== MANUAL OPTIONS (when not locked) ===== */}
+        {rubricMode !== 'locked' && (
+          <Card className="border border-muted">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                <Info className="w-4 h-4" />
+                Manual Grading Options
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Subject</Label>
+                  <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Select subject" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg z-50">
+                      {SUBJECTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Grade Level</Label>
+                  <Select value={form.grade_level} onValueChange={(v) => updateForm('grade_level', v)}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Select grade" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-background border shadow-lg z-50">
+                      {GRADES.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Assignment Type</Label>
+                <Select value={form.assignment_type} onValueChange={(v) => updateForm('assignment_type', v)}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-lg z-50">
+                    {ASSIGNMENT_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* ===== ANSWER KEY (OPTIONAL) ===== */}
         {rubricMode !== 'locked' && (
           <Card className="border border-muted">
@@ -879,55 +928,6 @@ export default function GradePapers() {
                 rows={3}
                 className="text-sm"
               />
-            </CardContent>
-          </Card>
-        )}
-        
-        {/* ===== MANUAL OPTIONS (when not locked) ===== */}
-        {rubricMode !== 'locked' && (
-          <Card className="border border-muted">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Info className="w-4 h-4" />
-                Manual Grading Options
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Subject</Label>
-                  <Select value={form.subject} onValueChange={(v) => updateForm('subject', v)}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select subject" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background border shadow-lg z-50">
-                      {SUBJECTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Grade Level</Label>
-                  <Select value={form.grade_level} onValueChange={(v) => updateForm('grade_level', v)}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select grade" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background border shadow-lg z-50">
-                      {GRADES.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Assignment Type</Label>
-                <Select value={form.assignment_type} onValueChange={(v) => updateForm('assignment_type', v)}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background border shadow-lg z-50">
-                    {ASSIGNMENT_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
             </CardContent>
           </Card>
         )}
