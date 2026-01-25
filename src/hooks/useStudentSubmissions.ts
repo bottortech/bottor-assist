@@ -32,9 +32,53 @@ export interface UploadedFileItem {
 export interface StudentSubmission {
   id: string;
   studentName: string;
+  assignmentName?: string; // Auto-filled from filename convention
   files: UploadedFileItem[];
   combinedText: string;
   createdAt: Date;
+}
+
+/**
+ * Parse filename using convention: Assignment__StudentName__p1.pdf
+ * Returns null if the filename doesn't match the convention
+ */
+export interface ParsedFilename {
+  assignmentName: string;
+  studentName: string;
+  pageNumber: number;
+  groupKey: string; // Assignment__StudentName for grouping
+}
+
+export function parseFilenameConvention(filename: string): ParsedFilename | null {
+  // Remove extension
+  const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
+  
+  // Expected format: Assignment__StudentName__p1
+  // Split by double underscore
+  const parts = nameWithoutExt.split('__');
+  
+  if (parts.length < 3) return null;
+  
+  const assignmentName = parts[0].trim();
+  const studentName = parts[1].trim();
+  const pageToken = parts[2].trim().toLowerCase();
+  
+  // Parse page number (p1, p2, page1, page2, etc.)
+  const pageMatch = pageToken.match(/^p(?:age)?(\d+)$/);
+  if (!pageMatch) return null;
+  
+  const pageNumber = parseInt(pageMatch[1], 10);
+  if (isNaN(pageNumber) || pageNumber < 1) return null;
+  
+  // Validate we have actual names
+  if (!assignmentName || !studentName) return null;
+  
+  return {
+    assignmentName,
+    studentName,
+    pageNumber,
+    groupKey: `${assignmentName}__${studentName}`,
+  };
 }
 
 interface UseStudentSubmissionsOptions {
@@ -150,13 +194,31 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
 
   /**
    * Update combined text for a submission from its files
+   * Files are sorted by their parsed page number if available
    */
   const updateSubmissionCombinedText = useCallback((submissionId: string) => {
     setSubmissions(prev => prev.map(sub => {
       if (sub.id !== submissionId) return sub;
       
-      const parts = sub.files.map((uf, idx) => {
-        const header = `--- Page ${idx + 1}: ${uf.fileName} ---`;
+      // Sort files by page number from filename convention
+      const sortedFiles = [...sub.files].sort((a, b) => {
+        const parsedA = parseFilenameConvention(a.fileName);
+        const parsedB = parseFilenameConvention(b.fileName);
+        
+        if (parsedA && parsedB) {
+          return parsedA.pageNumber - parsedB.pageNumber;
+        }
+        // Files with convention come before those without
+        if (parsedA && !parsedB) return -1;
+        if (!parsedA && parsedB) return 1;
+        // Fall back to createdAt order
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      });
+      
+      const parts = sortedFiles.map((uf, idx) => {
+        const parsed = parseFilenameConvention(uf.fileName);
+        const pageLabel = parsed ? `Page ${parsed.pageNumber}` : `Page ${idx + 1}`;
+        const header = `--- ${pageLabel}: ${uf.fileName} ---`;
         let body: string;
         
         switch (uf.status) {
@@ -181,7 +243,8 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         return `${header}\n${body}`;
       });
       
-      return { ...sub, combinedText: parts.join('\n\n') };
+      // Also update the files array to reflect sorted order
+      return { ...sub, files: sortedFiles, combinedText: parts.join('\n\n') };
     }));
   }, []);
 
@@ -433,7 +496,83 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, [convertHeicToJpeg, compressImage, generateThumbnail, updateUngroupedFileStatus, queueExtraction]);
 
   /**
-   * Add files to ungrouped pool (NEW: files start here instead of auto-creating submissions)
+   * Process a file that's already assigned to a submission (for auto-grouped files)
+   */
+  const processGroupedFile = useCallback(async (fileItem: UploadedFileItem) => {
+    try {
+      let processedFile = fileItem.file;
+      const ext = fileItem.fileName.split('.').pop()?.toLowerCase();
+      const isHeicOrHeif = 
+        fileItem.mimeType === 'image/heic' || 
+        fileItem.mimeType === 'image/heif' ||
+        ext === 'heic' || 
+        ext === 'heif';
+
+      // Find which submission this file belongs to
+      const findSubmission = () => {
+        let foundSubmissionId: string | undefined;
+        setSubmissions(prev => {
+          const sub = prev.find(s => s.files.some(f => f.id === fileItem.id));
+          foundSubmissionId = sub?.id;
+          return prev;
+        });
+        return foundSubmissionId;
+      };
+
+      const submissionId = findSubmission();
+      if (!submissionId) {
+        console.warn('File not found in any submission:', fileItem.fileName);
+        return;
+      }
+
+      const updateGroupedFileStatus = (updates: Partial<UploadedFileItem>) => {
+        updateFileStatus(submissionId, fileItem.id, updates);
+      };
+
+      updateGroupedFileStatus({ status: 'uploading' });
+
+      if (isHeicOrHeif) {
+        try {
+          processedFile = await convertHeicToJpeg(fileItem.file);
+          const newThumbnail = generateThumbnail(processedFile);
+          updateGroupedFileStatus({
+            file: processedFile,
+            fileName: processedFile.name,
+            mimeType: processedFile.type,
+            size: processedFile.size,
+            thumbnailUrl: newThumbnail,
+          });
+        } catch (err) {
+          console.error('HEIC conversion failed:', err);
+          updateGroupedFileStatus({
+            status: 'failed',
+            error: 'HEIC conversion failed. Try uploading as JPG/PNG.',
+          });
+          return;
+        }
+      } else if (processedFile.type.startsWith('image/') && processedFile.type !== 'application/pdf') {
+        try {
+          const compressed = await compressImage(processedFile);
+          processedFile = new File([compressed], processedFile.name, { type: 'image/jpeg' });
+          updateGroupedFileStatus({
+            file: processedFile,
+            size: processedFile.size,
+          });
+        } catch (err) {
+          console.warn('Image compression failed, using original:', err);
+        }
+      }
+
+      updateGroupedFileStatus({ status: 'uploaded' });
+      queueExtraction(fileItem.id, false, submissionId);
+      
+    } catch (err) {
+      console.error('File processing failed:', err);
+    }
+  }, [convertHeicToJpeg, compressImage, generateThumbnail, updateFileStatus, queueExtraction]);
+
+  /**
+   * Add files - auto-groups by filename convention or adds to ungrouped pool
    */
   const addFiles = useCallback(async (selectedFiles: FileList | File[]) => {
     const allowedMimes = [
@@ -518,14 +657,101 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
 
     if (newFileItems.length === 0) return;
 
-    setUngroupedFiles(prev => [...prev, ...newFileItems]);
-    toast({ title: `${newFileItems.length} file(s) added to ungrouped pages` });
+    // Auto-group files by filename convention
+    const groupedByConvention = new Map<string, { 
+      assignmentName: string; 
+      studentName: string; 
+      files: UploadedFileItem[] 
+    }>();
+    const ungroupedItems: UploadedFileItem[] = [];
 
-    // Process each file asynchronously
     for (const fileItem of newFileItems) {
-      processUngroupedFile(fileItem);
+      const parsed = parseFilenameConvention(fileItem.fileName);
+      
+      if (parsed) {
+        const existing = groupedByConvention.get(parsed.groupKey);
+        if (existing) {
+          existing.files.push(fileItem);
+        } else {
+          groupedByConvention.set(parsed.groupKey, {
+            assignmentName: parsed.assignmentName,
+            studentName: parsed.studentName,
+            files: [fileItem],
+          });
+        }
+      } else {
+        ungroupedItems.push(fileItem);
+      }
     }
-  }, [getFileId, generateThumbnail, toast, processUngroupedFile]);
+
+    // Add ungrouped files to the pool
+    if (ungroupedItems.length > 0) {
+      setUngroupedFiles(prev => [...prev, ...ungroupedItems]);
+    }
+
+    // Create submissions for each group
+    const createdSubmissions: StudentSubmission[] = [];
+    groupedByConvention.forEach(({ assignmentName, studentName, files }) => {
+      // Sort files by page number
+      const sortedFiles = [...files].sort((a, b) => {
+        const parsedA = parseFilenameConvention(a.fileName);
+        const parsedB = parseFilenameConvention(b.fileName);
+        if (parsedA && parsedB) {
+          return parsedA.pageNumber - parsedB.pageNumber;
+        }
+        return 0;
+      });
+
+      const submissionId = generateId();
+      createdSubmissions.push({
+        id: submissionId,
+        studentName,
+        assignmentName,
+        files: sortedFiles,
+        combinedText: '',
+        createdAt: new Date(),
+      });
+    });
+
+    if (createdSubmissions.length > 0) {
+      setSubmissions(prev => [...prev, ...createdSubmissions]);
+      
+      // Update combined text for all new submissions after state is set
+      setTimeout(() => {
+        createdSubmissions.forEach(sub => {
+          updateSubmissionCombinedText(sub.id);
+        });
+      }, 0);
+    }
+
+    // Build summary toast
+    const parts: string[] = [];
+    if (createdSubmissions.length > 0) {
+      const studentNames = createdSubmissions.map(s => s.studentName).join(', ');
+      parts.push(`Auto-grouped ${createdSubmissions.length} student(s): ${studentNames}`);
+    }
+    if (ungroupedItems.length > 0) {
+      parts.push(`${ungroupedItems.length} file(s) need manual assignment`);
+    }
+    
+    toast({ 
+      title: parts.length > 0 ? parts.join(' • ') : `${newFileItems.length} file(s) added`,
+      duration: 5000,
+    });
+
+    // Process each file asynchronously (both grouped and ungrouped)
+    for (const fileItem of newFileItems) {
+      // Find if this file is in ungrouped or in a submission
+      const isInUngrouped = ungroupedItems.some(f => f.id === fileItem.id);
+      
+      if (isInUngrouped) {
+        processUngroupedFile(fileItem);
+      } else {
+        // Process files that are already in submissions
+        processGroupedFile(fileItem);
+      }
+    }
+  }, [getFileId, generateThumbnail, generateId, toast, processUngroupedFile, updateSubmissionCombinedText]);
 
   /**
    * Create a new student and assign selected ungrouped files to them

@@ -19,7 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSavedRubrics } from '@/hooks/useSavedRubrics';
 import { useFileUpload } from '@/hooks/useFileUpload';
-import { useStudentSubmissions } from '@/hooks/useStudentSubmissions';
+import { useStudentSubmissions, parseFilenameConvention } from '@/hooks/useStudentSubmissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -115,6 +115,7 @@ interface GradingResult {
 interface SubmissionGradingResult {
   submissionId: string;
   studentName: string;
+  assignmentName?: string; // Auto-filled from filename convention
   result: GradingResult | null;
   grading: boolean;
   error?: string;
@@ -201,6 +202,14 @@ export default function GradePapers() {
     else setDetectedRubricSource('');
   }, [form.rubric, assignmentCombinedText, allSubmissionsCombinedText, rubricLocked, rubricCombinedText]);
 
+  // Auto-fill assignment name from first submission's assignmentName (from filename convention)
+  useEffect(() => {
+    const firstSubmission = studentSubmissions.submissions[0];
+    if (firstSubmission?.assignmentName && !assignmentName) {
+      setAssignmentName(firstSubmission.assignmentName);
+    }
+  }, [studentSubmissions.submissions, assignmentName]);
+
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
   };
@@ -262,6 +271,7 @@ export default function GradePapers() {
     const initialResults: SubmissionGradingResult[] = readySubmissions.map(sub => ({
       submissionId: sub.id,
       studentName: sub.studentName,
+      assignmentName: sub.assignmentName,
       result: null,
       grading: true,
     }));
