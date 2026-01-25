@@ -11,12 +11,16 @@
  * - Retry functionality for failed extractions
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import heic2any from 'heic2any';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
 export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'ready' | 'failed';
+
+// Helper to check if a status is "processing"
+const isProcessingStatus = (status: FileStatus): boolean => 
+  ['queued', 'uploading', 'uploaded', 'extracting'].includes(status);
 
 export interface UploadedFileItem {
   id: string;
@@ -215,53 +219,74 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   }, [fileToBase64]);
 
   /**
-   * Process extraction queue with concurrency limiting
+   * Process a single extraction - returns promise that resolves when done
    */
-  const processExtractionQueue = useCallback(async () => {
-    while (
-      extractionQueue.current.length > 0 && 
-      activeExtractions.current < maxConcurrentExtractions
-    ) {
-      const fileId = extractionQueue.current.shift();
-      if (!fileId) continue;
-      
-      activeExtractions.current++;
-      
-      // Get file from state
-      setFiles(prev => {
-        const fileItem = prev.find(f => f.id === fileId);
-        if (!fileItem || fileItem.status !== 'uploaded') {
-          activeExtractions.current--;
-          return prev;
-        }
-        
-        // Start extraction in background
-        (async () => {
-          updateFileStatus(fileId, { status: 'extracting' });
-          
-          try {
-            const text = await extractTextFromFile(fileItem.file);
-            updateFileStatus(fileId, { 
-              status: 'ready', 
-              extractedText: text,
-              error: undefined 
-            });
-          } catch (err) {
-            console.error('Extraction failed for', fileItem.fileName, err);
-            updateFileStatus(fileId, { 
-              status: 'failed',
-              error: err instanceof Error ? err.message : 'Unknown error'
-            });
-          } finally {
-            activeExtractions.current--;
-            processExtractionQueue();
-          }
-        })();
-        
-        return prev;
+  const processExtraction = useCallback(async (fileId: string): Promise<void> => {
+    // Get file data
+    let fileItem: UploadedFileItem | undefined;
+    setFiles(prev => {
+      fileItem = prev.find(f => f.id === fileId);
+      return prev;
+    });
+    
+    if (!fileItem || fileItem.status !== 'uploaded') {
+      return;
+    }
+    
+    // Update to extracting
+    updateFileStatus(fileId, { status: 'extracting' });
+    
+    try {
+      const text = await extractTextFromFile(fileItem.file);
+      updateFileStatus(fileId, { 
+        status: 'ready', 
+        extractedText: text,
+        error: undefined 
+      });
+    } catch (err) {
+      console.error('Extraction failed for', fileItem.fileName, err);
+      updateFileStatus(fileId, { 
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'Unknown error'
       });
     }
-  }, [maxConcurrentExtractions, extractTextFromFile, updateFileStatus]);
+  }, [extractTextFromFile, updateFileStatus]);
+
+  /**
+   * Process extraction queue with concurrency limiting
+   * Uses Promise.allSettled to ensure one failure doesn't block others
+   */
+  const processExtractionQueue = useCallback(async () => {
+    const filesToExtract: string[] = [];
+    
+    while (
+      extractionQueue.current.length > 0 && 
+      activeExtractions.current + filesToExtract.length < maxConcurrentExtractions
+    ) {
+      const fileId = extractionQueue.current.shift();
+      if (fileId) {
+        filesToExtract.push(fileId);
+        activeExtractions.current++;
+      }
+    }
+    
+    if (filesToExtract.length === 0) return;
+    
+    // Process all concurrently with Promise.allSettled
+    const results = await Promise.allSettled(
+      filesToExtract.map(fileId => processExtraction(fileId))
+    );
+    
+    // Decrease active count for each completed extraction
+    results.forEach(() => {
+      activeExtractions.current--;
+    });
+    
+    // Continue processing queue if there are more items
+    if (extractionQueue.current.length > 0) {
+      processExtractionQueue();
+    }
+  }, [maxConcurrentExtractions, processExtraction]);
 
   /**
    * Queue file for extraction
@@ -480,18 +505,17 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     setCombinedText(text);
   }, []);
 
-  // Calculate statistics
-  const totalFiles = files.length;
-  const completedFiles = files.filter(f => f.status === 'ready').length;
-  const failedFiles = files.filter(f => f.status === 'failed').length;
-  const isExtracting = files.some(f => 
-    f.status === 'queued' || 
-    f.status === 'uploading' || 
-    f.status === 'uploaded' || 
-    f.status === 'extracting'
-  );
-  const hasReadyFiles = files.some(f => f.status === 'ready');
-  const progress = totalFiles > 0 ? (completedFiles / totalFiles) * 100 : 0;
+  // Calculate statistics - DERIVED from file statuses
+  const stats = useMemo(() => {
+    const totalFiles = files.length;
+    const completedFiles = files.filter(f => f.status === 'ready').length;
+    const failedFiles = files.filter(f => f.status === 'failed').length;
+    const isExtracting = files.some(f => isProcessingStatus(f.status));
+    const hasReadyFiles = files.some(f => f.status === 'ready');
+    const progress = totalFiles > 0 ? ((completedFiles + failedFiles) / totalFiles) * 100 : 0;
+    
+    return { totalFiles, completedFiles, failedFiles, isExtracting, hasReadyFiles, progress };
+  }, [files]);
 
   return {
     files,
@@ -501,12 +525,12 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     removeFile,
     clearAllFiles,
     retryExtraction,
-    // Stats
-    totalFiles,
-    completedFiles,
-    failedFiles,
-    isExtracting,
-    hasReadyFiles,
-    progress,
+    // Stats (derived)
+    totalFiles: stats.totalFiles,
+    completedFiles: stats.completedFiles,
+    failedFiles: stats.failedFiles,
+    isExtracting: stats.isExtracting,
+    hasReadyFiles: stats.hasReadyFiles,
+    progress: stats.progress,
   };
 }

@@ -9,6 +9,7 @@
  * - Global progress bar
  */
 
+import React from 'react';
 import { FileText, Loader2, X, RefreshCw, Check, AlertCircle, Clock, Upload, Image } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -72,21 +73,25 @@ const statusConfig: Record<FileStatus, {
   },
 };
 
-function StatusBadge({ status }: { status: FileStatus }) {
-  const config = statusConfig[status];
-  const Icon = config.icon;
-  const isAnimated = status === 'extracting' || status === 'uploading';
-  
-  return (
-    <Badge 
-      variant={config.variant}
-      className={cn('text-xs px-2 py-0.5 gap-1', config.className)}
-    >
-      <Icon className={cn('w-3 h-3', isAnimated && 'animate-spin')} />
-      {config.label}
-    </Badge>
-  );
-}
+const StatusBadge = React.forwardRef<HTMLDivElement, { status: FileStatus }>(
+  ({ status }, ref) => {
+    const config = statusConfig[status];
+    const Icon = config.icon;
+    const isAnimated = status === 'extracting' || status === 'uploading';
+    
+    return (
+      <Badge 
+        ref={ref}
+        variant={config.variant}
+        className={cn('text-xs px-2 py-0.5 gap-1', config.className)}
+      >
+        <Icon className={cn('w-3 h-3', isAnimated && 'animate-spin')} />
+        {config.label}
+      </Badge>
+    );
+  }
+);
+StatusBadge.displayName = 'StatusBadge';
 
 function FileThumbnail({ file }: { file: UploadedFileItem }) {
   if (file.thumbnailUrl) {
