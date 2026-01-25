@@ -1,16 +1,16 @@
 /**
  * StudentSubmissionList Component
  * 
- * Displays ungrouped files and student submissions.
+ * Displays ungrouped files and student submissions with auto-detection.
  * Supports:
- * - Creating students from ungrouped files
- * - Renaming students
- * - Moving files between submissions
- * - Unassigning files back to ungrouped pool
- * - Large preview panel for identifying handwriting
+ * - Automatic student name detection from extracted text
+ * - Auto-grouping files by detected student name
+ * - Creating students from ungrouped files (when no name detected)
+ * - Simplified file display (file name, detected name badge, page count, status)
+ * - "Show Extracted Text" toggle for verification
  */
 
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { 
   FileText, 
   Loader2, 
@@ -25,15 +25,14 @@ import {
   ChevronDown,
   ChevronRight,
   Edit2,
-  Plus,
   ArrowRight,
   Trash2,
   GripVertical,
   Undo2,
   UserPlus,
   AlertTriangle,
-  Eye,
-  ZoomIn,
+  Sparkles,
+  HelpCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -59,6 +58,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { StudentSubmission, UploadedFileItem, FileStatus } from '@/hooks/useStudentSubmissions';
 
@@ -140,198 +145,58 @@ function StatusBadge({ status }: { status: FileStatus }) {
   );
 }
 
-interface FilePreviewInfo {
-  file: UploadedFileItem;
-  studentName?: string;
-  pageNumber?: number;
-}
-
-function FilePreviewDialog({ 
-  previewFile, 
+// Dialog to show extracted text
+function ExtractedTextDialog({ 
+  file, 
   onClose 
 }: { 
-  previewFile: FilePreviewInfo | null; 
+  file: UploadedFileItem | null;
   onClose: () => void;
 }) {
-  const [showExtractedText, setShowExtractedText] = useState(false);
-  
-  if (!previewFile) return null;
-  
-  const { file, studentName, pageNumber } = previewFile;
-  const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
-  
-  // Use dataUrl for PDF preview (base64 data URL generated during upload)
-  const pdfDataUrl = isPdf && file.dataUrl ? file.dataUrl : null;
-  
-  // Create object URL from original file as fallback for PDFs without dataUrl
-  const pdfObjectUrl = isPdf && !pdfDataUrl && file.file ? URL.createObjectURL(file.file) : null;
-  const effectivePdfUrl = pdfDataUrl || pdfObjectUrl;
+  if (!file) return null;
   
   return (
-    <Dialog open={!!previewFile} onOpenChange={(open) => {
-      if (!open) {
-        // Clean up object URL if we created one
-        if (pdfObjectUrl) URL.revokeObjectURL(pdfObjectUrl);
-        onClose();
-      }
-    }}>
+    <Dialog open={!!file} onOpenChange={(open) => !open && onClose()}>
       <DialogContent 
-        className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
         aria-describedby={undefined}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 flex-wrap">
-            <span className="truncate">{file.fileName}</span>
-            {studentName && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/20 text-primary">
-                <User className="w-3 h-3 mr-1" />
-                {studentName}
-                {pageNumber !== undefined && ` • Page ${pageNumber}`}
-              </span>
-            )}
-            {!studentName && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border border-orange-500 text-orange-600">
-                Ungrouped
-              </span>
-            )}
-            {file.extractedText && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto h-7 text-xs"
-                onClick={() => setShowExtractedText(!showExtractedText)}
-              >
-                <FileText className="w-3 h-3 mr-1" />
-                {showExtractedText ? 'Hide' : 'Show'} Extracted Text
-              </Button>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="w-4 h-4" />
+            Extracted Text: {file.fileName}
+            {file.detectedStudentName && (
+              <Badge className="bg-primary/20 text-primary text-xs ml-2">
+                <Sparkles className="w-3 h-3 mr-1" />
+                Detected: {file.detectedStudentName.name}
+              </Badge>
             )}
           </DialogTitle>
         </DialogHeader>
-        
-        <div className="flex-1 flex gap-3 min-h-[500px] overflow-hidden">
-          {/* Primary: Document Preview */}
-          <div className={cn(
-            "flex-1 overflow-hidden bg-muted/30 rounded-lg",
-            showExtractedText && file.extractedText ? "w-1/2" : "w-full"
-          )}>
-            {file.thumbnailUrl && !isPdf ? (
-              <img 
-                src={file.thumbnailUrl} 
-                alt={file.fileName}
-                className="w-full h-full object-contain rounded"
-              />
-            ) : isPdf && effectivePdfUrl ? (
-              <iframe
-                src={`${effectivePdfUrl}#toolbar=1&navpanes=0&scrollbar=1&view=FitH`}
-                className="w-full h-full rounded border-0"
-                title={`PDF Preview: ${file.fileName}`}
-                style={{ minHeight: '500px' }}
-              />
-            ) : isPdf ? (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-4">
-                <FileText className="w-16 h-16 text-destructive/50" />
-                <p className="text-sm font-medium">PDF preview unavailable</p>
-                <p className="text-xs text-center max-w-xs">
-                  Unable to display PDF. Use the "Show Extracted Text" button above to view the document content.
-                </p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
-                <Image className="w-16 h-16" />
-                <p className="text-sm">Preview not available</p>
-              </div>
-            )}
-          </div>
-          
-          {/* Secondary: Extracted Text Panel (toggleable) */}
-          {showExtractedText && file.extractedText && (
-            <div className="w-1/2 flex flex-col bg-muted/20 rounded-lg border overflow-hidden">
-              <div className="px-3 py-2 bg-muted/50 border-b flex items-center gap-2">
-                <FileText className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground">Extracted Text (OCR)</span>
-              </div>
-              <div className="flex-1 overflow-auto p-3">
-                <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">{file.extractedText}</p>
-              </div>
-            </div>
+        <div className="flex-1 overflow-auto p-4 bg-muted/20 rounded-lg">
+          {file.extractedText ? (
+            <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">
+              {file.extractedText}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">No text extracted</p>
           )}
         </div>
-        
-        {/* Compact extracted text hint when panel is hidden */}
-        {!showExtractedText && file.extractedText && (
-          <div className="mt-2 p-2 bg-muted/30 rounded-lg flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-            <p className="text-xs text-muted-foreground truncate flex-1">
-              {file.extractedText.substring(0, 100)}...
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs"
-              onClick={() => setShowExtractedText(true)}
-            >
-              View Full Text
-            </Button>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function FileThumbnail({ 
-  file, 
-  size = 'sm',
-  onClick,
-  showPreviewHint = false,
-}: { 
-  file: UploadedFileItem; 
-  size?: 'sm' | 'md';
-  onClick?: (e?: React.MouseEvent) => void;
-  showPreviewHint?: boolean;
-}) {
-  const sizeClasses = size === 'md' ? 'w-12 h-12' : 'w-8 h-8';
-  const iconSize = size === 'md' ? 'w-6 h-6' : 'w-4 h-4';
-  
-  if (file.thumbnailUrl) {
-    return (
-      <div 
-        className={cn(
-          sizeClasses, 
-          "rounded overflow-hidden bg-muted flex-shrink-0 relative group",
-          onClick && "cursor-pointer"
-        )}
-        onClick={onClick}
-      >
-        <img 
-          src={file.thumbnailUrl} 
-          alt={file.fileName}
-          className="w-full h-full object-cover"
-        />
-        {showPreviewHint && onClick && (
-          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            <ZoomIn className="w-4 h-4 text-white" />
-          </div>
-        )}
-      </div>
-    );
-  }
-  
+// Simplified file icon
+function FileIcon({ file }: { file: UploadedFileItem }) {
   const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
   
   return (
-    <div 
-      className={cn(
-        sizeClasses, 
-        "rounded bg-muted flex items-center justify-center flex-shrink-0",
-        onClick && "cursor-pointer hover:bg-muted/80"
-      )}
-      onClick={onClick}
-    >
+    <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
       {isPdf ? (
-        <FileText className={cn(iconSize, "text-destructive")} />
+        <FileText className="w-4 h-4 text-destructive" />
       ) : (
-        <Image className={cn(iconSize, "text-muted-foreground")} />
+        <Image className="w-4 h-4 text-muted-foreground" />
       )}
     </div>
   );
@@ -352,7 +217,7 @@ interface SubmissionCardProps {
   onRemoveFile: (fileId: string) => void;
   onRetryFile: (fileId: string) => void;
   onDelete: () => void;
-  onPreviewFile: (file: UploadedFileItem, pageNumber: number) => void;
+  onShowExtractedText: (file: UploadedFileItem) => void;
 }
 
 function SubmissionCard({
@@ -364,7 +229,7 @@ function SubmissionCard({
   onRemoveFile,
   onRetryFile,
   onDelete,
-  onPreviewFile,
+  onShowExtractedText,
 }: SubmissionCardProps) {
   const [isOpen, setIsOpen] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -431,6 +296,22 @@ function SubmissionCard({
             </span>
           )}
 
+          {submission.autoDetected && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Badge className="bg-primary/20 text-primary text-[10px] px-1.5 gap-0.5">
+                    <Sparkles className="w-2.5 h-2.5" />
+                    Auto
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">Student name auto-detected from document</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
           <Button
             variant="ghost"
             size="sm"
@@ -469,7 +350,7 @@ function SubmissionCard({
         </div>
 
         <CollapsibleContent>
-          {/* File List */}
+          {/* Simplified File List - No PDF preview */}
           <div className="p-2 space-y-1">
             {submission.files.map((file, idx) => {
               const pageNumber = idx + 1;
@@ -493,12 +374,7 @@ function SubmissionCard({
                     Page {pageNumber}
                   </Badge>
                   
-                  <FileThumbnail 
-                    file={file} 
-                    size="md"
-                    onClick={() => onPreviewFile(file, pageNumber)}
-                    showPreviewHint
-                  />
+                  <FileIcon file={file} />
                   
                   <div className="flex-1 min-w-0">
                     <p className="text-sm truncate">{file.fileName}</p>
@@ -506,95 +382,100 @@ function SubmissionCard({
                       <p className="text-xs text-muted-foreground">
                         {formatFileSize(file.size)}
                       </p>
-                      {/* Assigned badge */}
-                      <Badge className="text-[10px] px-1.5 py-0 h-4 bg-primary/20 text-primary">
-                        <User className="w-2 h-2 mr-0.5" />
-                        {submission.studentName}
-                      </Badge>
+                      {/* Detected student name badge */}
+                      {file.detectedStudentName && (
+                        <Badge className="text-[10px] px-1.5 py-0 h-4 bg-primary/20 text-primary">
+                          <Sparkles className="w-2 h-2 mr-0.5" />
+                          {file.detectedStudentName.name}
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   
-                  {/* Preview button */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onPreviewFile(file, pageNumber)}
-                    className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary"
-                    title="Preview page"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </Button>
-                  
                   <StatusBadge status={file.status} />
-                
-                <div className="flex items-center gap-1">
-                  {file.status === 'failed' && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onRetryFile(file.id)}
-                      className="h-7 w-7 p-0 text-primary"
-                      title="Retry"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                    </Button>
-                  )}
-
-                  {/* Move to another student */}
-                  {otherSubmissions.length > 0 && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-muted-foreground"
-                          title="Move to another student"
-                        >
-                          <ArrowRight className="w-3 h-3" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="bg-popover">
-                        <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                          Move to:
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        {otherSubmissions.map(sub => (
-                          <DropdownMenuItem
-                            key={sub.id}
-                            onClick={() => onMoveFile(sub.id, file.id)}
-                          >
-                            <User className="w-3 h-3 mr-2" />
-                            {sub.studentName}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-
-                  {/* Unassign back to ungrouped */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onUnassignFile(file.id)}
-                    className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-500"
-                    title="Unassign (move back to ungrouped)"
-                  >
-                    <Undo2 className="w-3 h-3" />
-                  </Button>
                   
-                  {file.status !== 'extracting' && file.status !== 'uploading' && (
+                  {/* Show Extracted Text button */}
+                  {file.status === 'ready' && file.extractedText && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => onRemoveFile(file.id)}
-                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                      title="Remove permanently"
+                      onClick={() => onShowExtractedText(file)}
+                      className="h-7 text-xs text-muted-foreground hover:text-primary"
+                      title="Show extracted text"
                     >
-                      <X className="w-3 h-3" />
+                      <FileText className="w-3 h-3 mr-1" />
+                      Text
                     </Button>
                   )}
+                
+                  <div className="flex items-center gap-1">
+                    {file.status === 'failed' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onRetryFile(file.id)}
+                        className="h-7 w-7 p-0 text-primary"
+                        title="Retry"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </Button>
+                    )}
+
+                    {/* Move to another student */}
+                    {otherSubmissions.length > 0 && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 text-muted-foreground"
+                            title="Move to another student"
+                          >
+                            <ArrowRight className="w-3 h-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-popover">
+                          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                            Move to:
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {otherSubmissions.map(sub => (
+                            <DropdownMenuItem
+                              key={sub.id}
+                              onClick={() => onMoveFile(sub.id, file.id)}
+                            >
+                              <User className="w-3 h-3 mr-2" />
+                              {sub.studentName}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+
+                    {/* Unassign back to ungrouped */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onUnassignFile(file.id)}
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-500"
+                      title="Unassign (move back to ungrouped)"
+                    >
+                      <Undo2 className="w-3 h-3" />
+                    </Button>
+                    
+                    {file.status !== 'extracting' && file.status !== 'uploading' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onRemoveFile(file.id)}
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                        title="Remove permanently"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
               );
             })}
 
@@ -630,19 +511,7 @@ export function StudentSubmissionList({
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState('');
   const [showAddStudent, setShowAddStudent] = useState(false);
-  const [previewFile, setPreviewFile] = useState<FilePreviewInfo | null>(null);
-
-  const handlePreviewUngroupedFile = (file: UploadedFileItem) => {
-    setPreviewFile({ file });
-  };
-
-  const handlePreviewAssignedFile = (file: UploadedFileItem, studentName: string, pageNumber: number) => {
-    setPreviewFile({ file, studentName, pageNumber });
-  };
-
-  const closePreview = () => {
-    setPreviewFile(null);
-  };
+  const [textPreviewFile, setTextPreviewFile] = useState<UploadedFileItem | null>(null);
 
   const toggleFileSelection = (fileId: string) => {
     setSelectedFileIds(prev => 
@@ -683,6 +552,15 @@ export function StudentSubmissionList({
   
   return (
     <div className="space-y-6">
+      {/* Auto-detection helper text */}
+      <Alert className="border-primary/30 bg-primary/5">
+        <Sparkles className="h-4 w-4 text-primary" />
+        <AlertDescription className="text-sm">
+          <strong>Bottor automatically detects student names</strong> and grades each student separately.
+          Files with the same detected name are grouped together.
+        </AlertDescription>
+      </Alert>
+
       {/* Global Progress Bar */}
       {isExtracting && (
         <div className="space-y-1">
@@ -693,7 +571,7 @@ export function StudentSubmissionList({
         </div>
       )}
 
-      {/* STEP 1: Ungrouped Files Section */}
+      {/* UNGROUPED FILES SECTION - Files without detected student names */}
       {hasUngroupedFiles && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -702,9 +580,19 @@ export function StudentSubmissionList({
               <span className="text-sm font-medium text-orange-600">
                 Ungrouped Pages ({ungroupedFiles.length})
               </span>
-              <Badge variant="outline" className="text-xs border-orange-500 text-orange-600">
-                Required: Assign to students
-              </Badge>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="text-xs">
+                      These files don't have a detected student name. 
+                      Rename the file or add a student name to the document.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
             {readyUngroupedCount > 0 && (
               <div className="flex gap-2">
@@ -733,16 +621,15 @@ export function StudentSubmissionList({
           <Alert className="border-orange-500/30 bg-orange-500/5">
             <AlertTriangle className="h-4 w-4 text-orange-500" />
             <AlertDescription className="text-sm text-orange-700">
-              <strong>Pilot Mode:</strong> All pages must be assigned to students before grading. 
-              Select pages below, then create a student or assign to an existing one.
+              <strong>Student name not detected.</strong> Please rename the file or add a student name to the document.
               <br />
-              <span className="text-xs">💡 Tip: Click a page to preview handwriting or student name before assigning.</span>
+              <span className="text-xs">Select pages below to manually assign them to a student.</span>
             </AlertDescription>
           </Alert>
 
-          {/* Ungrouped File Grid */}
+          {/* Simplified Ungrouped File Grid */}
           <div className="border-2 border-dashed border-orange-500/30 rounded-lg p-3 bg-orange-500/5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="space-y-1">
               {ungroupedFiles.map((file) => {
                 const isSelected = selectedFileIds.includes(file.id);
                 const isReady = file.status === 'ready';
@@ -767,15 +654,7 @@ export function StudentSubmissionList({
                       />
                     )}
                     
-                    <FileThumbnail 
-                      file={file} 
-                      size="md"
-                      onClick={(e) => {
-                        e?.stopPropagation();
-                        handlePreviewUngroupedFile(file);
-                      }}
-                      showPreviewHint
-                    />
+                    <FileIcon file={file} />
                     
                     <div className="flex-1 min-w-0">
                       <p className="text-sm truncate">{file.fileName}</p>
@@ -784,21 +663,31 @@ export function StudentSubmissionList({
                       </p>
                     </div>
                     
-                    {/* Preview button */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePreviewUngroupedFile(file);
-                      }}
-                      className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
-                      title="Preview page"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Button>
+                    {/* Status: Ungrouped badge for ready files */}
+                    {isReady ? (
+                      <Badge variant="outline" className="text-xs border-orange-500 text-orange-600">
+                        Ungrouped
+                      </Badge>
+                    ) : (
+                      <StatusBadge status={file.status} />
+                    )}
                     
-                    <StatusBadge status={file.status} />
+                    {/* Show Extracted Text button */}
+                    {file.status === 'ready' && file.extractedText && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTextPreviewFile(file);
+                        }}
+                        className="h-7 text-xs text-muted-foreground hover:text-primary"
+                        title="Show extracted text"
+                      >
+                        <FileText className="w-3 h-3 mr-1" />
+                        Text
+                      </Button>
+                    )}
                     
                     <div className="flex items-center gap-1">
                       {file.status === 'failed' && (
@@ -901,7 +790,7 @@ export function StudentSubmissionList({
         </div>
       )}
 
-      {/* STEP 2: Assigned Students Section */}
+      {/* ASSIGNED STUDENTS SECTION */}
       {hasSubmissions && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -918,6 +807,16 @@ export function StudentSubmissionList({
             </div>
           </div>
 
+          {/* Grade report confirmation message */}
+          {allFilesAssigned && submissions.length > 0 && (
+            <Alert className="border-primary/30 bg-primary/5">
+              <Check className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-sm text-primary">
+                <strong>Each student will receive an individual grade report</strong> with unique score, strengths, areas for growth, and feedback.
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="space-y-3">
             {submissions.map(submission => (
               <SubmissionCard
@@ -930,7 +829,7 @@ export function StudentSubmissionList({
                 onRemoveFile={(fileId) => onRemoveFile(submission.id, fileId)}
                 onRetryFile={(fileId) => onRetryFile(submission.id, fileId)}
                 onDelete={() => onDeleteSubmission(submission.id)}
-                onPreviewFile={(file, pageNumber) => handlePreviewAssignedFile(file, submission.studentName, pageNumber)}
+                onShowExtractedText={(file) => setTextPreviewFile(file)}
               />
             ))}
           </div>
@@ -939,11 +838,15 @@ export function StudentSubmissionList({
 
       {/* Helper text */}
       <p className="text-xs text-muted-foreground">
-        💡 Each student is graded separately. Click a page thumbnail to preview handwriting.
+        💡 Bottor automatically detects student names and grades each student separately. 
+        Use "Show Text" to verify extracted content.
       </p>
 
-      {/* Preview Dialog */}
-      <FilePreviewDialog previewFile={previewFile} onClose={closePreview} />
+      {/* Extracted Text Dialog */}
+      <ExtractedTextDialog 
+        file={textPreviewFile} 
+        onClose={() => setTextPreviewFile(null)} 
+      />
     </div>
   );
 }
