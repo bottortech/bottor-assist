@@ -1,5 +1,5 @@
 /**
- * Optimistic File Upload Hook
+ * Optimistic File Upload Hook (v2 - Resilient Non-Blocking Pipeline)
  * 
  * Handles file uploads with:
  * - Immediate display with status chips (Queued, Uploading, Extracting, Ready, Failed)
@@ -7,11 +7,15 @@
  * - Image compression/resize before upload
  * - HEIC to JPEG conversion
  * - Background extraction with concurrency limiting (max 2-3 concurrent)
+ * - 30-second timeout guard for extraction prevents indefinite hangs
  * - Combined text streaming as files complete
  * - Retry functionality for failed extractions
+ * - Watchdog to auto-fail stuck extractions
+ * 
+ * isExtracting is DERIVED from file statuses, never manually set.
  */
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import heic2any from 'heic2any';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -21,6 +25,9 @@ export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'r
 // Helper to check if a status is "processing"
 const isProcessingStatus = (status: FileStatus): boolean => 
   ['queued', 'uploading', 'uploaded', 'extracting'].includes(status);
+
+// Extraction timeout in milliseconds (30 seconds)
+const EXTRACTION_TIMEOUT_MS = 30000;
 
 export interface UploadedFileItem {
   id: string;
@@ -33,6 +40,8 @@ export interface UploadedFileItem {
   thumbnailUrl?: string;
   extractedText: string;
   error?: string;
+  errorMessage?: string; // Alias for error
+  extractionStartedAt?: number; // Timestamp when extraction started
   createdAt: Date;
 }
 
@@ -40,16 +49,18 @@ interface UseFileUploadOptions {
   maxConcurrentExtractions?: number;
   maxDimension?: number;
   jpegQuality?: number;
+  extractionTimeoutMs?: number;
 }
 
 const DEFAULT_OPTIONS: Required<UseFileUploadOptions> = {
   maxConcurrentExtractions: 2,
   maxDimension: 1600,
   jpegQuality: 0.75,
+  extractionTimeoutMs: EXTRACTION_TIMEOUT_MS,
 };
 
 export function useFileUpload(options: UseFileUploadOptions = {}) {
-  const { maxConcurrentExtractions, maxDimension, jpegQuality } = { ...DEFAULT_OPTIONS, ...options };
+  const { maxConcurrentExtractions, maxDimension, jpegQuality, extractionTimeoutMs } = { ...DEFAULT_OPTIONS, ...options };
   const { toast } = useToast();
   
   const [files, setFiles] = useState<UploadedFileItem[]>([]);
@@ -203,58 +214,97 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   }, []);
 
   /**
-   * Extract text from a single file
+   * Extract text from a single file with timeout guard
+   * Returns a result object to ensure we never throw unhandled
    */
-  const extractTextFromFile = useCallback(async (file: File): Promise<string> => {
-    const base64 = await fileToBase64(file);
-    const { data, error } = await supabase.functions.invoke('extract-text', {
-      body: {
-        file_data: base64,
-        file_type: file.type,
-        file_name: file.name,
-      },
-    });
-    if (error) throw error;
-    return data.text || '';
-  }, [fileToBase64]);
+  const extractTextFromFile = useCallback(async (
+    file: File
+  ): Promise<{ success: true; text: string } | { success: false; error: string }> => {
+    try {
+      const base64 = await fileToBase64(file);
+      
+      // Create a timeout promise
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Extraction timeout - please retry')), extractionTimeoutMs);
+      });
+      
+      // Race between extraction and timeout
+      const extractionPromise = supabase.functions.invoke('extract-text', {
+        body: {
+          file_data: base64,
+          file_type: file.type,
+          file_name: file.name,
+        },
+      });
+      
+      const { data, error } = await Promise.race([extractionPromise, timeoutPromise]);
+      
+      if (error) {
+        return { success: false, error: error.message || 'Extraction failed' };
+      }
+      
+      return { success: true, text: data?.text || '' };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      console.error('Extraction error:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+  }, [fileToBase64, extractionTimeoutMs]);
 
   /**
-   * Process a single extraction - returns promise that resolves when done
+   * Process a single extraction - returns promise that ALWAYS resolves (never rejects)
+   * This ensures one failure never blocks other extractions
    */
-  const processExtraction = useCallback(async (fileId: string): Promise<void> => {
-    // Get file data
+  const processExtraction = useCallback(async (fileId: string): Promise<{ fileId: string; success: boolean; error?: string }> => {
+    // Get file data synchronously
     let fileItem: UploadedFileItem | undefined;
     setFiles(prev => {
       fileItem = prev.find(f => f.id === fileId);
       return prev;
     });
     
+    // Skip if not found or not ready for extraction
     if (!fileItem || fileItem.status !== 'uploaded') {
-      return;
+      return { fileId, success: false, error: 'File not ready for extraction' };
     }
     
-    // Update to extracting
-    updateFileStatus(fileId, { status: 'extracting' });
+    // Update to extracting with timestamp
+    updateFileStatus(fileId, { 
+      status: 'extracting', 
+      extractionStartedAt: Date.now(),
+      error: undefined,
+      errorMessage: undefined,
+    });
     
-    try {
-      const text = await extractTextFromFile(fileItem.file);
+    // Perform extraction with built-in timeout
+    const result = await extractTextFromFile(fileItem.file);
+    
+    if (result.success) {
       updateFileStatus(fileId, { 
         status: 'ready', 
-        extractedText: text,
-        error: undefined 
+        extractedText: result.text,
+        error: undefined,
+        errorMessage: undefined,
+        extractionStartedAt: undefined,
       });
-    } catch (err) {
-      console.error('Extraction failed for', fileItem.fileName, err);
+      return { fileId, success: true };
+    } else {
+      const errorMessage = 'error' in result ? result.error : 'Unknown extraction error';
+      console.error('Extraction failed for', fileItem.fileName, errorMessage);
       updateFileStatus(fileId, { 
         status: 'failed',
-        error: err instanceof Error ? err.message : 'Unknown error'
+        error: errorMessage,
+        errorMessage: errorMessage,
+        extractionStartedAt: undefined,
       });
+      return { fileId, success: false, error: errorMessage };
     }
   }, [extractTextFromFile, updateFileStatus]);
 
   /**
    * Process extraction queue with concurrency limiting
    * Uses Promise.allSettled to ensure one failure doesn't block others
+   * Each extraction call ALWAYS resolves (never rejects)
    */
   const processExtractionQueue = useCallback(async () => {
     const filesToExtract: string[] = [];
@@ -273,18 +323,23 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     if (filesToExtract.length === 0) return;
     
     // Process all concurrently with Promise.allSettled
+    // Each processExtraction already handles its own errors and always resolves
     const results = await Promise.allSettled(
       filesToExtract.map(fileId => processExtraction(fileId))
     );
     
-    // Decrease active count for each completed extraction
-    results.forEach(() => {
-      activeExtractions.current--;
+    // Log any unexpected rejections and decrease active count
+    results.forEach((result, idx) => {
+      activeExtractions.current = Math.max(0, activeExtractions.current - 1);
+      if (result.status === 'rejected') {
+        console.error('Unexpected extraction rejection:', result.reason);
+      }
     });
     
     // Continue processing queue if there are more items
     if (extractionQueue.current.length > 0) {
-      processExtractionQueue();
+      // Use setTimeout to prevent stack overflow on large queues
+      setTimeout(() => processExtractionQueue(), 10);
     }
   }, [maxConcurrentExtractions, processExtraction]);
 
@@ -504,6 +559,49 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   const setCombinedTextManual = useCallback((text: string) => {
     setCombinedText(text);
   }, []);
+
+  /**
+   * Watchdog effect: Auto-fail extractions stuck longer than timeout
+   * Runs every 5 seconds to check for stuck files
+   */
+  useEffect(() => {
+    const watchdogInterval = setInterval(() => {
+      const now = Date.now();
+      
+      setFiles(prev => {
+        const hasStuck = prev.some(f => 
+          f.status === 'extracting' && 
+          f.extractionStartedAt && 
+          (now - f.extractionStartedAt) > extractionTimeoutMs
+        );
+        
+        if (!hasStuck) return prev;
+        
+        const updated = prev.map(f => {
+          if (
+            f.status === 'extracting' && 
+            f.extractionStartedAt && 
+            (now - f.extractionStartedAt) > extractionTimeoutMs
+          ) {
+            console.warn('Watchdog: Auto-failing stuck extraction for', f.fileName);
+            return {
+              ...f,
+              status: 'failed' as FileStatus,
+              error: 'Extraction timed out - please retry',
+              errorMessage: 'Extraction timed out - please retry',
+              extractionStartedAt: undefined,
+            };
+          }
+          return f;
+        });
+        
+        updateCombinedText(updated);
+        return updated;
+      });
+    }, 5000); // Check every 5 seconds
+    
+    return () => clearInterval(watchdogInterval);
+  }, [extractionTimeoutMs, updateCombinedText]);
 
   // Calculate statistics - DERIVED from file statuses
   const stats = useMemo(() => {

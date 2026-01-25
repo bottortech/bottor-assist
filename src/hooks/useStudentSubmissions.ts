@@ -1,11 +1,14 @@
 /**
- * Student Submissions Hook (v2 - Automatic Grouping)
+ * Student Submissions Hook (v3 - Resilient Non-Blocking Pipeline)
  * 
  * Manages student work uploads with AUTOMATIC student grouping.
  * No manual "assign pages to students" step required by default.
  * 
- * FIXED: Uses Promise.allSettled() for batch extraction to prevent stuck states.
- * Per-file status tracking ensures one failure doesn't block others.
+ * FIXED: 
+ * - Uses Promise.allSettled() for batch extraction to prevent stuck states.
+ * - 30-second timeout guard for extraction prevents indefinite hangs.
+ * - Per-file status tracking ensures one failure doesn't block others.
+ * - isExtracting is DERIVED from file statuses, never manually set.
  * 
  * Auto-grouping rules:
  * 1. Parse assignmentId from filename (first token before _ or -)
@@ -17,7 +20,7 @@
  * Files with no detected student name are marked as "Unknown Student" with needs_review = true
  */
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import heic2any from 'heic2any';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -34,6 +37,9 @@ export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'r
 const isProcessingStatus = (status: FileStatus): boolean => 
   ['queued', 'uploading', 'uploaded', 'extracting'].includes(status);
 
+// Extraction timeout in milliseconds (30 seconds)
+const EXTRACTION_TIMEOUT_MS = 30000;
+
 export interface PageRecord {
   id: string;
   file: File;
@@ -44,6 +50,8 @@ export interface PageRecord {
   extractedText: string;
   uploadedAt: Date;
   error?: string;
+  errorMessage?: string; // Alias for error
+  extractionStartedAt?: number; // Timestamp when extraction started
   // Parsed info from filename/text
   parsedInfo?: ParsedFileInfo;
   pageNumber?: number; // For ordering
@@ -63,18 +71,20 @@ interface UseStudentSubmissionsOptions {
   maxConcurrentExtractions?: number;
   maxDimension?: number;
   jpegQuality?: number;
+  extractionTimeoutMs?: number;
 }
 
 const DEFAULT_OPTIONS: Required<UseStudentSubmissionsOptions> = {
   maxConcurrentExtractions: 2,
   maxDimension: 1600,
   jpegQuality: 0.75,
+  extractionTimeoutMs: EXTRACTION_TIMEOUT_MS,
 };
 
 const PAGE_BREAK_SEPARATOR = '\n\n--- PAGE BREAK ---\n\n';
 
 export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}) {
-  const { maxConcurrentExtractions, maxDimension, jpegQuality } = { ...DEFAULT_OPTIONS, ...options };
+  const { maxConcurrentExtractions, maxDimension, jpegQuality, extractionTimeoutMs } = { ...DEFAULT_OPTIONS, ...options };
   const { toast } = useToast();
   
   // Pending pages (extraction in progress, not yet grouped)
@@ -172,20 +182,42 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, []);
 
   /**
-   * Extract text from a single file
+   * Extract text from a single file with timeout guard
+   * Returns a result object to ensure we never throw unhandled
    */
-  const extractTextFromFile = useCallback(async (file: File): Promise<string> => {
-    const base64 = await fileToBase64(file);
-    const { data, error } = await supabase.functions.invoke('extract-text', {
-      body: {
-        file_data: base64,
-        file_type: file.type,
-        file_name: file.name,
-      },
-    });
-    if (error) throw error;
-    return data.text || '';
-  }, [fileToBase64]);
+  const extractTextFromFile = useCallback(async (
+    file: File
+  ): Promise<{ success: true; text: string } | { success: false; error: string }> => {
+    try {
+      const base64 = await fileToBase64(file);
+      
+      // Create a timeout promise
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Extraction timeout - please retry')), extractionTimeoutMs);
+      });
+      
+      // Race between extraction and timeout
+      const extractionPromise = supabase.functions.invoke('extract-text', {
+        body: {
+          file_data: base64,
+          file_type: file.type,
+          file_name: file.name,
+        },
+      });
+      
+      const { data, error } = await Promise.race([extractionPromise, timeoutPromise]);
+      
+      if (error) {
+        return { success: false, error: error.message || 'Extraction failed' };
+      }
+      
+      return { success: true, text: data?.text || '' };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      console.error('Extraction error:', errorMessage);
+      return { success: false, error: errorMessage };
+    }
+  }, [fileToBase64, extractionTimeoutMs]);
 
   /**
    * Update combined text for a group based on its pages
@@ -313,10 +345,11 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
 
   /**
    * Process a single extraction (used by queue processor)
-   * Returns a promise that resolves when extraction completes (success or fail)
+   * Returns a promise that ALWAYS resolves (never rejects) with a result object
+   * This ensures one failure never blocks other extractions
    */
-  const processExtraction = useCallback(async (pageId: string): Promise<void> => {
-    // Get current page data
+  const processExtraction = useCallback(async (pageId: string): Promise<{ pageId: string; success: boolean; error?: string }> => {
+    // Get current page data synchronously
     let pageToProcess: PageRecord | undefined;
     
     setPendingPages(prev => {
@@ -324,18 +357,27 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       return prev;
     });
     
+    // Skip if not found or not ready for extraction
     if (!pageToProcess || pageToProcess.status !== 'uploaded') {
-      return;
+      return { pageId, success: false, error: 'Page not ready for extraction' };
     }
     
-    // Update to extracting
+    // Update to extracting with timestamp
     setPendingPages(prev => prev.map(p => 
-      p.id === pageId ? { ...p, status: 'extracting' as FileStatus } : p
+      p.id === pageId ? { 
+        ...p, 
+        status: 'extracting' as FileStatus,
+        extractionStartedAt: Date.now(),
+        error: undefined,
+        errorMessage: undefined,
+      } : p
     ));
     
-    try {
-      const text = await extractTextFromFile(pageToProcess.file);
-      const parsedInfo = parseFileInfo(pageToProcess.originalFileName, text);
+    // Perform extraction with built-in timeout
+    const result = await extractTextFromFile(pageToProcess.file);
+    
+    if (result.success) {
+      const parsedInfo = parseFileInfo(pageToProcess.originalFileName, result.text);
       
       // Get fresh page data and update to ready
       setPendingPages(prev => {
@@ -345,10 +387,12 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         const updatedPage: PageRecord = {
           ...freshPage,
           status: 'ready',
-          extractedText: text,
+          extractedText: result.text,
           parsedInfo,
           pageNumber: parsedInfo.pageNumber ?? undefined,
           error: undefined,
+          errorMessage: undefined,
+          extractionStartedAt: undefined,
         };
         
         // Schedule move to group (do it after state update)
@@ -358,21 +402,29 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         return prev.filter(p => p.id !== pageId);
       });
       
-    } catch (err) {
-      console.error('Extraction failed for', pageToProcess.originalFileName, err);
+      return { pageId, success: true };
+    } else {
+      // Mark as failed with error message
+      const errorMessage = 'error' in result ? result.error : 'Unknown extraction error';
+      console.error('Extraction failed for', pageToProcess.originalFileName, errorMessage);
       setPendingPages(prev => prev.map(p => 
         p.id === pageId ? { 
           ...p, 
           status: 'failed' as FileStatus,
-          error: err instanceof Error ? err.message : 'Unknown error'
+          error: errorMessage,
+          errorMessage: errorMessage,
+          extractionStartedAt: undefined,
         } : p
       ));
+      
+      return { pageId, success: false, error: errorMessage };
     }
   }, [extractTextFromFile, addPageToGroup]);
 
   /**
    * Process extraction queue with concurrency limiting
    * Uses Promise.allSettled to ensure one failure doesn't block others
+   * Each extraction call ALWAYS resolves (never rejects)
    */
   const processExtractionQueue = useCallback(async () => {
     // Get pages ready for extraction
@@ -392,18 +444,23 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
     if (pagesToExtract.length === 0) return;
     
     // Process all concurrently with Promise.allSettled
+    // Each processExtraction already handles its own errors and always resolves
     const results = await Promise.allSettled(
       pagesToExtract.map(pageId => processExtraction(pageId))
     );
     
-    // Decrease active count for each completed extraction
-    results.forEach(() => {
-      activeExtractions.current--;
+    // Log any unexpected rejections (shouldn't happen since processExtraction always resolves)
+    results.forEach((result, idx) => {
+      activeExtractions.current = Math.max(0, activeExtractions.current - 1);
+      if (result.status === 'rejected') {
+        console.error('Unexpected extraction rejection:', result.reason);
+      }
     });
     
     // Continue processing queue if there are more items
     if (extractionQueue.current.length > 0) {
-      processExtractionQueue();
+      // Use setTimeout to prevent stack overflow on large queues
+      setTimeout(() => processExtractionQueue(), 10);
     }
   }, [maxConcurrentExtractions, processExtraction]);
 
@@ -642,6 +699,46 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
     }
     return null;
   }, [groups]);
+
+  /**
+   * Watchdog effect: Auto-fail extractions stuck longer than timeout
+   * Runs every 5 seconds to check for stuck files
+   */
+  useEffect(() => {
+    const watchdogInterval = setInterval(() => {
+      const now = Date.now();
+      
+      setPendingPages(prev => {
+        const hasStuck = prev.some(p => 
+          p.status === 'extracting' && 
+          p.extractionStartedAt && 
+          (now - p.extractionStartedAt) > extractionTimeoutMs
+        );
+        
+        if (!hasStuck) return prev;
+        
+        return prev.map(p => {
+          if (
+            p.status === 'extracting' && 
+            p.extractionStartedAt && 
+            (now - p.extractionStartedAt) > extractionTimeoutMs
+          ) {
+            console.warn('Watchdog: Auto-failing stuck extraction for', p.originalFileName);
+            return {
+              ...p,
+              status: 'failed' as FileStatus,
+              error: 'Extraction timed out - please retry',
+              errorMessage: 'Extraction timed out - please retry',
+              extractionStartedAt: undefined,
+            };
+          }
+          return p;
+        });
+      });
+    }, 5000); // Check every 5 seconds
+    
+    return () => clearInterval(watchdogInterval);
+  }, [extractionTimeoutMs]);
 
   // Calculate statistics using useMemo for performance and proper derivation
   const stats = useMemo(() => {
