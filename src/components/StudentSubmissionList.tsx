@@ -7,6 +7,7 @@
  * - Renaming students
  * - Moving files between submissions
  * - Unassigning files back to ungrouped pool
+ * - Large preview panel for identifying handwriting
  */
 
 import { useState, useRef } from 'react';
@@ -31,6 +32,8 @@ import {
   Undo2,
   UserPlus,
   AlertTriangle,
+  Eye,
+  ZoomIn,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +53,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { StudentSubmission, UploadedFileItem, FileStatus } from '@/hooks/useStudentSubmissions';
 
@@ -131,15 +140,111 @@ function StatusBadge({ status }: { status: FileStatus }) {
   );
 }
 
-function FileThumbnail({ file }: { file: UploadedFileItem }) {
+interface FilePreviewInfo {
+  file: UploadedFileItem;
+  studentName?: string;
+  pageNumber?: number;
+}
+
+function FilePreviewDialog({ 
+  previewFile, 
+  onClose 
+}: { 
+  previewFile: FilePreviewInfo | null; 
+  onClose: () => void;
+}) {
+  if (!previewFile) return null;
+  
+  const { file, studentName, pageNumber } = previewFile;
+  const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
+  
+  return (
+    <Dialog open={!!previewFile} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <span className="truncate">{file.fileName}</span>
+            {studentName && (
+              <Badge className="bg-primary/20 text-primary">
+                <User className="w-3 h-3 mr-1" />
+                {studentName}
+                {pageNumber !== undefined && ` • Page ${pageNumber}`}
+              </Badge>
+            )}
+            {!studentName && (
+              <Badge variant="outline" className="border-orange-500 text-orange-600">
+                Ungrouped
+              </Badge>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+        
+        <div className="flex-1 overflow-auto bg-muted/30 rounded-lg p-2 min-h-[400px]">
+          {file.thumbnailUrl && !isPdf ? (
+            <img 
+              src={file.thumbnailUrl} 
+              alt={file.fileName}
+              className="w-full h-auto max-h-[70vh] object-contain rounded"
+            />
+          ) : isPdf ? (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
+              <FileText className="w-16 h-16 text-destructive/50" />
+              <p className="text-sm">PDF preview not available</p>
+              <p className="text-xs">Use extracted text to verify content</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
+              <Image className="w-16 h-16" />
+              <p className="text-sm">Preview not available</p>
+            </div>
+          )}
+        </div>
+        
+        {file.extractedText && (
+          <div className="mt-2 p-3 bg-muted/50 rounded-lg max-h-32 overflow-auto">
+            <p className="text-xs font-medium text-muted-foreground mb-1">Extracted Text Preview:</p>
+            <p className="text-sm whitespace-pre-wrap line-clamp-4">{file.extractedText}</p>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FileThumbnail({ 
+  file, 
+  size = 'sm',
+  onClick,
+  showPreviewHint = false,
+}: { 
+  file: UploadedFileItem; 
+  size?: 'sm' | 'md';
+  onClick?: (e?: React.MouseEvent) => void;
+  showPreviewHint?: boolean;
+}) {
+  const sizeClasses = size === 'md' ? 'w-12 h-12' : 'w-8 h-8';
+  const iconSize = size === 'md' ? 'w-6 h-6' : 'w-4 h-4';
+  
   if (file.thumbnailUrl) {
     return (
-      <div className="w-8 h-8 rounded overflow-hidden bg-muted flex-shrink-0">
+      <div 
+        className={cn(
+          sizeClasses, 
+          "rounded overflow-hidden bg-muted flex-shrink-0 relative group",
+          onClick && "cursor-pointer"
+        )}
+        onClick={onClick}
+      >
         <img 
           src={file.thumbnailUrl} 
           alt={file.fileName}
           className="w-full h-full object-cover"
         />
+        {showPreviewHint && onClick && (
+          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <ZoomIn className="w-4 h-4 text-white" />
+          </div>
+        )}
       </div>
     );
   }
@@ -147,11 +252,18 @@ function FileThumbnail({ file }: { file: UploadedFileItem }) {
   const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
   
   return (
-    <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
+    <div 
+      className={cn(
+        sizeClasses, 
+        "rounded bg-muted flex items-center justify-center flex-shrink-0",
+        onClick && "cursor-pointer hover:bg-muted/80"
+      )}
+      onClick={onClick}
+    >
       {isPdf ? (
-        <FileText className="w-4 h-4 text-destructive" />
+        <FileText className={cn(iconSize, "text-destructive")} />
       ) : (
-        <Image className="w-4 h-4 text-muted-foreground" />
+        <Image className={cn(iconSize, "text-muted-foreground")} />
       )}
     </div>
   );
@@ -172,6 +284,7 @@ interface SubmissionCardProps {
   onRemoveFile: (fileId: string) => void;
   onRetryFile: (fileId: string) => void;
   onDelete: () => void;
+  onPreviewFile: (file: UploadedFileItem, pageNumber: number) => void;
 }
 
 function SubmissionCard({
@@ -183,6 +296,7 @@ function SubmissionCard({
   onRemoveFile,
   onRetryFile,
   onDelete,
+  onPreviewFile,
 }: SubmissionCardProps) {
   const [isOpen, setIsOpen] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -289,34 +403,61 @@ function SubmissionCard({
         <CollapsibleContent>
           {/* File List */}
           <div className="p-2 space-y-1">
-            {submission.files.map((file, idx) => (
-              <div
-                key={file.id}
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded transition-colors",
-                  file.status === 'failed' 
-                    ? "bg-destructive/5"
-                    : file.status === 'ready'
-                    ? "bg-background"
-                    : "bg-muted/10"
-                )}
-              >
-                <GripVertical className="w-3 h-3 text-muted-foreground/50" />
-                
-                <span className="text-xs text-muted-foreground w-4">
-                  {idx + 1}.
-                </span>
-                
-                <FileThumbnail file={file} />
-                
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate">{file.fileName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatFileSize(file.size)}
-                  </p>
-                </div>
-                
-                <StatusBadge status={file.status} />
+            {submission.files.map((file, idx) => {
+              const pageNumber = idx + 1;
+              
+              return (
+                <div
+                  key={file.id}
+                  className={cn(
+                    "flex items-center gap-2 p-2 rounded transition-colors group",
+                    file.status === 'failed' 
+                      ? "bg-destructive/5"
+                      : file.status === 'ready'
+                      ? "bg-background hover:bg-muted/30"
+                      : "bg-muted/10"
+                  )}
+                >
+                  <GripVertical className="w-3 h-3 text-muted-foreground/50" />
+                  
+                  {/* Page number badge */}
+                  <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5 bg-primary/10 text-primary">
+                    Page {pageNumber}
+                  </Badge>
+                  
+                  <FileThumbnail 
+                    file={file} 
+                    size="md"
+                    onClick={() => onPreviewFile(file, pageNumber)}
+                    showPreviewHint
+                  />
+                  
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{file.fileName}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        {formatFileSize(file.size)}
+                      </p>
+                      {/* Assigned badge */}
+                      <Badge className="text-[10px] px-1.5 py-0 h-4 bg-primary/20 text-primary">
+                        <User className="w-2 h-2 mr-0.5" />
+                        {submission.studentName}
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  {/* Preview button */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onPreviewFile(file, pageNumber)}
+                    className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary"
+                    title="Preview page"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </Button>
+                  
+                  <StatusBadge status={file.status} />
                 
                 <div className="flex items-center gap-1">
                   {file.status === 'failed' && (
@@ -386,7 +527,8 @@ function SubmissionCard({
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
 
             {submission.files.length === 0 && (
               <div className="text-center py-4 text-sm text-muted-foreground">
@@ -420,6 +562,19 @@ export function StudentSubmissionList({
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState('');
   const [showAddStudent, setShowAddStudent] = useState(false);
+  const [previewFile, setPreviewFile] = useState<FilePreviewInfo | null>(null);
+
+  const handlePreviewUngroupedFile = (file: UploadedFileItem) => {
+    setPreviewFile({ file });
+  };
+
+  const handlePreviewAssignedFile = (file: UploadedFileItem, studentName: string, pageNumber: number) => {
+    setPreviewFile({ file, studentName, pageNumber });
+  };
+
+  const closePreview = () => {
+    setPreviewFile(null);
+  };
 
   const toggleFileSelection = (fileId: string) => {
     setSelectedFileIds(prev => 
@@ -512,6 +667,8 @@ export function StudentSubmissionList({
             <AlertDescription className="text-sm text-orange-700">
               <strong>Pilot Mode:</strong> All pages must be assigned to students before grading. 
               Select pages below, then create a student or assign to an existing one.
+              <br />
+              <span className="text-xs">💡 Tip: Click a page to preview handwriting or student name before assigning.</span>
             </AlertDescription>
           </Alert>
 
@@ -542,7 +699,15 @@ export function StudentSubmissionList({
                       />
                     )}
                     
-                    <FileThumbnail file={file} />
+                    <FileThumbnail 
+                      file={file} 
+                      size="md"
+                      onClick={(e) => {
+                        e?.stopPropagation();
+                        handlePreviewUngroupedFile(file);
+                      }}
+                      showPreviewHint
+                    />
                     
                     <div className="flex-1 min-w-0">
                       <p className="text-sm truncate">{file.fileName}</p>
@@ -550,6 +715,20 @@ export function StudentSubmissionList({
                         {formatFileSize(file.size)}
                       </p>
                     </div>
+                    
+                    {/* Preview button */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePreviewUngroupedFile(file);
+                      }}
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                      title="Preview page"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Button>
                     
                     <StatusBadge status={file.status} />
                     
@@ -683,6 +862,7 @@ export function StudentSubmissionList({
                 onRemoveFile={(fileId) => onRemoveFile(submission.id, fileId)}
                 onRetryFile={(fileId) => onRetryFile(submission.id, fileId)}
                 onDelete={() => onDeleteSubmission(submission.id)}
+                onPreviewFile={(file, pageNumber) => handlePreviewAssignedFile(file, submission.studentName, pageNumber)}
               />
             ))}
           </div>
@@ -691,8 +871,11 @@ export function StudentSubmissionList({
 
       {/* Helper text */}
       <p className="text-xs text-muted-foreground">
-        💡 Each student is graded separately. Click a student name to rename.
+        💡 Each student is graded separately. Click a page thumbnail to preview handwriting.
       </p>
+
+      {/* Preview Dialog */}
+      <FilePreviewDialog previewFile={previewFile} onClose={closePreview} />
     </div>
   );
 }
