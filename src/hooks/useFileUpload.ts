@@ -187,7 +187,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
 
     const result = await extractTextFromFile(fileItem);
 
-    if (result.success) {
+    if (result.success === true) {
       updateFile(nextId, {
         status: "ready",
         extractedText: result.text,
@@ -310,6 +310,14 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     return Math.round((done / totalFiles) * 100);
   }, [completedFiles, failedFiles, totalFiles]);
 
+  // Combined text from all ready files
+  const combinedText = useMemo(() => {
+    return files
+      .filter((f) => f.status === "ready" && f.extractedText)
+      .map((f) => f.extractedText!)
+      .join("\n\n--- PAGE BREAK ---\n\n");
+  }, [files]);
+
   return {
     // core
     files,
@@ -325,6 +333,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     progress,
     isProcessing,
     isExtracting,
+    combinedText,
 
     // helpers
     retryExtraction,

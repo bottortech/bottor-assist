@@ -39,7 +39,7 @@ function statusLabel(status: UploadedFileItem["status"]) {
   }
 }
 
-export default function FileUploadList({ files, onRemove, onRetry }: Props) {
+export function FileUploadList({ files, onRemove, onRetry }: Props) {
   if (!files?.length) return null;
 
   return (

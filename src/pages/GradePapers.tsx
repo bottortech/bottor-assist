@@ -162,9 +162,9 @@ export default function GradePapers() {
   const [answerKeyOpen, setAnswerKeyOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  const assignmentCombinedText = assignmentUpload.combinedText;
-  const answerKeyCombinedText = answerKeyUpload.combinedText;
-  const rubricCombinedText = rubricUpload.combinedText;
+  const assignmentCombinedText = assignmentUpload.combinedText ?? '';
+  const answerKeyCombinedText = answerKeyUpload.combinedText ?? '';
+  const rubricCombinedText = rubricUpload.combinedText ?? '';
 
   // Get combined text from all groups for rubric detection
   const allGroupsCombinedText = studentSubmissions.groups.map(g => g.combinedText).join('\n\n');
@@ -530,7 +530,7 @@ export default function GradePapers() {
             </div>
             
             {rubricUpload.files.length > 0 && (
-              <FileUploadList files={rubricUpload.files} onRemove={rubricUpload.removeFile} onRetry={rubricUpload.retryExtraction} label="Rubric Files" totalFiles={rubricUpload.totalFiles} completedFiles={rubricUpload.completedFiles} failedFiles={rubricUpload.failedFiles} progress={rubricUpload.progress} isExtracting={rubricUpload.isExtracting} />
+              <FileUploadList files={rubricUpload.files} onRemove={rubricUpload.removeFile} onRetry={rubricUpload.retryExtraction} />
             )}
             
             <Textarea placeholder="Or paste rubric text..." value={form.rubric} onChange={(e) => updateForm('rubric', e.target.value)} rows={4} disabled={rubricMode === 'locked'} />
