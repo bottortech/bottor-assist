@@ -8,6 +8,9 @@
  * 
  * BATCH GRADING: Supports multi-page student submissions with separate grading per student.
  * Each student submission is graded independently - never combined across students.
+ * 
+ * MANDATORY STUDENT GROUPING: Files start as ungrouped and MUST be assigned to students
+ * before grading can proceed. This is a required step for Pilot Mode.
  * =============================================================================
  */
 
@@ -16,7 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useSavedRubrics } from '@/hooks/useSavedRubrics';
 import { useFileUpload } from '@/hooks/useFileUpload';
-import { useStudentSubmissions, StudentSubmission } from '@/hooks/useStudentSubmissions';
+import { useStudentSubmissions } from '@/hooks/useStudentSubmissions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -61,6 +64,7 @@ import {
   Eye,
   Users,
   Plus,
+  AlertTriangle,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { FileUploadList } from '@/components/FileUploadList';
@@ -123,14 +127,14 @@ export default function GradePapers() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const newSubmissionFileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const assignmentFileInputRef = useRef<HTMLInputElement>(null);
   const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
   const rubricFileInputRef = useRef<HTMLInputElement>(null);
 
   const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
 
-  // Student submissions hook (grouped by student)
+  // Student submissions hook (with mandatory grouping)
   const studentSubmissions = useStudentSubmissions({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   
   // Other file upload hooks
@@ -201,12 +205,12 @@ export default function GradePapers() {
     setForm(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleNewSubmissionFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      studentSubmissions.createSubmission(e.target.files);
+      studentSubmissions.addFiles(e.target.files);
       setSubmissionResults([]);
     }
-    if (newSubmissionFileInputRef.current) newSubmissionFileInputRef.current.value = '';
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleAssignmentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,8 +230,20 @@ export default function GradePapers() {
 
   // Grade all submissions separately
   const handleGenerateGrades = async () => {
-    if (studentSubmissions.submissions.length === 0) {
-      toast({ title: 'No student submissions', description: 'Add at least one student submission.', variant: 'destructive' });
+    if (!studentSubmissions.canGrade) {
+      if (!studentSubmissions.allFilesAssigned) {
+        toast({ 
+          title: 'Files not assigned', 
+          description: 'All uploaded pages must be assigned to students before grading.', 
+          variant: 'destructive' 
+        });
+      } else if (!studentSubmissions.hasReadySubmissions) {
+        toast({ 
+          title: 'No ready submissions', 
+          description: 'Wait for file extraction to complete.', 
+          variant: 'destructive' 
+        });
+      }
       return;
     }
 
@@ -374,8 +390,20 @@ export default function GradePapers() {
     );
   }
 
+  const hasAnyFiles = studentSubmissions.totalFiles > 0;
   const isExtracting = studentSubmissions.isExtracting || assignmentUpload.isExtracting || answerKeyUpload.isExtracting;
-  const canGenerate = studentSubmissions.hasReadySubmissions && !isExtracting;
+  
+  // Grading is disabled if: no files, files still ungrouped, extraction in progress, or no ready submissions
+  const canGenerate = studentSubmissions.canGrade && !isExtracting;
+  const gradingBlockedReason = !hasAnyFiles 
+    ? 'Upload student work first'
+    : !studentSubmissions.allFilesAssigned 
+      ? 'Assign all pages to students first'
+      : isExtracting 
+        ? 'Waiting for text extraction...'
+        : !studentSubmissions.hasReadySubmissions 
+          ? 'No ready submissions'
+          : null;
 
   return (
     <div className="min-h-screen bg-bottor-gradient">
@@ -385,71 +413,76 @@ export default function GradePapers() {
             <ArrowLeft className="w-4 h-4 mr-2" />Home
           </Button>
           <h1 className="text-xl font-bold text-foreground">Grade Papers</h1>
+          <Badge variant="outline" className="ml-auto text-xs">Pilot Mode</Badge>
         </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Student Submissions */}
+        {/* Step 1: Upload Student Work */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="w-5 h-5" />
-                Student Submissions (Required)
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm font-bold">1</span>
+                Upload Student Work
+                <Badge variant="destructive" className="text-xs ml-2">Required</Badge>
               </CardTitle>
-              <CardDescription className="text-xs">
-                Each submission is graded separately. Upload files for one student at a time.
+              <CardDescription className="text-xs mt-1">
+                Upload PDFs or images. All pages start ungrouped and must be assigned to students.
               </CardDescription>
             </div>
-            {studentSubmissions.submissions.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={studentSubmissions.clearAllSubmissions} className="text-muted-foreground hover:text-destructive">
+            {hasAnyFiles && (
+              <Button variant="ghost" size="sm" onClick={studentSubmissions.clearAll} className="text-muted-foreground hover:text-destructive">
                 Clear all
               </Button>
             )}
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Add New Submission */}
+            {/* File Upload Area */}
             <div className="relative">
               <input 
-                ref={newSubmissionFileInputRef} 
+                ref={fileInputRef} 
                 type="file" 
                 multiple 
                 accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif" 
-                onChange={handleNewSubmissionFileSelect} 
+                onChange={handleFileSelect} 
                 className="hidden" 
-                id="new-submission-upload" 
+                id="student-work-upload" 
               />
               <label 
-                htmlFor="new-submission-upload" 
+                htmlFor="student-work-upload" 
                 className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
               >
-                <Plus className="w-6 h-6 text-muted-foreground mb-2" />
-                <span className="text-sm text-muted-foreground font-medium">Add New Student Submission</span>
-                <span className="text-xs text-muted-foreground mt-1">Upload PDFs or images for one student</span>
+                <Upload className="w-6 h-6 text-muted-foreground mb-2" />
+                <span className="text-sm text-muted-foreground font-medium">Upload Student Pages</span>
+                <span className="text-xs text-muted-foreground mt-1">PDF, JPG, PNG, HEIC (max 10MB each)</span>
               </label>
             </div>
 
-            {/* Submission List */}
-            {studentSubmissions.submissions.length > 0 && (
+            {/* Student Submission List with Ungrouped Files */}
+            {hasAnyFiles && (
               <StudentSubmissionList
+                ungroupedFiles={studentSubmissions.ungroupedFiles}
                 submissions={studentSubmissions.submissions}
+                onCreateStudentWithFiles={studentSubmissions.createStudentWithFiles}
+                onAssignFilesToStudent={studentSubmissions.assignFilesToStudent}
+                onUnassignFiles={studentSubmissions.unassignFilesFromStudent}
+                onRemoveUngroupedFile={studentSubmissions.removeUngroupedFile}
+                onRetryUngroupedFile={studentSubmissions.retryUngroupedExtraction}
                 onRename={studentSubmissions.renameSubmission}
                 onMoveFile={studentSubmissions.moveFileBetweenSubmissions}
                 onRemoveFile={studentSubmissions.removeFile}
                 onRetryFile={studentSubmissions.retryExtraction}
                 onDeleteSubmission={studentSubmissions.deleteSubmission}
-                onAddFiles={(subId, files) => studentSubmissions.addFilesToSubmission(subId, files)}
-                totalFiles={studentSubmissions.totalFiles}
-                completedFiles={studentSubmissions.completedFiles}
-                failedFiles={studentSubmissions.failedFiles}
-                progress={studentSubmissions.progress}
+                allFilesAssigned={studentSubmissions.allFilesAssigned}
                 isExtracting={studentSubmissions.isExtracting}
+                progress={studentSubmissions.progress}
               />
             )}
           </CardContent>
         </Card>
 
-        {/* Rubric Section */}
+        {/* Step 2: Rubric Section */}
         <Card className={`border-2 shadow-lg ${
           rubricMode === 'locked' 
             ? 'border-green-500/50 bg-green-500/5' 
@@ -459,7 +492,8 @@ export default function GradePapers() {
         }`}>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-muted text-muted-foreground text-sm font-bold">2</span>
                 Rubric / Grading Criteria 
                 <span className="text-xs font-normal text-muted-foreground ml-2">Optional</span>
               </CardTitle>
@@ -496,23 +530,45 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* Generate Button */}
+        {/* Generate Button - Sticky */}
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <Button onClick={handleGenerateGrades} disabled={!canGenerate || grading} className="w-full" size="lg">
-                    {grading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Sparkles className="w-5 h-5 mr-2" />}
-                    Grade All Submissions ({studentSubmissions.submissions.length})
+                  <Button 
+                    onClick={handleGenerateGrades} 
+                    disabled={!canGenerate || grading} 
+                    className="w-full" 
+                    size="lg"
+                  >
+                    {grading ? (
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    ) : !studentSubmissions.allFilesAssigned ? (
+                      <AlertTriangle className="w-5 h-5 mr-2" />
+                    ) : (
+                      <Sparkles className="w-5 h-5 mr-2" />
+                    )}
+                    {!studentSubmissions.allFilesAssigned 
+                      ? `Assign All Pages First (${studentSubmissions.totalUngroupedFiles} ungrouped)`
+                      : `Grade All Submissions (${studentSubmissions.submissions.length})`
+                    }
                   </Button>
                 </div>
               </TooltipTrigger>
-              {!canGenerate && isExtracting && (
-                <TooltipContent><p>Waiting for text extraction...</p></TooltipContent>
+              {gradingBlockedReason && (
+                <TooltipContent><p>{gradingBlockedReason}</p></TooltipContent>
               )}
             </Tooltip>
           </TooltipProvider>
+          
+          {/* Grouping status indicator */}
+          {hasAnyFiles && !studentSubmissions.allFilesAssigned && (
+            <p className="text-xs text-center text-orange-600 mt-2 flex items-center justify-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              {studentSubmissions.totalUngroupedFiles} page{studentSubmissions.totalUngroupedFiles !== 1 ? 's' : ''} must be assigned to students before grading
+            </p>
+          )}
         </div>
 
         {/* Results */}

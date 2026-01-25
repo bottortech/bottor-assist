@@ -1,13 +1,12 @@
 /**
  * StudentSubmissionList Component
  * 
- * Displays student submissions grouped with files inside each.
+ * Displays ungrouped files and student submissions.
  * Supports:
+ * - Creating students from ungrouped files
  * - Renaming students
  * - Moving files between submissions
- * - Adding files to existing submissions
- * - Creating new submissions
- * - Visual grouping with clear separation
+ * - Unassigning files back to ungrouped pool
  */
 
 import { useState, useRef } from 'react';
@@ -29,11 +28,16 @@ import {
   ArrowRight,
   Trash2,
   GripVertical,
+  Undo2,
+  UserPlus,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,18 +54,21 @@ import { cn } from '@/lib/utils';
 import type { StudentSubmission, UploadedFileItem, FileStatus } from '@/hooks/useStudentSubmissions';
 
 interface StudentSubmissionListProps {
+  ungroupedFiles: UploadedFileItem[];
   submissions: StudentSubmission[];
+  onCreateStudentWithFiles: (studentName: string, fileIds: string[]) => void;
+  onAssignFilesToStudent: (submissionId: string, fileIds: string[]) => void;
+  onUnassignFiles: (submissionId: string, fileIds: string[]) => void;
+  onRemoveUngroupedFile: (fileId: string) => void;
+  onRetryUngroupedFile: (fileId: string) => void;
   onRename: (submissionId: string, newName: string) => void;
   onMoveFile: (fromSubmissionId: string, toSubmissionId: string, fileId: string) => void;
   onRemoveFile: (submissionId: string, fileId: string) => void;
   onRetryFile: (submissionId: string, fileId: string) => void;
   onDeleteSubmission: (submissionId: string) => void;
-  onAddFiles: (submissionId: string, files: FileList) => void;
-  totalFiles: number;
-  completedFiles: number;
-  failedFiles: number;
-  progress: number;
+  allFilesAssigned: boolean;
   isExtracting: boolean;
+  progress: number;
 }
 
 const statusConfig: Record<FileStatus, { 
@@ -161,10 +168,10 @@ interface SubmissionCardProps {
   allSubmissions: StudentSubmission[];
   onRename: (newName: string) => void;
   onMoveFile: (toSubmissionId: string, fileId: string) => void;
+  onUnassignFile: (fileId: string) => void;
   onRemoveFile: (fileId: string) => void;
   onRetryFile: (fileId: string) => void;
   onDelete: () => void;
-  onAddFiles: (files: FileList) => void;
 }
 
 function SubmissionCard({
@@ -172,15 +179,14 @@ function SubmissionCard({
   allSubmissions,
   onRename,
   onMoveFile,
+  onUnassignFile,
   onRemoveFile,
   onRetryFile,
   onDelete,
-  onAddFiles,
 }: SubmissionCardProps) {
   const [isOpen, setIsOpen] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(submission.studentName);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const readyCount = submission.files.filter(f => f.status === 'ready').length;
   const failedCount = submission.files.filter(f => f.status === 'failed').length;
@@ -203,33 +209,16 @@ function SubmissionCard({
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      onAddFiles(e.target.files);
-    }
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
   const otherSubmissions = allSubmissions.filter(s => s.id !== submission.id);
 
   return (
     <div className={cn(
       "border rounded-lg overflow-hidden transition-colors",
-      failedCount > 0 ? "border-destructive/30" : "border-border"
+      failedCount > 0 ? "border-destructive/30" : "border-primary/30 bg-primary/5"
     )}>
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-        onChange={handleFileSelect}
-        className="hidden"
-      />
-
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         {/* Header */}
-        <div className="flex items-center gap-2 p-3 bg-muted/30">
+        <div className="flex items-center gap-2 p-3 bg-primary/10">
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
               {isOpen ? (
@@ -240,7 +229,7 @@ function SubmissionCard({
             </Button>
           </CollapsibleTrigger>
 
-          <User className="w-4 h-4 text-muted-foreground" />
+          <User className="w-4 h-4 text-primary" />
 
           {isEditing ? (
             <Input
@@ -271,6 +260,10 @@ function SubmissionCard({
 
           <div className="flex-1" />
 
+          <Badge variant="outline" className="text-xs">
+            {submission.files.length} page{submission.files.length !== 1 ? 's' : ''}
+          </Badge>
+
           <span className="text-xs text-muted-foreground">
             {readyCount}/{submission.files.length} ready
             {failedCount > 0 && (
@@ -285,18 +278,9 @@ function SubmissionCard({
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Plus className="w-3 h-3 mr-1" />
-            Add Files
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
             className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
             onClick={onDelete}
+            title="Remove student (returns files to ungrouped)"
           >
             <Trash2 className="w-4 h-4" />
           </Button>
@@ -313,7 +297,7 @@ function SubmissionCard({
                   file.status === 'failed' 
                     ? "bg-destructive/5"
                     : file.status === 'ready'
-                    ? "bg-primary/5"
+                    ? "bg-background"
                     : "bg-muted/10"
                 )}
               >
@@ -347,20 +331,20 @@ function SubmissionCard({
                     </Button>
                   )}
 
-                  {/* Move to another submission */}
-                  {otherSubmissions.length > 0 && file.status === 'ready' && (
+                  {/* Move to another student */}
+                  {otherSubmissions.length > 0 && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 p-0 text-muted-foreground"
-                          title="Move to another submission"
+                          title="Move to another student"
                         >
                           <ArrowRight className="w-3 h-3" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuContent align="end" className="bg-popover">
                         <DropdownMenuItem disabled className="text-xs text-muted-foreground">
                           Move to:
                         </DropdownMenuItem>
@@ -377,6 +361,17 @@ function SubmissionCard({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   )}
+
+                  {/* Unassign back to ungrouped */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onUnassignFile(file.id)}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-500"
+                    title="Unassign (move back to ungrouped)"
+                  >
+                    <Undo2 className="w-3 h-3" />
+                  </Button>
                   
                   {file.status !== 'extracting' && file.status !== 'uploading' && (
                     <Button
@@ -384,14 +379,10 @@ function SubmissionCard({
                       size="sm"
                       onClick={() => onRemoveFile(file.id)}
                       className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                      title="Remove"
+                      title="Remove permanently"
                     >
                       <X className="w-3 h-3" />
                     </Button>
-                  )}
-                  
-                  {(file.status === 'extracting' || file.status === 'uploading') && (
-                    <Loader2 className="w-3 h-3 animate-spin text-primary" />
                   )}
                 </div>
               </div>
@@ -399,15 +390,7 @@ function SubmissionCard({
 
             {submission.files.length === 0 && (
               <div className="text-center py-4 text-sm text-muted-foreground">
-                No files in this submission.
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-1"
-                >
-                  Add files
-                </Button>
+                No files assigned to this student.
               </div>
             )}
           </div>
@@ -418,36 +401,65 @@ function SubmissionCard({
 }
 
 export function StudentSubmissionList({
+  ungroupedFiles,
   submissions,
+  onCreateStudentWithFiles,
+  onAssignFilesToStudent,
+  onUnassignFiles,
+  onRemoveUngroupedFile,
+  onRetryUngroupedFile,
   onRename,
   onMoveFile,
   onRemoveFile,
   onRetryFile,
   onDeleteSubmission,
-  onAddFiles,
-  totalFiles,
-  completedFiles,
-  failedFiles,
-  progress,
+  allFilesAssigned,
   isExtracting,
+  progress,
 }: StudentSubmissionListProps) {
-  if (submissions.length === 0) return null;
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [showAddStudent, setShowAddStudent] = useState(false);
+
+  const toggleFileSelection = (fileId: string) => {
+    setSelectedFileIds(prev => 
+      prev.includes(fileId) 
+        ? prev.filter(id => id !== fileId)
+        : [...prev, fileId]
+    );
+  };
+
+  const selectAllUngrouped = () => {
+    const readyIds = ungroupedFiles.filter(f => f.status === 'ready').map(f => f.id);
+    setSelectedFileIds(readyIds);
+  };
+
+  const clearSelection = () => {
+    setSelectedFileIds([]);
+  };
+
+  const handleCreateStudent = () => {
+    if (selectedFileIds.length === 0) return;
+    onCreateStudentWithFiles(newStudentName || `Student ${submissions.length + 1}`, selectedFileIds);
+    setSelectedFileIds([]);
+    setNewStudentName('');
+    setShowAddStudent(false);
+  };
+
+  const handleAssignToExisting = (submissionId: string) => {
+    if (selectedFileIds.length === 0) return;
+    onAssignFilesToStudent(submissionId, selectedFileIds);
+    setSelectedFileIds([]);
+  };
+
+  const hasUngroupedFiles = ungroupedFiles.length > 0;
+  const hasSubmissions = submissions.length > 0;
+  const readyUngroupedCount = ungroupedFiles.filter(f => f.status === 'ready').length;
+
+  if (!hasUngroupedFiles && !hasSubmissions) return null;
   
   return (
-    <div className="space-y-4">
-      {/* Header with global progress */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-foreground">
-          Student Submissions ({submissions.length})
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {completedFiles}/{totalFiles} files ready
-          {failedFiles > 0 && (
-            <span className="text-destructive ml-1">• {failedFiles} failed</span>
-          )}
-        </span>
-      </div>
-      
+    <div className="space-y-6">
       {/* Global Progress Bar */}
       {isExtracting && (
         <div className="space-y-1">
@@ -458,26 +470,228 @@ export function StudentSubmissionList({
         </div>
       )}
 
-      {/* Submissions */}
-      <div className="space-y-3">
-        {submissions.map(submission => (
-          <SubmissionCard
-            key={submission.id}
-            submission={submission}
-            allSubmissions={submissions}
-            onRename={(newName) => onRename(submission.id, newName)}
-            onMoveFile={(toId, fileId) => onMoveFile(submission.id, toId, fileId)}
-            onRemoveFile={(fileId) => onRemoveFile(submission.id, fileId)}
-            onRetryFile={(fileId) => onRetryFile(submission.id, fileId)}
-            onDelete={() => onDeleteSubmission(submission.id)}
-            onAddFiles={(files) => onAddFiles(submission.id, files)}
-          />
-        ))}
-      </div>
+      {/* STEP 1: Ungrouped Files Section */}
+      {hasUngroupedFiles && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-orange-500" />
+              <span className="text-sm font-medium text-orange-600">
+                Ungrouped Pages ({ungroupedFiles.length})
+              </span>
+              <Badge variant="outline" className="text-xs border-orange-500 text-orange-600">
+                Required: Assign to students
+              </Badge>
+            </div>
+            {readyUngroupedCount > 0 && (
+              <div className="flex gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={selectAllUngrouped}
+                  className="text-xs"
+                >
+                  Select all ready
+                </Button>
+                {selectedFileIds.length > 0 && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={clearSelection}
+                    className="text-xs"
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <Alert className="border-orange-500/30 bg-orange-500/5">
+            <AlertTriangle className="h-4 w-4 text-orange-500" />
+            <AlertDescription className="text-sm text-orange-700">
+              <strong>Pilot Mode:</strong> All pages must be assigned to students before grading. 
+              Select pages below, then create a student or assign to an existing one.
+            </AlertDescription>
+          </Alert>
+
+          {/* Ungrouped File Grid */}
+          <div className="border-2 border-dashed border-orange-500/30 rounded-lg p-3 bg-orange-500/5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {ungroupedFiles.map((file) => {
+                const isSelected = selectedFileIds.includes(file.id);
+                const isReady = file.status === 'ready';
+                
+                return (
+                  <div
+                    key={file.id}
+                    className={cn(
+                      "flex items-center gap-2 p-2 rounded border transition-all cursor-pointer",
+                      isSelected 
+                        ? "border-primary bg-primary/10" 
+                        : "border-border bg-background hover:border-primary/50",
+                      !isReady && "opacity-60"
+                    )}
+                    onClick={() => isReady && toggleFileSelection(file.id)}
+                  >
+                    {isReady && (
+                      <Checkbox 
+                        checked={isSelected}
+                        onCheckedChange={() => toggleFileSelection(file.id)}
+                        className="data-[state=checked]:bg-primary"
+                      />
+                    )}
+                    
+                    <FileThumbnail file={file} />
+                    
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm truncate">{file.fileName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatFileSize(file.size)}
+                      </p>
+                    </div>
+                    
+                    <StatusBadge status={file.status} />
+                    
+                    <div className="flex items-center gap-1">
+                      {file.status === 'failed' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRetryUngroupedFile(file.id);
+                          }}
+                          className="h-7 w-7 p-0 text-primary"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </Button>
+                      )}
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveUngroupedFile(file.id);
+                        }}
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Assignment Actions */}
+          {selectedFileIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20">
+              <Badge className="bg-primary text-primary-foreground">
+                {selectedFileIds.length} page{selectedFileIds.length !== 1 ? 's' : ''} selected
+              </Badge>
+              
+              <div className="flex-1" />
+              
+              {/* Assign to existing student */}
+              {submissions.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <ArrowRight className="w-4 h-4 mr-1" />
+                      Assign to existing
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="bg-popover">
+                    {submissions.map(sub => (
+                      <DropdownMenuItem
+                        key={sub.id}
+                        onClick={() => handleAssignToExisting(sub.id)}
+                      >
+                        <User className="w-3 h-3 mr-2" />
+                        {sub.studentName} ({sub.files.length} pages)
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              {/* Create new student */}
+              {showAddStudent ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Student name..."
+                    value={newStudentName}
+                    onChange={(e) => setNewStudentName(e.target.value)}
+                    className="h-8 w-40"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateStudent();
+                      if (e.key === 'Escape') setShowAddStudent(false);
+                    }}
+                  />
+                  <Button size="sm" onClick={handleCreateStudent}>
+                    <Check className="w-4 h-4" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowAddStudent(false)}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" onClick={() => setShowAddStudent(true)}>
+                  <UserPlus className="w-4 h-4 mr-1" />
+                  Create new student
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* STEP 2: Assigned Students Section */}
+      {hasSubmissions && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium text-foreground">
+                Assigned Students ({submissions.length})
+              </span>
+              {allFilesAssigned && (
+                <Badge className="bg-primary/20 text-primary text-xs">
+                  ✓ All pages assigned
+                </Badge>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {submissions.map(submission => (
+              <SubmissionCard
+                key={submission.id}
+                submission={submission}
+                allSubmissions={submissions}
+                onRename={(newName) => onRename(submission.id, newName)}
+                onMoveFile={(toId, fileId) => onMoveFile(submission.id, toId, fileId)}
+                onUnassignFile={(fileId) => onUnassignFiles(submission.id, [fileId])}
+                onRemoveFile={(fileId) => onRemoveFile(submission.id, fileId)}
+                onRetryFile={(fileId) => onRetryFile(submission.id, fileId)}
+                onDelete={() => onDeleteSubmission(submission.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Helper text */}
       <p className="text-xs text-muted-foreground">
-        💡 Each submission is graded separately. Click a student name to rename, or use the arrow icon to move files between submissions.
+        💡 Each student is graded separately. Click a student name to rename.
       </p>
     </div>
   );
