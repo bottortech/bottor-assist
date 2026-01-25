@@ -1,344 +1,512 @@
-/* src/hooks/useFileUpload.ts
- * Resilient file upload + extraction hook for Bottor Assist
- * - Immediate UI updates (Queued/Uploading/Extracting/Ready/Failed)
- * - Concurrency-limited extraction
- * - Timeout guard so we never hang forever
- * - Retry support per-file
+/**
+ * Optimistic File Upload Hook
+ * 
+ * Handles file uploads with:
+ * - Immediate display with status chips (Queued, Uploading, Extracting, Ready, Failed)
+ * - Client-side thumbnail generation
+ * - Image compression/resize before upload
+ * - HEIC to JPEG conversion
+ * - Background extraction with concurrency limiting (max 2-3 concurrent)
+ * - Combined text streaming as files complete
+ * - Retry functionality for failed extractions
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import heic2any from "heic2any";
-import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
+import { useState, useCallback, useRef } from 'react';
+import heic2any from 'heic2any';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
-export type FileStatus = "queued" | "uploading" | "uploaded" | "extracting" | "ready" | "failed";
+export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'ready' | 'failed';
 
-export type UploadedFileItem = {
+export interface UploadedFileItem {
   id: string;
   file: File;
+  originalFile?: File; // Original file before conversion
   fileName: string;
-  size: number;
   mimeType: string;
-
+  size: number;
   status: FileStatus;
-  extractedText?: string;
+  thumbnailUrl?: string;
+  extractedText: string;
   error?: string;
+  createdAt: Date;
+}
 
-  // Optional: timestamps to help watchdog/UX
-  createdAt: number;
-  uploadFinishedAt?: number;
-  extractionStartedAt?: number;
-  extractionFinishedAt?: number;
+interface UseFileUploadOptions {
+  maxConcurrentExtractions?: number;
+  maxDimension?: number;
+  jpegQuality?: number;
+}
+
+const DEFAULT_OPTIONS: Required<UseFileUploadOptions> = {
+  maxConcurrentExtractions: 2,
+  maxDimension: 1600,
+  jpegQuality: 0.75,
 };
-
-export type UseFileUploadOptions = {
-  maxConcurrentExtractions?: number; // default 2
-  extractionTimeoutMs?: number; // default 20000
-  maxImageDimension?: number; // (not used here but kept for future)
-  jpegQuality?: number; // (not used here but kept for future)
-};
-
-function safeErrMessage(err: unknown) {
-  if (err instanceof Error) return err.message;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return "Unknown error";
-  }
-}
-
-function parseNameId(fileName: string) {
-  // Supports: Lesson4_Functions__AaliyahJohnson__p1.pdf
-  // You can tweak this later if needed.
-  const base = fileName.replace(/\.[^/.]+$/, "");
-  const parts = base.split("__").filter(Boolean);
-  // If your filenames are like Lesson4_Functions__Name__p1
-  const student = parts.length >= 2 ? parts[1] : undefined;
-  const assignment = parts.length >= 1 ? parts[0] : undefined;
-  const page = parts.find((p) => /^p\d+$/i.test(p));
-  return { student, assignment, page };
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-}
-
-async function normalizeToSupportedFile(file: File): Promise<File> {
-  // Convert HEIC -> JPEG
-  if (file.type === "image/heic" || file.name.toLowerCase().endsWith(".heic")) {
-    const converted = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.85 });
-    const blob = Array.isArray(converted) ? converted[0] : converted;
-    const newName = file.name.replace(/\.heic$/i, ".jpg");
-    return new File([blob as BlobPart], newName, { type: "image/jpeg" });
-  }
-  return file;
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string) {
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-    promise
-      .then((v) => {
-        clearTimeout(t);
-        resolve(v);
-      })
-      .catch((e) => {
-        clearTimeout(t);
-        reject(e);
-      });
-  });
-}
 
 export function useFileUpload(options: UseFileUploadOptions = {}) {
+  const { maxConcurrentExtractions, maxDimension, jpegQuality } = { ...DEFAULT_OPTIONS, ...options };
   const { toast } = useToast();
-
-  const { maxConcurrentExtractions = 2, extractionTimeoutMs = 20000 } = options;
-
+  
   const [files, setFiles] = useState<UploadedFileItem[]>([]);
-
-  // Track in-flight extraction count
+  const [combinedText, setCombinedText] = useState('');
+  
+  // Track active extractions for concurrency control
   const activeExtractions = useRef(0);
-  // Simple FIFO queue of file IDs waiting for extraction
   const extractionQueue = useRef<string[]>([]);
-  // Prevent double-enqueue
-  const queuedSet = useRef<Set<string>>(new Set());
 
-  const updateFile = useCallback((fileId: string, patch: Partial<UploadedFileItem>) => {
-    setFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, ...patch } : f)));
+  /**
+   * Generate unique ID for file
+   */
+  const getFileId = useCallback((file: File): string => {
+    return `${file.name}_${file.lastModified}_${Math.random().toString(36).substr(2, 9)}`;
   }, []);
 
-  const removeFile = useCallback((fileId: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== fileId));
-    queuedSet.current.delete(fileId);
-    extractionQueue.current = extractionQueue.current.filter((id) => id !== fileId);
+  /**
+   * Generate thumbnail URL for image files
+   */
+  const generateThumbnail = useCallback((file: File): string | undefined => {
+    if (file.type.startsWith('image/')) {
+      return URL.createObjectURL(file);
+    }
+    return undefined;
   }, []);
 
-  const clearAll = useCallback(() => {
-    setFiles([]);
-    queuedSet.current.clear();
-    extractionQueue.current = [];
-    activeExtractions.current = 0;
-  }, []);
+  /**
+   * Compress/resize image to max dimension with JPEG output
+   */
+  const compressImage = useCallback(async (blob: Blob): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      
+      img.onload = () => {
+        try {
+          const srcW = img.width;
+          const srcH = img.height;
+          const scale = Math.min(1, maxDimension / Math.max(srcW, srcH));
+          const targetW = Math.max(1, Math.round(srcW * scale));
+          const targetH = Math.max(1, Math.round(srcH * scale));
 
-  const getFileId = useCallback((file: File) => {
-    // Stable-ish ID across quick re-uploads:
-    return `${file.name}_${file.size}_${file.lastModified}_${Math.random().toString(36).slice(2, 9)}`;
-  }, []);
+          const canvas = document.createElement('canvas');
+          canvas.width = targetW;
+          canvas.height = targetH;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Canvas not supported');
+          ctx.drawImage(img, 0, 0, targetW, targetH);
 
-  const extractTextFromFile = useCallback(
-    async (
-      fileItem: UploadedFileItem,
-    ): Promise<{ success: true; text: string } | { success: false; error: string }> => {
-      try {
-        const base64 = await fileToBase64(fileItem.file);
-
-        const invokePromise = supabase.functions.invoke("extract-text", {
-          body: {
-            file_data: base64,
-            file_type: fileItem.mimeType || fileItem.file.type,
-            file_name: fileItem.fileName,
-          },
-        });
-
-        const result = await withTimeout(
-          invokePromise,
-          extractionTimeoutMs,
-          `Extraction timed out after ${Math.round(extractionTimeoutMs / 1000)}s`,
-        );
-
-        if (result.error) {
-          return { success: false, error: safeErrMessage(result.error) };
+          canvas.toBlob(
+            (b) => {
+              URL.revokeObjectURL(url);
+              b ? resolve(b) : reject(new Error('Failed to create output blob'));
+            },
+            'image/jpeg',
+            jpegQuality
+          );
+        } catch (err) {
+          URL.revokeObjectURL(url);
+          reject(err);
         }
-
-        const text = (result.data as any)?.text ?? "";
-        return { success: true, text: typeof text === "string" ? text : "" };
-      } catch (err) {
-        return { success: false, error: safeErrMessage(err) };
-      }
-    },
-    [extractionTimeoutMs],
-  );
-
-  const runNextExtraction = useCallback(async () => {
-    if (activeExtractions.current >= maxConcurrentExtractions) return;
-
-    const nextId = extractionQueue.current.shift();
-    if (!nextId) return;
-
-    queuedSet.current.delete(nextId);
-
-    const fileItem = files.find((f) => f.id === nextId);
-    if (!fileItem) return;
-
-    // Only extract if uploaded or queued; if already ready/failed, skip
-    if (!["uploaded", "queued"].includes(fileItem.status)) return;
-
-    activeExtractions.current += 1;
-
-    updateFile(nextId, {
-      status: "extracting",
-      extractionStartedAt: Date.now(),
-      error: undefined,
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Image decode failed'));
+      };
+      
+      img.src = url;
     });
+  }, [maxDimension, jpegQuality]);
 
-    const result = await extractTextFromFile(fileItem);
+  /**
+   * Convert HEIC/HEIF to JPEG
+   */
+  const convertHeicToJpeg = useCallback(async (file: File): Promise<File> => {
+    const converted = await heic2any({
+      blob: file,
+      toType: 'image/jpeg',
+      quality: jpegQuality,
+    });
+    const blob = Array.isArray(converted) ? converted[0] : converted;
+    const resized = await compressImage(blob);
+    const newName = file.name.replace(/\.(heic|heif)$/i, '.jpg');
+    return new File([resized], newName, { type: 'image/jpeg' });
+  }, [compressImage, jpegQuality]);
 
-    if (result.success === true) {
-      updateFile(nextId, {
-        status: "ready",
-        extractedText: result.text,
-        extractionFinishedAt: Date.now(),
-        error: undefined,
+  /**
+   * Update combined text from all files
+   */
+  const updateCombinedText = useCallback((fileList: UploadedFileItem[]) => {
+    const parts = fileList.map((uf, idx) => {
+      const header = `--- Page ${idx + 1}: ${uf.fileName} ---`;
+      let body: string;
+      
+      switch (uf.status) {
+        case 'queued':
+        case 'uploading':
+        case 'uploaded':
+          body = '[Waiting for extraction...]';
+          break;
+        case 'extracting':
+          body = '[Extracting text...]';
+          break;
+        case 'ready':
+          body = uf.extractedText || '[No text extracted]';
+          break;
+        case 'failed':
+          body = `[Extraction failed${uf.error ? `: ${uf.error}` : ''} — paste text manually or retry]`;
+          break;
+        default:
+          body = '[Unknown status]';
+      }
+      
+      return `${header}\n${body}`;
+    });
+    
+    setCombinedText(parts.join('\n\n'));
+  }, []);
+
+  /**
+   * Update file status
+   */
+  const updateFileStatus = useCallback((
+    fileId: string, 
+    updates: Partial<UploadedFileItem>
+  ) => {
+    setFiles(prev => {
+      const updated = prev.map(f => 
+        f.id === fileId ? { ...f, ...updates } : f
+      );
+      updateCombinedText(updated);
+      return updated;
+    });
+  }, [updateCombinedText]);
+
+  /**
+   * Convert file to base64
+   */
+  const fileToBase64 = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
+  /**
+   * Extract text from a single file
+   */
+  const extractTextFromFile = useCallback(async (file: File): Promise<string> => {
+    const base64 = await fileToBase64(file);
+    const { data, error } = await supabase.functions.invoke('extract-text', {
+      body: {
+        file_data: base64,
+        file_type: file.type,
+        file_name: file.name,
+      },
+    });
+    if (error) throw error;
+    return data.text || '';
+  }, [fileToBase64]);
+
+  /**
+   * Process extraction queue with concurrency limiting
+   */
+  const processExtractionQueue = useCallback(async () => {
+    while (
+      extractionQueue.current.length > 0 && 
+      activeExtractions.current < maxConcurrentExtractions
+    ) {
+      const fileId = extractionQueue.current.shift();
+      if (!fileId) continue;
+      
+      activeExtractions.current++;
+      
+      // Get file from state
+      setFiles(prev => {
+        const fileItem = prev.find(f => f.id === fileId);
+        if (!fileItem || fileItem.status !== 'uploaded') {
+          activeExtractions.current--;
+          return prev;
+        }
+        
+        // Start extraction in background
+        (async () => {
+          updateFileStatus(fileId, { status: 'extracting' });
+          
+          try {
+            const text = await extractTextFromFile(fileItem.file);
+            updateFileStatus(fileId, { 
+              status: 'ready', 
+              extractedText: text,
+              error: undefined 
+            });
+          } catch (err) {
+            console.error('Extraction failed for', fileItem.fileName, err);
+            updateFileStatus(fileId, { 
+              status: 'failed',
+              error: err instanceof Error ? err.message : 'Unknown error'
+            });
+          } finally {
+            activeExtractions.current--;
+            processExtractionQueue();
+          }
+        })();
+        
+        return prev;
       });
-    } else {
-      updateFile(nextId, {
-        status: "failed",
-        extractionFinishedAt: Date.now(),
-        error: result.error,
+    }
+  }, [maxConcurrentExtractions, extractTextFromFile, updateFileStatus]);
+
+  /**
+   * Queue file for extraction
+   */
+  const queueExtraction = useCallback((fileId: string) => {
+    extractionQueue.current.push(fileId);
+    processExtractionQueue();
+  }, [processExtractionQueue]);
+
+  /**
+   * Retry extraction for a failed file
+   */
+  const retryExtraction = useCallback((fileId: string) => {
+    setFiles(prev => {
+      const updated = prev.map(f => 
+        f.id === fileId ? { ...f, status: 'uploaded' as FileStatus, error: undefined } : f
+      );
+      updateCombinedText(updated);
+      return updated;
+    });
+    queueExtraction(fileId);
+    toast({ title: 'Retrying extraction...' });
+  }, [queueExtraction, updateCombinedText, toast]);
+
+  /**
+   * Add files to the upload list
+   */
+  const addFiles = useCallback(async (selectedFiles: FileList | File[]) => {
+    const allowedMimes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+    ];
+
+    const newFileItems: UploadedFileItem[] = [];
+    const errors: string[] = [];
+
+    for (const selectedFile of Array.from(selectedFiles)) {
+      const fileType = (selectedFile.type || '').toLowerCase();
+      const ext = selectedFile.name.split('.').pop()?.toLowerCase();
+      const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
+      const okByMime = allowedMimes.includes(fileType);
+
+      if (!okByExt && !okByMime) {
+        errors.push(`Skipped ${selectedFile.name}: Unsupported file type`);
+        continue;
+      }
+
+      if (selectedFile.size > 10 * 1024 * 1024) {
+        errors.push(`Skipped ${selectedFile.name}: File too large (max 10MB)`);
+        continue;
+      }
+
+      const isHeicOrHeif = 
+        fileType === 'image/heic' || 
+        fileType === 'image/heif' ||
+        ext === 'heic' || 
+        ext === 'heif';
+
+      const id = getFileId(selectedFile);
+      
+      // Create initial file item with queued status
+      const thumbnailUrl = !isHeicOrHeif ? generateThumbnail(selectedFile) : undefined;
+      
+      const fileItem: UploadedFileItem = {
+        id,
+        file: selectedFile,
+        originalFile: isHeicOrHeif ? selectedFile : undefined,
+        fileName: selectedFile.name,
+        mimeType: selectedFile.type,
+        size: selectedFile.size,
+        status: 'queued',
+        thumbnailUrl,
+        extractedText: '',
+        createdAt: new Date(),
+      };
+      
+      newFileItems.push(fileItem);
+    }
+
+    // Show errors if any
+    if (errors.length > 0) {
+      toast({
+        title: 'Some files were skipped',
+        description: errors.join('. '),
+        variant: 'destructive',
       });
     }
 
-    activeExtractions.current -= 1;
+    if (newFileItems.length === 0) return;
 
-    // Continue draining queue
-    void runNextExtraction();
-  }, [extractTextFromFile, files, maxConcurrentExtractions, updateFile]);
+    // Add files immediately to state (optimistic)
+    setFiles(prev => {
+      const updated = [...prev, ...newFileItems];
+      updateCombinedText(updated);
+      return updated;
+    });
 
-  const enqueueExtraction = useCallback(
-    (fileId: string) => {
-      if (queuedSet.current.has(fileId)) return;
-      queuedSet.current.add(fileId);
-      extractionQueue.current.push(fileId);
-      void runNextExtraction();
-    },
-    [runNextExtraction],
-  );
+    toast({ title: `${newFileItems.length} file(s) added` });
 
-  const addFiles = useCallback(
-    async (incoming: FileList | File[]) => {
-      const list = Array.isArray(incoming) ? incoming : Array.from(incoming);
-
-      for (const rawFile of list) {
+    // Process each file asynchronously
+    for (const fileItem of newFileItems) {
+      (async () => {
         try {
-          const file = await normalizeToSupportedFile(rawFile);
-          const id = getFileId(file);
+          let processedFile = fileItem.file;
+          const ext = fileItem.fileName.split('.').pop()?.toLowerCase();
+          const isHeicOrHeif = 
+            fileItem.mimeType === 'image/heic' || 
+            fileItem.mimeType === 'image/heif' ||
+            ext === 'heic' || 
+            ext === 'heif';
 
-          const item: UploadedFileItem = {
-            id,
-            file,
-            fileName: file.name,
-            size: file.size,
-            mimeType: file.type || "application/octet-stream",
-            status: "uploaded", // we treat local selection as "uploaded" for pilot (no separate storage step)
-            createdAt: Date.now(),
-            uploadFinishedAt: Date.now(),
-          };
+          // Update status to uploading
+          updateFileStatus(fileItem.id, { status: 'uploading' });
 
-          setFiles((prev) => [item, ...prev]);
+          // Convert HEIC if needed
+          if (isHeicOrHeif) {
+            try {
+              processedFile = await convertHeicToJpeg(fileItem.file);
+              // Update with new file and thumbnail
+              const newThumbnail = generateThumbnail(processedFile);
+              updateFileStatus(fileItem.id, {
+                file: processedFile,
+                fileName: processedFile.name,
+                mimeType: processedFile.type,
+                size: processedFile.size,
+                thumbnailUrl: newThumbnail,
+              });
+            } catch (err) {
+              console.error('HEIC conversion failed:', err);
+              updateFileStatus(fileItem.id, {
+                status: 'failed',
+                error: 'HEIC conversion failed. Try uploading as JPG/PNG.',
+              });
+              return; // Exit this file's processing
+            }
+          } else if (processedFile.type.startsWith('image/') && processedFile.type !== 'application/pdf') {
+            // Compress images
+            try {
+              const compressed = await compressImage(processedFile);
+              processedFile = new File([compressed], processedFile.name, { type: 'image/jpeg' });
+              updateFileStatus(fileItem.id, {
+                file: processedFile,
+                size: processedFile.size,
+              });
+            } catch (err) {
+              console.warn('Image compression failed, using original:', err);
+            }
+          }
 
-          // Immediately queue extraction (non-blocking)
-          enqueueExtraction(id);
+          // Mark as uploaded (ready for extraction)
+          updateFileStatus(fileItem.id, { status: 'uploaded' });
+          
+          // Queue for extraction
+          queueExtraction(fileItem.id);
+          
         } catch (err) {
-          toast({
-            title: "File failed to add",
-            description: safeErrMessage(err),
-            variant: "destructive",
+          console.error('File processing failed:', err);
+          updateFileStatus(fileItem.id, {
+            status: 'failed',
+            error: err instanceof Error ? err.message : 'Processing failed',
           });
         }
+      })();
+    }
+  }, [
+    getFileId, 
+    generateThumbnail, 
+    convertHeicToJpeg, 
+    compressImage,
+    updateFileStatus, 
+    queueExtraction,
+    updateCombinedText,
+    toast
+  ]);
+
+  /**
+   * Remove a single file
+   */
+  const removeFile = useCallback((fileId: string) => {
+    setFiles(prev => {
+      const fileToRemove = prev.find(f => f.id === fileId);
+      if (fileToRemove?.thumbnailUrl) {
+        URL.revokeObjectURL(fileToRemove.thumbnailUrl);
       }
-    },
-    [enqueueExtraction, getFileId, toast],
-  );
+      const updated = prev.filter(f => f.id !== fileId);
+      updateCombinedText(updated);
+      return updated;
+    });
+  }, [updateCombinedText]);
 
-  const retryExtraction = useCallback(
-    (fileId: string) => {
-      const f = files.find((x) => x.id === fileId);
-      if (!f) return;
-      updateFile(fileId, { status: "uploaded", error: undefined });
-      enqueueExtraction(fileId);
-    },
-    [enqueueExtraction, files, updateFile],
-  );
+  /**
+   * Clear all files
+   */
+  const clearAllFiles = useCallback(() => {
+    setFiles(prev => {
+      prev.forEach(f => {
+        if (f.thumbnailUrl) {
+          URL.revokeObjectURL(f.thumbnailUrl);
+        }
+      });
+      return [];
+    });
+    setCombinedText('');
+    extractionQueue.current = [];
+  }, []);
 
-  // Watchdog: auto-fail files stuck in extracting too long (prevents infinite spinner)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      setFiles((prev) =>
-        prev.map((f) => {
-          if (f.status !== "extracting") return f;
-          const started = f.extractionStartedAt ?? f.createdAt;
-          if (now - started > extractionTimeoutMs + 2000) {
-            return {
-              ...f,
-              status: "failed",
-              error: f.error ?? "Extraction stuck — auto-failed. Please retry.",
-              extractionFinishedAt: now,
-            };
-          }
-          return f;
-        }),
-      );
-    }, 1000);
+  /**
+   * Set combined text manually (for user edits)
+   */
+  const setCombinedTextManual = useCallback((text: string) => {
+    setCombinedText(text);
+  }, []);
 
-    return () => clearInterval(interval);
-  }, [extractionTimeoutMs]);
-
-  // Derived stats (these are what your UI wants)
+  // Calculate statistics
   const totalFiles = files.length;
-  const completedFiles = useMemo(() => files.filter((f) => f.status === "ready").length, [files]);
-  const failedFiles = useMemo(() => files.filter((f) => f.status === "failed").length, [files]);
-
-  const isProcessing = useMemo(
-    () =>
-      files.some(
-        (f) =>
-          f.status === "queued" || f.status === "uploading" || f.status === "uploaded" || f.status === "extracting",
-      ),
-    [files],
+  const completedFiles = files.filter(f => f.status === 'ready').length;
+  const failedFiles = files.filter(f => f.status === 'failed').length;
+  const isExtracting = files.some(f => 
+    f.status === 'queued' || 
+    f.status === 'uploading' || 
+    f.status === 'uploaded' || 
+    f.status === 'extracting'
   );
-
-  const isExtracting = useMemo(() => files.some((f) => f.status === "extracting"), [files]);
-
-  const progress = useMemo(() => {
-    if (totalFiles === 0) return 0;
-    const done = completedFiles + failedFiles;
-    return Math.round((done / totalFiles) * 100);
-  }, [completedFiles, failedFiles, totalFiles]);
-
-  // Combined text from all ready files
-  const combinedText = useMemo(() => {
-    return files
-      .filter((f) => f.status === "ready" && f.extractedText)
-      .map((f) => f.extractedText!)
-      .join("\n\n--- PAGE BREAK ---\n\n");
-  }, [files]);
+  const hasReadyFiles = files.some(f => f.status === 'ready');
+  const progress = totalFiles > 0 ? (completedFiles / totalFiles) * 100 : 0;
 
   return {
-    // core
     files,
-    setFiles,
+    combinedText,
+    setCombinedText: setCombinedTextManual,
     addFiles,
     removeFile,
-    clearAll,
-
-    // derived
+    clearAllFiles,
+    retryExtraction,
+    // Stats
     totalFiles,
     completedFiles,
     failedFiles,
-    progress,
-    isProcessing,
     isExtracting,
-    combinedText,
-
-    // helpers
-    retryExtraction,
-
-    // optional parsing helpers (useful for auto-grouping)
-    parseNameId,
+    hasReadyFiles,
+    progress,
   };
 }
