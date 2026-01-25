@@ -1,13 +1,12 @@
 /**
- * StudentSubmissionList Component
+ * StudentSubmissionList Component (v2 - No Manual Assignment Required)
  * 
- * Displays ungrouped files and student submissions with auto-detection.
- * Supports:
- * - Automatic student name detection from extracted text
- * - Auto-grouping files by detected student name
- * - Creating students from ungrouped files (when no name detected)
- * - Simplified file display (file name, detected name badge, page count, status)
- * - "Show Extracted Text" toggle for verification
+ * Displays auto-grouped student submissions with:
+ * - Summary banner showing detected student count
+ * - Each group as a card with student name, page count, status
+ * - "Edit name" for overriding auto-detected names
+ * - "View extracted text" drawer (no PDF preview)
+ * - No manual "assign pages to students" requirement
  */
 
 import { useState } from 'react';
@@ -20,25 +19,19 @@ import {
   AlertCircle, 
   Clock, 
   Upload, 
-  Image,
   User,
   ChevronDown,
   ChevronRight,
   Edit2,
-  ArrowRight,
   Trash2,
-  GripVertical,
-  Undo2,
-  UserPlus,
-  AlertTriangle,
   Sparkles,
-  HelpCircle,
+  AlertTriangle,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Collapsible,
@@ -46,18 +39,17 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   Tooltip,
   TooltipContent,
@@ -65,24 +57,21 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { StudentSubmission, UploadedFileItem, FileStatus } from '@/hooks/useStudentSubmissions';
+import type { SubmissionGroup, PageRecord, FileStatus } from '@/hooks/useStudentSubmissions';
 
 interface StudentSubmissionListProps {
-  ungroupedFiles: UploadedFileItem[];
-  submissions: StudentSubmission[];
-  onCreateStudentWithFiles: (studentName: string, fileIds: string[]) => void;
-  onAssignFilesToStudent: (submissionId: string, fileIds: string[]) => void;
-  onUnassignFiles: (submissionId: string, fileIds: string[]) => void;
-  onRemoveUngroupedFile: (fileId: string) => void;
-  onRetryUngroupedFile: (fileId: string) => void;
-  onRename: (submissionId: string, newName: string) => void;
-  onMoveFile: (fromSubmissionId: string, toSubmissionId: string, fileId: string) => void;
-  onRemoveFile: (submissionId: string, fileId: string) => void;
-  onRetryFile: (submissionId: string, fileId: string) => void;
-  onDeleteSubmission: (submissionId: string) => void;
-  allFilesAssigned: boolean;
+  pendingPages: PageRecord[];
+  groups: SubmissionGroup[];
+  onRemovePendingPage: (pageId: string) => void;
+  onRetryPendingExtraction: (pageId: string) => void;
+  onRenameStudent: (groupId: string, newName: string) => void;
+  onRemovePage: (groupId: string, pageId: string) => void;
+  onDeleteGroup: (groupId: string) => void;
+  onRetryExtraction: (groupId: string, pageId: string) => void;
   isExtracting: boolean;
   progress: number;
+  needsReviewCount: number;
+  multipleStudentsWarning: string | null;
 }
 
 const statusConfig: Record<FileStatus, { 
@@ -145,100 +134,83 @@ function StatusBadge({ status }: { status: FileStatus }) {
   );
 }
 
-// Dialog to show extracted text
-function ExtractedTextDialog({ 
-  file, 
-  onClose 
-}: { 
-  file: UploadedFileItem | null;
-  onClose: () => void;
-}) {
-  if (!file) return null;
-  
-  return (
-    <Dialog open={!!file} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent 
-        className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
-        aria-describedby={undefined}
-      >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="w-4 h-4" />
-            Extracted Text: {file.fileName}
-            {file.detectedStudentName && (
-              <Badge className="bg-primary/20 text-primary text-xs ml-2">
-                <Sparkles className="w-3 h-3 mr-1" />
-                Detected: {file.detectedStudentName.name}
-              </Badge>
-            )}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex-1 overflow-auto p-4 bg-muted/20 rounded-lg">
-          {file.extractedText ? (
-            <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">
-              {file.extractedText}
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground italic">No text extracted</p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// Simplified file icon
-function FileIcon({ file }: { file: UploadedFileItem }) {
-  const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
-  
-  return (
-    <div className="w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0">
-      {isPdf ? (
-        <FileText className="w-4 h-4 text-destructive" />
-      ) : (
-        <Image className="w-4 h-4 text-muted-foreground" />
-      )}
-    </div>
-  );
-}
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-interface SubmissionCardProps {
-  submission: StudentSubmission;
-  allSubmissions: StudentSubmission[];
-  onRename: (newName: string) => void;
-  onMoveFile: (toSubmissionId: string, fileId: string) => void;
-  onUnassignFile: (fileId: string) => void;
-  onRemoveFile: (fileId: string) => void;
-  onRetryFile: (fileId: string) => void;
-  onDelete: () => void;
-  onShowExtractedText: (file: UploadedFileItem) => void;
+// Extracted Text Viewer (Sheet/Drawer)
+function ExtractedTextSheet({ 
+  page, 
+  studentName,
+  onClose 
+}: { 
+  page: PageRecord | null;
+  studentName?: string;
+  onClose: () => void;
+}) {
+  if (!page) return null;
+  
+  return (
+    <Sheet open={!!page} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent className="w-[500px] sm:max-w-[500px]">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <FileText className="w-4 h-4" />
+            {page.originalFileName}
+          </SheetTitle>
+          {studentName && (
+            <Badge className="w-fit bg-primary/20 text-primary text-xs">
+              <User className="w-3 h-3 mr-1" />
+              {studentName}
+            </Badge>
+          )}
+        </SheetHeader>
+        <div className="mt-4 flex-1 overflow-auto">
+          {page.extractedText ? (
+            <div className="p-4 bg-muted/20 rounded-lg">
+              <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">
+                {page.extractedText}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground italic p-4">
+              No text extracted yet
+            </p>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
-function SubmissionCard({
-  submission,
-  allSubmissions,
+// Group Card Component
+interface GroupCardProps {
+  group: SubmissionGroup;
+  onRename: (newName: string) => void;
+  onRemovePage: (pageId: string) => void;
+  onDelete: () => void;
+  onRetryPage: (pageId: string) => void;
+  onShowExtractedText: (page: PageRecord) => void;
+}
+
+function GroupCard({
+  group,
   onRename,
-  onMoveFile,
-  onUnassignFile,
-  onRemoveFile,
-  onRetryFile,
+  onRemovePage,
   onDelete,
+  onRetryPage,
   onShowExtractedText,
-}: SubmissionCardProps) {
+}: GroupCardProps) {
   const [isOpen, setIsOpen] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(submission.studentName);
+  const [editName, setEditName] = useState(group.studentName);
 
-  const readyCount = submission.files.filter(f => f.status === 'ready').length;
-  const failedCount = submission.files.filter(f => f.status === 'failed').length;
-  const isExtracting = submission.files.some(f => 
-    f.status === 'queued' || f.status === 'uploading' || f.status === 'uploaded' || f.status === 'extracting'
+  const readyCount = group.pages.filter(p => p.status === 'ready').length;
+  const failedCount = group.pages.filter(p => p.status === 'failed').length;
+  const isExtracting = group.pages.some(p => 
+    p.status === 'queued' || p.status === 'uploading' || p.status === 'uploaded' || p.status === 'extracting'
   );
 
   const handleSaveName = () => {
@@ -251,21 +223,26 @@ function SubmissionCard({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSaveName();
     if (e.key === 'Escape') {
-      setEditName(submission.studentName);
+      setEditName(group.studentName);
       setIsEditing(false);
     }
   };
 
-  const otherSubmissions = allSubmissions.filter(s => s.id !== submission.id);
-
   return (
     <div className={cn(
       "border rounded-lg overflow-hidden transition-colors",
-      failedCount > 0 ? "border-destructive/30" : "border-primary/30 bg-primary/5"
+      group.needsReview 
+        ? "border-orange-500/30 bg-orange-500/5" 
+        : failedCount > 0 
+          ? "border-destructive/30" 
+          : "border-primary/30 bg-primary/5"
     )}>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         {/* Header */}
-        <div className="flex items-center gap-2 p-3 bg-primary/10">
+        <div className={cn(
+          "flex items-center gap-2 p-3",
+          group.needsReview ? "bg-orange-500/10" : "bg-primary/10"
+        )}>
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
               {isOpen ? (
@@ -276,7 +253,10 @@ function SubmissionCard({
             </Button>
           </CollapsibleTrigger>
 
-          <User className="w-4 h-4 text-primary" />
+          <User className={cn(
+            "w-4 h-4",
+            group.needsReview ? "text-orange-500" : "text-primary"
+          )} />
 
           {isEditing ? (
             <Input
@@ -289,14 +269,33 @@ function SubmissionCard({
             />
           ) : (
             <span 
-              className="font-medium text-sm cursor-pointer hover:text-primary"
+              className={cn(
+                "font-medium text-sm cursor-pointer hover:text-primary",
+                group.needsReview && "text-orange-600"
+              )}
               onClick={() => setIsEditing(true)}
             >
-              {submission.studentName}
+              {group.studentName}
             </span>
           )}
 
-          {submission.autoDetected && (
+          {group.needsReview && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Badge className="bg-orange-500/20 text-orange-600 text-[10px] px-1.5 gap-0.5">
+                    <AlertTriangle className="w-2.5 h-2.5" />
+                    Review
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">Student name not detected — please verify or edit</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
+          {!group.needsReview && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger>
@@ -306,7 +305,7 @@ function SubmissionCard({
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="text-xs">Student name auto-detected from document</p>
+                  <p className="text-xs">Student name auto-detected</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -317,18 +316,25 @@ function SubmissionCard({
             size="sm"
             className="h-6 w-6 p-0 ml-1"
             onClick={() => setIsEditing(true)}
+            title="Edit name"
           >
             <Edit2 className="w-3 h-3 text-muted-foreground" />
           </Button>
 
           <div className="flex-1" />
 
+          {group.assignmentId !== 'default' && (
+            <Badge variant="outline" className="text-xs">
+              {group.assignmentId}
+            </Badge>
+          )}
+
           <Badge variant="outline" className="text-xs">
-            {submission.files.length} page{submission.files.length !== 1 ? 's' : ''}
+            {group.pages.length} page{group.pages.length !== 1 ? 's' : ''}
           </Badge>
 
           <span className="text-xs text-muted-foreground">
-            {readyCount}/{submission.files.length} ready
+            {readyCount}/{group.pages.length} ready
             {failedCount > 0 && (
               <span className="text-destructive ml-1">• {failedCount} failed</span>
             )}
@@ -343,145 +349,88 @@ function SubmissionCard({
             size="sm"
             className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
             onClick={onDelete}
-            title="Remove student (returns files to ungrouped)"
+            title="Remove student"
           >
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
 
         <CollapsibleContent>
-          {/* Simplified File List - No PDF preview */}
+          {/* Page List */}
           <div className="p-2 space-y-1">
-            {submission.files.map((file, idx) => {
-              const pageNumber = idx + 1;
-              
-              return (
-                <div
-                  key={file.id}
-                  className={cn(
-                    "flex items-center gap-2 p-2 rounded transition-colors group",
-                    file.status === 'failed' 
-                      ? "bg-destructive/5"
-                      : file.status === 'ready'
-                      ? "bg-background hover:bg-muted/30"
-                      : "bg-muted/10"
-                  )}
-                >
-                  <GripVertical className="w-3 h-3 text-muted-foreground/50" />
-                  
-                  {/* Page number badge */}
-                  <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5 bg-primary/10 text-primary">
-                    Page {pageNumber}
-                  </Badge>
-                  
-                  <FileIcon file={file} />
-                  
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm truncate">{file.fileName}</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-muted-foreground">
-                        {formatFileSize(file.size)}
-                      </p>
-                      {/* Detected student name badge */}
-                      {file.detectedStudentName && (
-                        <Badge className="text-[10px] px-1.5 py-0 h-4 bg-primary/20 text-primary">
-                          <Sparkles className="w-2 h-2 mr-0.5" />
-                          {file.detectedStudentName.name}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <StatusBadge status={file.status} />
-                  
-                  {/* Show Extracted Text button */}
-                  {file.status === 'ready' && file.extractedText && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onShowExtractedText(file)}
-                      className="h-7 text-xs text-muted-foreground hover:text-primary"
-                      title="Show extracted text"
-                    >
-                      <FileText className="w-3 h-3 mr-1" />
-                      Text
-                    </Button>
-                  )}
+            {group.pages.map((page, idx) => (
+              <div
+                key={page.id}
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded transition-colors",
+                  page.status === 'failed' 
+                    ? "bg-destructive/5"
+                    : page.status === 'ready'
+                    ? "bg-background hover:bg-muted/30"
+                    : "bg-muted/10"
+                )}
+              >
+                {/* Page number badge */}
+                <Badge variant="secondary" className="text-xs px-1.5 py-0 h-5 bg-primary/10 text-primary">
+                  Page {page.pageNumber ?? idx + 1}
+                </Badge>
                 
-                  <div className="flex items-center gap-1">
-                    {file.status === 'failed' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onRetryFile(file.id)}
-                        className="h-7 w-7 p-0 text-primary"
-                        title="Retry"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                      </Button>
-                    )}
-
-                    {/* Move to another student */}
-                    {otherSubmissions.length > 0 && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-muted-foreground"
-                            title="Move to another student"
-                          >
-                            <ArrowRight className="w-3 h-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-popover">
-                          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                            Move to:
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          {otherSubmissions.map(sub => (
-                            <DropdownMenuItem
-                              key={sub.id}
-                              onClick={() => onMoveFile(sub.id, file.id)}
-                            >
-                              <User className="w-3 h-3 mr-2" />
-                              {sub.studentName}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-
-                    {/* Unassign back to ungrouped */}
+                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate">{page.originalFileName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(page.size)}
+                  </p>
+                </div>
+                
+                <StatusBadge status={page.status} />
+                
+                {/* Show Extracted Text button */}
+                {page.status === 'ready' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onShowExtractedText(page)}
+                    className="h-7 text-xs text-muted-foreground hover:text-primary"
+                    title="View extracted text"
+                  >
+                    <FileText className="w-3 h-3 mr-1" />
+                    Text
+                  </Button>
+                )}
+              
+                <div className="flex items-center gap-1">
+                  {page.status === 'failed' && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => onUnassignFile(file.id)}
-                      className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-500"
-                      title="Unassign (move back to ungrouped)"
+                      onClick={() => onRetryPage(page.id)}
+                      className="h-7 w-7 p-0 text-primary"
+                      title="Retry"
                     >
-                      <Undo2 className="w-3 h-3" />
+                      <RefreshCw className="w-3 h-3" />
                     </Button>
-                    
-                    {file.status !== 'extracting' && file.status !== 'uploading' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onRemoveFile(file.id)}
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                        title="Remove permanently"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    )}
-                  </div>
+                  )}
+                  
+                  {page.status !== 'extracting' && page.status !== 'uploading' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onRemovePage(page.id)}
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      title="Remove page"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            ))}
 
-            {submission.files.length === 0 && (
+            {group.pages.length === 0 && (
               <div className="text-center py-4 text-sm text-muted-foreground">
-                No files assigned to this student.
+                No pages in this submission.
               </div>
             )}
           </div>
@@ -492,76 +441,60 @@ function SubmissionCard({
 }
 
 export function StudentSubmissionList({
-  ungroupedFiles,
-  submissions,
-  onCreateStudentWithFiles,
-  onAssignFilesToStudent,
-  onUnassignFiles,
-  onRemoveUngroupedFile,
-  onRetryUngroupedFile,
-  onRename,
-  onMoveFile,
-  onRemoveFile,
-  onRetryFile,
-  onDeleteSubmission,
-  allFilesAssigned,
+  pendingPages,
+  groups,
+  onRemovePendingPage,
+  onRetryPendingExtraction,
+  onRenameStudent,
+  onRemovePage,
+  onDeleteGroup,
+  onRetryExtraction,
   isExtracting,
   progress,
+  needsReviewCount,
+  multipleStudentsWarning,
 }: StudentSubmissionListProps) {
-  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
-  const [newStudentName, setNewStudentName] = useState('');
-  const [showAddStudent, setShowAddStudent] = useState(false);
-  const [textPreviewFile, setTextPreviewFile] = useState<UploadedFileItem | null>(null);
+  const [textViewPage, setTextViewPage] = useState<PageRecord | null>(null);
+  const [textViewStudentName, setTextViewStudentName] = useState<string>('');
 
-  const toggleFileSelection = (fileId: string) => {
-    setSelectedFileIds(prev => 
-      prev.includes(fileId) 
-        ? prev.filter(id => id !== fileId)
-        : [...prev, fileId]
-    );
+  const hasPending = pendingPages.length > 0;
+  const hasGroups = groups.length > 0;
+
+  if (!hasPending && !hasGroups) return null;
+
+  const handleShowExtractedText = (page: PageRecord, studentName?: string) => {
+    setTextViewPage(page);
+    setTextViewStudentName(studentName || '');
   };
-
-  const selectAllUngrouped = () => {
-    const readyIds = ungroupedFiles.filter(f => f.status === 'ready').map(f => f.id);
-    setSelectedFileIds(readyIds);
-  };
-
-  const clearSelection = () => {
-    setSelectedFileIds([]);
-  };
-
-  const handleCreateStudent = () => {
-    if (selectedFileIds.length === 0) return;
-    onCreateStudentWithFiles(newStudentName || `Student ${submissions.length + 1}`, selectedFileIds);
-    setSelectedFileIds([]);
-    setNewStudentName('');
-    setShowAddStudent(false);
-  };
-
-  const handleAssignToExisting = (submissionId: string) => {
-    if (selectedFileIds.length === 0) return;
-    onAssignFilesToStudent(submissionId, selectedFileIds);
-    setSelectedFileIds([]);
-  };
-
-  const hasUngroupedFiles = ungroupedFiles.length > 0;
-  const hasSubmissions = submissions.length > 0;
-  const readyUngroupedCount = ungroupedFiles.filter(f => f.status === 'ready').length;
-
-  if (!hasUngroupedFiles && !hasSubmissions) return null;
   
   return (
-    <div className="space-y-6">
-      {/* Auto-detection helper text */}
-      <Alert className="border-primary/30 bg-primary/5">
-        <Sparkles className="h-4 w-4 text-primary" />
-        <AlertDescription className="text-sm">
-          <strong>Bottor automatically detects student names</strong> and grades each student separately.
-          Files with the same detected name are grouped together.
-        </AlertDescription>
-      </Alert>
+    <div className="space-y-4">
+      {/* Summary Banner */}
+      {hasGroups && (
+        <Alert className="border-primary/30 bg-primary/5">
+          <Users className="h-4 w-4 text-primary" />
+          <AlertDescription className="text-sm">
+            <strong>{groups.length} student{groups.length !== 1 ? 's' : ''} detected</strong> • Grading separately
+            {needsReviewCount > 0 && (
+              <span className="text-orange-600 ml-2">
+                ({needsReviewCount} need{needsReviewCount !== 1 ? '' : 's'} review)
+              </span>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
-      {/* Global Progress Bar */}
+      {/* Multiple Students Warning */}
+      {multipleStudentsWarning && (
+        <Alert className="border-destructive/50 bg-destructive/5">
+          <AlertTriangle className="h-4 w-4 text-destructive" />
+          <AlertDescription className="text-sm text-destructive">
+            <strong>Warning:</strong> {multipleStudentsWarning}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Progress Bar */}
       {isExtracting && (
         <div className="space-y-1">
           <Progress value={progress} className="h-2" />
@@ -571,244 +504,74 @@ export function StudentSubmissionList({
         </div>
       )}
 
-      {/* UNGROUPED FILES SECTION - Files without detected student names */}
-      {hasUngroupedFiles && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-orange-500" />
-              <span className="text-sm font-medium text-orange-600">
-                Ungrouped Pages ({ungroupedFiles.length})
-              </span>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p className="text-xs">
-                      These files don't have a detected student name. 
-                      Rename the file or add a student name to the document.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            {readyUngroupedCount > 0 && (
-              <div className="flex gap-2">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={selectAllUngrouped}
-                  className="text-xs"
-                >
-                  Select all ready
-                </Button>
-                {selectedFileIds.length > 0 && (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={clearSelection}
-                    className="text-xs"
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
-            )}
+      {/* Pending Pages (still being processed) */}
+      {hasPending && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            <span className="text-sm font-medium text-muted-foreground">
+              Processing ({pendingPages.length} file{pendingPages.length !== 1 ? 's' : ''})
+            </span>
           </div>
-
-          <Alert className="border-orange-500/30 bg-orange-500/5">
-            <AlertTriangle className="h-4 w-4 text-orange-500" />
-            <AlertDescription className="text-sm text-orange-700">
-              <strong>Student name not detected.</strong> Please rename the file or add a student name to the document.
-              <br />
-              <span className="text-xs">Select pages below to manually assign them to a student.</span>
-            </AlertDescription>
-          </Alert>
-
-          {/* Simplified Ungrouped File Grid */}
-          <div className="border-2 border-dashed border-orange-500/30 rounded-lg p-3 bg-orange-500/5">
-            <div className="space-y-1">
-              {ungroupedFiles.map((file) => {
-                const isSelected = selectedFileIds.includes(file.id);
-                const isReady = file.status === 'ready';
+          
+          <div className="border border-dashed border-muted-foreground/30 rounded-lg p-2 space-y-1">
+            {pendingPages.map((page) => (
+              <div
+                key={page.id}
+                className="flex items-center gap-2 p-2 rounded bg-muted/10"
+              >
+                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                 
-                return (
-                  <div
-                    key={file.id}
-                    className={cn(
-                      "flex items-center gap-2 p-2 rounded border transition-all cursor-pointer",
-                      isSelected 
-                        ? "border-primary bg-primary/10" 
-                        : "border-border bg-background hover:border-primary/50",
-                      !isReady && "opacity-60"
-                    )}
-                    onClick={() => isReady && toggleFileSelection(file.id)}
-                  >
-                    {isReady && (
-                      <Checkbox 
-                        checked={isSelected}
-                        onCheckedChange={() => toggleFileSelection(file.id)}
-                        className="data-[state=checked]:bg-primary"
-                      />
-                    )}
-                    
-                    <FileIcon file={file} />
-                    
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate">{file.fileName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatFileSize(file.size)}
-                      </p>
-                    </div>
-                    
-                    {/* Status: Ungrouped badge for ready files */}
-                    {isReady ? (
-                      <Badge variant="outline" className="text-xs border-orange-500 text-orange-600">
-                        Ungrouped
-                      </Badge>
-                    ) : (
-                      <StatusBadge status={file.status} />
-                    )}
-                    
-                    {/* Show Extracted Text button */}
-                    {file.status === 'ready' && file.extractedText && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTextPreviewFile(file);
-                        }}
-                        className="h-7 text-xs text-muted-foreground hover:text-primary"
-                        title="Show extracted text"
-                      >
-                        <FileText className="w-3 h-3 mr-1" />
-                        Text
-                      </Button>
-                    )}
-                    
-                    <div className="flex items-center gap-1">
-                      {file.status === 'failed' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRetryUngroupedFile(file.id);
-                          }}
-                          className="h-7 w-7 p-0 text-primary"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                        </Button>
-                      )}
-                      
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveUngroupedFile(file.id);
-                        }}
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Assignment Actions */}
-          {selectedFileIds.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20">
-              <Badge className="bg-primary text-primary-foreground">
-                {selectedFileIds.length} page{selectedFileIds.length !== 1 ? 's' : ''} selected
-              </Badge>
-              
-              <div className="flex-1" />
-              
-              {/* Assign to existing student */}
-              {submissions.length > 0 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <ArrowRight className="w-4 h-4 mr-1" />
-                      Assign to existing
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate">{page.originalFileName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(page.size)}
+                  </p>
+                </div>
+                
+                <StatusBadge status={page.status} />
+                
+                <div className="flex items-center gap-1">
+                  {page.status === 'failed' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onRetryPendingExtraction(page.id)}
+                      className="h-7 w-7 p-0 text-primary"
+                      title="Retry"
+                    >
+                      <RefreshCw className="w-3 h-3" />
                     </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="bg-popover">
-                    {submissions.map(sub => (
-                      <DropdownMenuItem
-                        key={sub.id}
-                        onClick={() => handleAssignToExisting(sub.id)}
-                      >
-                        <User className="w-3 h-3 mr-2" />
-                        {sub.studentName} ({sub.files.length} pages)
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-
-              {/* Create new student */}
-              {showAddStudent ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder="Student name..."
-                    value={newStudentName}
-                    onChange={(e) => setNewStudentName(e.target.value)}
-                    className="h-8 w-40"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleCreateStudent();
-                      if (e.key === 'Escape') setShowAddStudent(false);
-                    }}
-                  />
-                  <Button size="sm" onClick={handleCreateStudent}>
-                    <Check className="w-4 h-4" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => setShowAddStudent(false)}
+                  )}
+                  
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onRemovePendingPage(page.id)}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                    title="Remove"
                   >
-                    <X className="w-4 h-4" />
+                    <X className="w-3 h-3" />
                   </Button>
                 </div>
-              ) : (
-                <Button size="sm" onClick={() => setShowAddStudent(true)}>
-                  <UserPlus className="w-4 h-4 mr-1" />
-                  Create new student
-                </Button>
-              )}
-            </div>
-          )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* ASSIGNED STUDENTS SECTION */}
-      {hasSubmissions && (
+      {/* Grouped Students */}
+      {hasGroups && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium text-foreground">
-                Assigned Students ({submissions.length})
-              </span>
-              {allFilesAssigned && (
-                <Badge className="bg-primary/20 text-primary text-xs">
-                  ✓ All pages assigned
-                </Badge>
-              )}
-            </div>
+          <div className="flex items-center gap-2">
+            <Check className="w-4 h-4 text-primary" />
+            <span className="text-sm font-medium text-foreground">
+              Student Submissions ({groups.length})
+            </span>
           </div>
 
-          {/* Grade report confirmation message */}
-          {allFilesAssigned && submissions.length > 0 && (
+          {/* Grade report confirmation */}
+          {!isExtracting && groups.length > 0 && (
             <Alert className="border-primary/30 bg-primary/5">
               <Check className="h-4 w-4 text-primary" />
               <AlertDescription className="text-sm text-primary">
@@ -818,34 +581,26 @@ export function StudentSubmissionList({
           )}
 
           <div className="space-y-3">
-            {submissions.map(submission => (
-              <SubmissionCard
-                key={submission.id}
-                submission={submission}
-                allSubmissions={submissions}
-                onRename={(newName) => onRename(submission.id, newName)}
-                onMoveFile={(toId, fileId) => onMoveFile(submission.id, toId, fileId)}
-                onUnassignFile={(fileId) => onUnassignFiles(submission.id, [fileId])}
-                onRemoveFile={(fileId) => onRemoveFile(submission.id, fileId)}
-                onRetryFile={(fileId) => onRetryFile(submission.id, fileId)}
-                onDelete={() => onDeleteSubmission(submission.id)}
-                onShowExtractedText={(file) => setTextPreviewFile(file)}
+            {groups.map(group => (
+              <GroupCard
+                key={group.groupId}
+                group={group}
+                onRename={(newName) => onRenameStudent(group.groupId, newName)}
+                onRemovePage={(pageId) => onRemovePage(group.groupId, pageId)}
+                onDelete={() => onDeleteGroup(group.groupId)}
+                onRetryPage={(pageId) => onRetryExtraction(group.groupId, pageId)}
+                onShowExtractedText={(page) => handleShowExtractedText(page, group.studentName)}
               />
             ))}
           </div>
         </div>
       )}
 
-      {/* Helper text */}
-      <p className="text-xs text-muted-foreground">
-        💡 Bottor automatically detects student names and grades each student separately. 
-        Use "Show Text" to verify extracted content.
-      </p>
-
-      {/* Extracted Text Dialog */}
-      <ExtractedTextDialog 
-        file={textPreviewFile} 
-        onClose={() => setTextPreviewFile(null)} 
+      {/* Extracted Text Viewer */}
+      <ExtractedTextSheet 
+        page={textViewPage} 
+        studentName={textViewStudentName}
+        onClose={() => setTextViewPage(null)} 
       />
     </div>
   );

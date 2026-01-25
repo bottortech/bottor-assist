@@ -1,90 +1,55 @@
 /**
- * Student Submissions Hook
+ * Student Submissions Hook (v2 - Automatic Grouping)
  * 
- * Manages student work uploads with AUTOMATIC student name detection.
- * Detects student names from extracted text and auto-groups files by detected name.
- * Files without detected names go to "Ungrouped" pool for manual assignment.
- * Each submission can contain multiple files (multi-page PDF or multiple images).
- * Files within a submission are graded together; different submissions are graded separately.
+ * Manages student work uploads with AUTOMATIC student grouping.
+ * No manual "assign pages to students" step required by default.
+ * 
+ * Auto-grouping rules:
+ * 1. Parse assignmentId from filename (first token before _ or -)
+ * 2. Detect student name from filename OR extracted text
+ * 3. Group by groupKey = assignmentId + "::" + normalizedStudentName
+ * 4. Combine multi-page submissions with PAGE BREAK separators
+ * 5. Grade each SubmissionGroup independently
+ * 
+ * Files with no detected student name are marked as "Unknown Student" with needs_review = true
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import heic2any from 'heic2any';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { detectStudentName, normalizeStudentName, type DetectedStudentName } from '@/lib/student-name-detector';
+import { 
+  parseFileInfo, 
+  normalizeStudentName, 
+  detectMultipleStudentsInText,
+  type ParsedFileInfo,
+} from '@/lib/student-name-detector';
 
 export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'ready' | 'failed';
 
-export interface UploadedFileItem {
+export interface PageRecord {
   id: string;
   file: File;
-  originalFile?: File;
-  fileName: string;
+  originalFileName: string;
   mimeType: string;
   size: number;
   status: FileStatus;
-  thumbnailUrl?: string;
-  dataUrl?: string; // Full base64 data URL for PDF preview
   extractedText: string;
+  uploadedAt: Date;
   error?: string;
-  createdAt: Date;
-  // Auto-detected student name from extracted text
-  detectedStudentName?: DetectedStudentName | null;
+  // Parsed info from filename/text
+  parsedInfo?: ParsedFileInfo;
+  pageNumber?: number; // For ordering
 }
 
-export interface StudentSubmission {
-  id: string;
+export interface SubmissionGroup {
+  groupId: string;
+  assignmentId: string;
   studentName: string;
-  assignmentName?: string; // Auto-filled from filename convention
-  files: UploadedFileItem[];
+  pages: PageRecord[];
   combinedText: string;
+  needsReview: boolean; // True if studentName is "Unknown Student"
   createdAt: Date;
-  // Whether this submission was auto-created from detected student name
-  autoDetected?: boolean;
-}
-
-/**
- * Parse filename using convention: Assignment__StudentName__p1.pdf
- * Returns null if the filename doesn't match the convention
- */
-export interface ParsedFilename {
-  assignmentName: string;
-  studentName: string;
-  pageNumber: number;
-  groupKey: string; // Assignment__StudentName for grouping
-}
-
-export function parseFilenameConvention(filename: string): ParsedFilename | null {
-  // Remove extension
-  const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
-  
-  // Expected format: Assignment__StudentName__p1
-  // Split by double underscore
-  const parts = nameWithoutExt.split('__');
-  
-  if (parts.length < 3) return null;
-  
-  const assignmentName = parts[0].trim();
-  const studentName = parts[1].trim();
-  const pageToken = parts[2].trim().toLowerCase();
-  
-  // Parse page number (p1, p2, page1, page2, etc.)
-  const pageMatch = pageToken.match(/^p(?:age)?(\d+)$/);
-  if (!pageMatch) return null;
-  
-  const pageNumber = parseInt(pageMatch[1], 10);
-  if (isNaN(pageNumber) || pageNumber < 1) return null;
-  
-  // Validate we have actual names
-  if (!assignmentName || !studentName) return null;
-  
-  return {
-    assignmentName,
-    studentName,
-    pageNumber,
-    groupKey: `${assignmentName}__${studentName}`,
-  };
 }
 
 interface UseStudentSubmissionsOptions {
@@ -99,42 +64,27 @@ const DEFAULT_OPTIONS: Required<UseStudentSubmissionsOptions> = {
   jpegQuality: 0.75,
 };
 
+const PAGE_BREAK_SEPARATOR = '\n\n--- PAGE BREAK ---\n\n';
+
 export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}) {
   const { maxConcurrentExtractions, maxDimension, jpegQuality } = { ...DEFAULT_OPTIONS, ...options };
   const { toast } = useToast();
   
-  // Ungrouped files pool - files that haven't been assigned to any student
-  const [ungroupedFiles, setUngroupedFiles] = useState<UploadedFileItem[]>([]);
+  // Pending pages (extraction in progress, not yet grouped)
+  const [pendingPages, setPendingPages] = useState<PageRecord[]>([]);
   
-  // Student submissions - files grouped by student
-  const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
+  // Grouped submissions
+  const [groups, setGroups] = useState<SubmissionGroup[]>([]);
   
   // Track active extractions for concurrency control
   const activeExtractions = useRef(0);
-  const extractionQueue = useRef<{ fileId: string; isUngrouped: boolean; submissionId?: string }[]>([]);
+  const extractionQueue = useRef<string[]>([]);
 
   /**
    * Generate unique ID
    */
   const generateId = useCallback((): string => {
     return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }, []);
-
-  /**
-   * Generate unique ID for file
-   */
-  const getFileId = useCallback((file: File): string => {
-    return `${file.name}_${file.lastModified}_${Math.random().toString(36).substr(2, 9)}`;
-  }, []);
-
-  /**
-   * Generate thumbnail URL for image files
-   */
-  const generateThumbnail = useCallback((file: File): string | undefined => {
-    if (file.type.startsWith('image/')) {
-      return URL.createObjectURL(file);
-    }
-    return undefined;
   }, []);
 
   /**
@@ -199,94 +149,6 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, [compressImage, jpegQuality]);
 
   /**
-   * Update combined text for a submission from its files
-   * Files are sorted by their parsed page number if available
-   */
-  const updateSubmissionCombinedText = useCallback((submissionId: string) => {
-    setSubmissions(prev => prev.map(sub => {
-      if (sub.id !== submissionId) return sub;
-      
-      // Sort files by page number from filename convention
-      const sortedFiles = [...sub.files].sort((a, b) => {
-        const parsedA = parseFilenameConvention(a.fileName);
-        const parsedB = parseFilenameConvention(b.fileName);
-        
-        if (parsedA && parsedB) {
-          return parsedA.pageNumber - parsedB.pageNumber;
-        }
-        // Files with convention come before those without
-        if (parsedA && !parsedB) return -1;
-        if (!parsedA && parsedB) return 1;
-        // Fall back to createdAt order
-        return a.createdAt.getTime() - b.createdAt.getTime();
-      });
-      
-      const parts = sortedFiles.map((uf, idx) => {
-        const parsed = parseFilenameConvention(uf.fileName);
-        const pageLabel = parsed ? `Page ${parsed.pageNumber}` : `Page ${idx + 1}`;
-        const header = `--- ${pageLabel}: ${uf.fileName} ---`;
-        let body: string;
-        
-        switch (uf.status) {
-          case 'queued':
-          case 'uploading':
-          case 'uploaded':
-            body = '[Waiting for extraction...]';
-            break;
-          case 'extracting':
-            body = '[Extracting text...]';
-            break;
-          case 'ready':
-            body = uf.extractedText || '[No text extracted]';
-            break;
-          case 'failed':
-            body = `[Extraction failed${uf.error ? `: ${uf.error}` : ''} — paste text manually or retry]`;
-            break;
-          default:
-            body = '[Unknown status]';
-        }
-        
-        return `${header}\n${body}`;
-      });
-      
-      // Also update the files array to reflect sorted order
-      return { ...sub, files: sortedFiles, combinedText: parts.join('\n\n') };
-    }));
-  }, []);
-
-  /**
-   * Update ungrouped file status
-   */
-  const updateUngroupedFileStatus = useCallback((
-    fileId: string, 
-    updates: Partial<UploadedFileItem>
-  ) => {
-    setUngroupedFiles(prev => prev.map(f => 
-      f.id === fileId ? { ...f, ...updates } : f
-    ));
-  }, []);
-
-  /**
-   * Update file status within a submission
-   */
-  const updateFileStatus = useCallback((
-    submissionId: string,
-    fileId: string, 
-    updates: Partial<UploadedFileItem>
-  ) => {
-    setSubmissions(prev => prev.map(sub => {
-      if (sub.id !== submissionId) return sub;
-      return {
-        ...sub,
-        files: sub.files.map(f => 
-          f.id === fileId ? { ...f, ...updates } : f
-        )
-      };
-    }));
-    updateSubmissionCombinedText(submissionId);
-  }, [updateSubmissionCombinedText]);
-
-  /**
    * Convert file to base64
    */
   const fileToBase64 = useCallback((file: File): Promise<string> => {
@@ -319,59 +181,128 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, [fileToBase64]);
 
   /**
-   * Auto-group a file by detected student name
-   * Creates a new submission or adds to existing one with matching name
+   * Update combined text for a group based on its pages
+   * Pages are sorted by page number (if available) then upload order
    */
-  const autoGroupFileByDetectedName = useCallback((fileId: string, detectedName: string) => {
-    setUngroupedFiles(prev => {
-      const fileToGroup = prev.find(f => f.id === fileId);
-      if (!fileToGroup) return prev;
-
-      // Check if there's an existing submission with this student name
-      const normalizedDetected = normalizeStudentName(detectedName);
+  const updateGroupCombinedText = useCallback((groupId: string) => {
+    setGroups(prev => prev.map(group => {
+      if (group.groupId !== groupId) return group;
       
-      setSubmissions(prevSubs => {
-        const existingSubmission = prevSubs.find(
-          sub => normalizeStudentName(sub.studentName) === normalizedDetected
-        );
-
-        if (existingSubmission) {
-          // Add to existing submission
-          return prevSubs.map(sub => {
-            if (sub.id !== existingSubmission.id) return sub;
-            return { ...sub, files: [...sub.files, fileToGroup] };
-          });
-        } else {
-          // Create new submission
-          const newSubmission: StudentSubmission = {
-            id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            studentName: detectedName,
-            files: [fileToGroup],
-            combinedText: '',
-            createdAt: new Date(),
-            autoDetected: true,
-          };
-          return [...prevSubs, newSubmission];
-        }
+      // Sort pages by page number, then by upload time
+      const sortedPages = [...group.pages].sort((a, b) => {
+        const pageA = a.pageNumber ?? a.parsedInfo?.pageNumber ?? 999;
+        const pageB = b.pageNumber ?? b.parsedInfo?.pageNumber ?? 999;
+        
+        if (pageA !== pageB) return pageA - pageB;
+        return a.uploadedAt.getTime() - b.uploadedAt.getTime();
       });
+      
+      // Combine text with page break separators
+      const combinedParts = sortedPages.map(page => {
+        if (page.status === 'ready' && page.extractedText) {
+          return page.extractedText;
+        } else if (page.status === 'extracting') {
+          return '[Extracting text...]';
+        } else if (page.status === 'failed') {
+          return `[Extraction failed${page.error ? `: ${page.error}` : ''}]`;
+        }
+        return '[Waiting for extraction...]';
+      });
+      
+      return {
+        ...group,
+        pages: sortedPages,
+        combinedText: combinedParts.join(PAGE_BREAK_SEPARATOR),
+      };
+    }));
+  }, []);
 
-      // Remove from ungrouped
-      return prev.filter(f => f.id !== fileId);
+  /**
+   * Add a page to the appropriate group based on its groupKey
+   */
+  const addPageToGroup = useCallback((page: PageRecord) => {
+    if (!page.parsedInfo) return;
+    
+    const { groupKey, assignmentId, studentName, needsReview } = page.parsedInfo;
+    
+    setGroups(prev => {
+      const existingGroup = prev.find(g => 
+        `${g.assignmentId}::${normalizeStudentName(g.studentName)}` === groupKey
+      );
+      
+      if (existingGroup) {
+        // Add to existing group
+        return prev.map(g => {
+          if (g.groupId !== existingGroup.groupId) return g;
+          return {
+            ...g,
+            pages: [...g.pages, page],
+            needsReview: g.needsReview || needsReview,
+          };
+        });
+      } else {
+        // Create new group
+        const newGroup: SubmissionGroup = {
+          groupId: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          assignmentId,
+          studentName,
+          pages: [page],
+          combinedText: '',
+          needsReview,
+          createdAt: new Date(),
+        };
+        return [...prev, newGroup];
+      }
     });
 
-    // Update combined text for the submission after a tick
+    // Remove from pending
+    setPendingPages(prev => prev.filter(p => p.id !== page.id));
+
+    // Update combined text after state update
     setTimeout(() => {
-      setSubmissions(currentSubs => {
-        const sub = currentSubs.find(
-          s => normalizeStudentName(s.studentName) === normalizeStudentName(detectedName)
+      setGroups(currentGroups => {
+        const group = currentGroups.find(g => 
+          `${g.assignmentId}::${normalizeStudentName(g.studentName)}` === groupKey
         );
-        if (sub) {
-          updateSubmissionCombinedText(sub.id);
+        if (group) {
+          updateGroupCombinedText(group.groupId);
         }
-        return currentSubs;
+        return currentGroups;
       });
     }, 50);
-  }, [updateSubmissionCombinedText]);
+  }, [updateGroupCombinedText]);
+
+  /**
+   * Update pending page status
+   */
+  const updatePendingPageStatus = useCallback((
+    pageId: string, 
+    updates: Partial<PageRecord>
+  ) => {
+    setPendingPages(prev => prev.map(p => 
+      p.id === pageId ? { ...p, ...updates } : p
+    ));
+  }, []);
+
+  /**
+   * Update page status within a group
+   */
+  const updateGroupPageStatus = useCallback((
+    groupId: string,
+    pageId: string, 
+    updates: Partial<PageRecord>
+  ) => {
+    setGroups(prev => prev.map(group => {
+      if (group.groupId !== groupId) return group;
+      return {
+        ...group,
+        pages: group.pages.map(p => 
+          p.id === pageId ? { ...p, ...updates } : p
+        )
+      };
+    }));
+    updateGroupCombinedText(groupId);
+  }, [updateGroupCombinedText]);
 
   /**
    * Process extraction queue with concurrency limiting
@@ -381,164 +312,148 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       extractionQueue.current.length > 0 && 
       activeExtractions.current < maxConcurrentExtractions
     ) {
-      const item = extractionQueue.current.shift();
-      if (!item) continue;
+      const pageId = extractionQueue.current.shift();
+      if (!pageId) continue;
       
-      const { fileId, isUngrouped, submissionId } = item;
       activeExtractions.current++;
       
-      // Get file from appropriate state
-      if (isUngrouped) {
-        setUngroupedFiles(prev => {
-          const fileItem = prev.find(f => f.id === fileId);
-          
-          if (!fileItem || fileItem.status !== 'uploaded') {
-            activeExtractions.current--;
-            return prev;
-          }
-          
-          // Start extraction in background
-          (async () => {
-            updateUngroupedFileStatus(fileId, { status: 'extracting' });
-            
-            try {
-              const text = await extractTextFromFile(fileItem.file);
-              // Detect student name from extracted text
-              const detectedName = detectStudentName(text);
-              
-              updateUngroupedFileStatus(fileId, { 
-                status: 'ready', 
-                extractedText: text,
-                detectedStudentName: detectedName,
-                error: undefined 
-              });
-              
-              // Auto-group if name detected
-              if (detectedName) {
-                autoGroupFileByDetectedName(fileId, detectedName.name);
-              }
-            } catch (err) {
-              console.error('Extraction failed for', fileItem.fileName, err);
-              updateUngroupedFileStatus(fileId, { 
-                status: 'failed',
-                error: err instanceof Error ? err.message : 'Unknown error'
-              });
-            } finally {
-              activeExtractions.current--;
-              processExtractionQueue();
-            }
-          })();
-          
+      // Find the page in pending
+      setPendingPages(prev => {
+        const page = prev.find(p => p.id === pageId);
+        
+        if (!page || page.status !== 'uploaded') {
+          activeExtractions.current--;
           return prev;
-        });
-      } else if (submissionId) {
-        setSubmissions(prev => {
-          const submission = prev.find(s => s.id === submissionId);
-          const fileItem = submission?.files.find(f => f.id === fileId);
+        }
+        
+        // Start extraction in background
+        (async () => {
+          updatePendingPageStatus(pageId, { status: 'extracting' });
           
-          if (!fileItem || fileItem.status !== 'uploaded') {
-            activeExtractions.current--;
-            return prev;
-          }
-          
-          // Start extraction in background
-          (async () => {
-            updateFileStatus(submissionId, fileId, { status: 'extracting' });
+          try {
+            const text = await extractTextFromFile(page.file);
             
-            try {
-              const text = await extractTextFromFile(fileItem.file);
-              // Detect student name from extracted text
-              const detectedName = detectStudentName(text);
-              
-              updateFileStatus(submissionId, fileId, { 
-                status: 'ready', 
-                extractedText: text,
-                detectedStudentName: detectedName,
-                error: undefined 
+            // Parse file info with extracted text
+            const parsedInfo = parseFileInfo(page.originalFileName, text);
+            
+            const updatedPage: PageRecord = {
+              ...page,
+              status: 'ready',
+              extractedText: text,
+              parsedInfo,
+              pageNumber: parsedInfo.pageNumber ?? undefined,
+              error: undefined,
+            };
+            
+            // Update the page first
+            updatePendingPageStatus(pageId, {
+              status: 'ready',
+              extractedText: text,
+              parsedInfo,
+              pageNumber: parsedInfo.pageNumber ?? undefined,
+              error: undefined,
+            });
+            
+            // Then move to appropriate group
+            setTimeout(() => {
+              setPendingPages(current => {
+                const pageToMove = current.find(p => p.id === pageId);
+                if (pageToMove) {
+                  addPageToGroup({
+                    ...pageToMove,
+                    status: 'ready',
+                    extractedText: text,
+                    parsedInfo,
+                    pageNumber: parsedInfo.pageNumber ?? undefined,
+                  });
+                }
+                return current;
               });
-            } catch (err) {
-              console.error('Extraction failed for', fileItem.fileName, err);
-              updateFileStatus(submissionId, fileId, { 
-                status: 'failed',
-                error: err instanceof Error ? err.message : 'Unknown error'
-              });
-            } finally {
-              activeExtractions.current--;
-              processExtractionQueue();
-            }
-          })();
-          
-          return prev;
-        });
-      }
+            }, 100);
+            
+          } catch (err) {
+            console.error('Extraction failed for', page.originalFileName, err);
+            updatePendingPageStatus(pageId, { 
+              status: 'failed',
+              error: err instanceof Error ? err.message : 'Unknown error'
+            });
+          } finally {
+            activeExtractions.current--;
+            processExtractionQueue();
+          }
+        })();
+        
+        return prev;
+      });
     }
-  }, [maxConcurrentExtractions, extractTextFromFile, updateUngroupedFileStatus, updateFileStatus]);
+  }, [maxConcurrentExtractions, extractTextFromFile, updatePendingPageStatus, addPageToGroup]);
 
   /**
-   * Queue file for extraction
+   * Queue page for extraction
    */
-  const queueExtraction = useCallback((fileId: string, isUngrouped: boolean, submissionId?: string) => {
-    extractionQueue.current.push({ fileId, isUngrouped, submissionId });
+  const queueExtraction = useCallback((pageId: string) => {
+    extractionQueue.current.push(pageId);
     processExtractionQueue();
   }, [processExtractionQueue]);
 
   /**
-   * Retry extraction for a failed ungrouped file
+   * Retry extraction for a failed page
    */
-  const retryUngroupedExtraction = useCallback((fileId: string) => {
-    setUngroupedFiles(prev => prev.map(f => 
-      f.id === fileId ? { ...f, status: 'uploaded' as FileStatus, error: undefined } : f
-    ));
-    queueExtraction(fileId, true);
+  const retryExtraction = useCallback((groupId: string, pageId: string) => {
+    setGroups(prev => {
+      const group = prev.find(g => g.groupId === groupId);
+      const page = group?.pages.find(p => p.id === pageId);
+      
+      if (page) {
+        // Move page back to pending for re-extraction
+        setPendingPages(pending => [...pending, { ...page, status: 'uploaded', error: undefined }]);
+        queueExtraction(pageId);
+      }
+      
+      return prev.map(g => {
+        if (g.groupId !== groupId) return g;
+        return { ...g, pages: g.pages.filter(p => p.id !== pageId) };
+      });
+    });
+    
     toast({ title: 'Retrying extraction...' });
   }, [queueExtraction, toast]);
 
   /**
-   * Retry extraction for a submission file
+   * Retry extraction for a pending page
    */
-  const retryExtraction = useCallback((submissionId: string, fileId: string) => {
-    setSubmissions(prev => prev.map(sub => {
-      if (sub.id !== submissionId) return sub;
-      return {
-        ...sub,
-        files: sub.files.map(f => 
-          f.id === fileId ? { ...f, status: 'uploaded' as FileStatus, error: undefined } : f
-        )
-      };
-    }));
-    queueExtraction(fileId, false, submissionId);
+  const retryPendingExtraction = useCallback((pageId: string) => {
+    updatePendingPageStatus(pageId, { status: 'uploaded', error: undefined });
+    queueExtraction(pageId);
     toast({ title: 'Retrying extraction...' });
-  }, [queueExtraction, toast]);
+  }, [updatePendingPageStatus, queueExtraction, toast]);
 
   /**
    * Process a single file (conversion, compression, queue for extraction)
    */
-  const processUngroupedFile = useCallback(async (fileItem: UploadedFileItem) => {
+  const processFile = useCallback(async (page: PageRecord) => {
     try {
-      let processedFile = fileItem.file;
-      const ext = fileItem.fileName.split('.').pop()?.toLowerCase();
+      let processedFile = page.file;
+      const ext = page.originalFileName.split('.').pop()?.toLowerCase();
       const isHeicOrHeif = 
-        fileItem.mimeType === 'image/heic' || 
-        fileItem.mimeType === 'image/heif' ||
+        page.mimeType === 'image/heic' || 
+        page.mimeType === 'image/heif' ||
         ext === 'heic' || 
         ext === 'heif';
 
-      updateUngroupedFileStatus(fileItem.id, { status: 'uploading' });
+      updatePendingPageStatus(page.id, { status: 'uploading' });
 
       if (isHeicOrHeif) {
         try {
-          processedFile = await convertHeicToJpeg(fileItem.file);
-          const newThumbnail = generateThumbnail(processedFile);
-          updateUngroupedFileStatus(fileItem.id, {
+          processedFile = await convertHeicToJpeg(page.file);
+          updatePendingPageStatus(page.id, {
             file: processedFile,
-            fileName: processedFile.name,
             mimeType: processedFile.type,
             size: processedFile.size,
-            thumbnailUrl: newThumbnail,
           });
         } catch (err) {
           console.error('HEIC conversion failed:', err);
-          updateUngroupedFileStatus(fileItem.id, {
+          updatePendingPageStatus(page.id, {
             status: 'failed',
             error: 'HEIC conversion failed. Try uploading as JPG/PNG.',
           });
@@ -548,7 +463,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         try {
           const compressed = await compressImage(processedFile);
           processedFile = new File([compressed], processedFile.name, { type: 'image/jpeg' });
-          updateUngroupedFileStatus(fileItem.id, {
+          updatePendingPageStatus(page.id, {
             file: processedFile,
             size: processedFile.size,
           });
@@ -557,96 +472,20 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         }
       }
 
-      updateUngroupedFileStatus(fileItem.id, { status: 'uploaded' });
-      queueExtraction(fileItem.id, true);
+      updatePendingPageStatus(page.id, { status: 'uploaded' });
+      queueExtraction(page.id);
       
     } catch (err) {
       console.error('File processing failed:', err);
-      updateUngroupedFileStatus(fileItem.id, {
+      updatePendingPageStatus(page.id, {
         status: 'failed',
         error: err instanceof Error ? err.message : 'Processing failed',
       });
     }
-  }, [convertHeicToJpeg, compressImage, generateThumbnail, updateUngroupedFileStatus, queueExtraction]);
+  }, [convertHeicToJpeg, compressImage, updatePendingPageStatus, queueExtraction]);
 
   /**
-   * Process a file that's already assigned to a submission (for auto-grouped files)
-   */
-  const processGroupedFile = useCallback(async (fileItem: UploadedFileItem) => {
-    try {
-      let processedFile = fileItem.file;
-      const ext = fileItem.fileName.split('.').pop()?.toLowerCase();
-      const isHeicOrHeif = 
-        fileItem.mimeType === 'image/heic' || 
-        fileItem.mimeType === 'image/heif' ||
-        ext === 'heic' || 
-        ext === 'heif';
-
-      // Find which submission this file belongs to
-      const findSubmission = () => {
-        let foundSubmissionId: string | undefined;
-        setSubmissions(prev => {
-          const sub = prev.find(s => s.files.some(f => f.id === fileItem.id));
-          foundSubmissionId = sub?.id;
-          return prev;
-        });
-        return foundSubmissionId;
-      };
-
-      const submissionId = findSubmission();
-      if (!submissionId) {
-        console.warn('File not found in any submission:', fileItem.fileName);
-        return;
-      }
-
-      const updateGroupedFileStatus = (updates: Partial<UploadedFileItem>) => {
-        updateFileStatus(submissionId, fileItem.id, updates);
-      };
-
-      updateGroupedFileStatus({ status: 'uploading' });
-
-      if (isHeicOrHeif) {
-        try {
-          processedFile = await convertHeicToJpeg(fileItem.file);
-          const newThumbnail = generateThumbnail(processedFile);
-          updateGroupedFileStatus({
-            file: processedFile,
-            fileName: processedFile.name,
-            mimeType: processedFile.type,
-            size: processedFile.size,
-            thumbnailUrl: newThumbnail,
-          });
-        } catch (err) {
-          console.error('HEIC conversion failed:', err);
-          updateGroupedFileStatus({
-            status: 'failed',
-            error: 'HEIC conversion failed. Try uploading as JPG/PNG.',
-          });
-          return;
-        }
-      } else if (processedFile.type.startsWith('image/') && processedFile.type !== 'application/pdf') {
-        try {
-          const compressed = await compressImage(processedFile);
-          processedFile = new File([compressed], processedFile.name, { type: 'image/jpeg' });
-          updateGroupedFileStatus({
-            file: processedFile,
-            size: processedFile.size,
-          });
-        } catch (err) {
-          console.warn('Image compression failed, using original:', err);
-        }
-      }
-
-      updateGroupedFileStatus({ status: 'uploaded' });
-      queueExtraction(fileItem.id, false, submissionId);
-      
-    } catch (err) {
-      console.error('File processing failed:', err);
-    }
-  }, [convertHeicToJpeg, compressImage, generateThumbnail, updateFileStatus, queueExtraction]);
-
-  /**
-   * Add files - auto-groups by filename convention or adds to ungrouped pool
+   * Add files - creates page records and starts processing
    */
   const addFiles = useCallback(async (selectedFiles: FileList | File[]) => {
     const allowedMimes = [
@@ -659,7 +498,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       'image/heif',
     ];
 
-    const newFileItems: UploadedFileItem[] = [];
+    const newPages: PageRecord[] = [];
     const errors: string[] = [];
 
     for (const selectedFile of Array.from(selectedFiles)) {
@@ -678,47 +517,20 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         continue;
       }
 
-      const isHeicOrHeif = 
-        fileType === 'image/heic' || 
-        fileType === 'image/heif' ||
-        ext === 'heic' || 
-        ext === 'heif';
-
-      const isPdf = fileType === 'application/pdf' || ext === 'pdf';
-
-      const id = getFileId(selectedFile);
-      const thumbnailUrl = !isHeicOrHeif ? generateThumbnail(selectedFile) : undefined;
+      const pageId = generateId();
       
-      // Generate dataUrl for PDFs to enable inline preview
-      let dataUrl: string | undefined;
-      if (isPdf) {
-        try {
-          dataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(selectedFile);
-          });
-        } catch (err) {
-          console.warn('Failed to generate PDF data URL:', err);
-        }
-      }
-      
-      const fileItem: UploadedFileItem = {
-        id,
+      const page: PageRecord = {
+        id: pageId,
         file: selectedFile,
-        originalFile: isHeicOrHeif ? selectedFile : undefined,
-        fileName: selectedFile.name,
+        originalFileName: selectedFile.name,
         mimeType: selectedFile.type,
         size: selectedFile.size,
         status: 'queued',
-        thumbnailUrl,
-        dataUrl,
         extractedText: '',
-        createdAt: new Date(),
+        uploadedAt: new Date(),
       };
       
-      newFileItems.push(fileItem);
+      newPages.push(page);
     }
 
     if (errors.length > 0) {
@@ -729,370 +541,185 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       });
     }
 
-    if (newFileItems.length === 0) return;
+    if (newPages.length === 0) return;
 
-    // Auto-group files by filename convention
-    const groupedByConvention = new Map<string, { 
-      assignmentName: string; 
-      studentName: string; 
-      files: UploadedFileItem[] 
-    }>();
-    const ungroupedItems: UploadedFileItem[] = [];
-
-    for (const fileItem of newFileItems) {
-      const parsed = parseFilenameConvention(fileItem.fileName);
-      
-      if (parsed) {
-        const existing = groupedByConvention.get(parsed.groupKey);
-        if (existing) {
-          existing.files.push(fileItem);
-        } else {
-          groupedByConvention.set(parsed.groupKey, {
-            assignmentName: parsed.assignmentName,
-            studentName: parsed.studentName,
-            files: [fileItem],
-          });
-        }
-      } else {
-        ungroupedItems.push(fileItem);
-      }
-    }
-
-    // Add ungrouped files to the pool
-    if (ungroupedItems.length > 0) {
-      setUngroupedFiles(prev => [...prev, ...ungroupedItems]);
-    }
-
-    // Create submissions for each group
-    const createdSubmissions: StudentSubmission[] = [];
-    groupedByConvention.forEach(({ assignmentName, studentName, files }) => {
-      // Sort files by page number
-      const sortedFiles = [...files].sort((a, b) => {
-        const parsedA = parseFilenameConvention(a.fileName);
-        const parsedB = parseFilenameConvention(b.fileName);
-        if (parsedA && parsedB) {
-          return parsedA.pageNumber - parsedB.pageNumber;
-        }
-        return 0;
-      });
-
-      const submissionId = generateId();
-      createdSubmissions.push({
-        id: submissionId,
-        studentName,
-        assignmentName,
-        files: sortedFiles,
-        combinedText: '',
-        createdAt: new Date(),
-      });
-    });
-
-    if (createdSubmissions.length > 0) {
-      setSubmissions(prev => [...prev, ...createdSubmissions]);
-      
-      // Update combined text for all new submissions after state is set
-      setTimeout(() => {
-        createdSubmissions.forEach(sub => {
-          updateSubmissionCombinedText(sub.id);
-        });
-      }, 0);
-    }
-
-    // Build summary toast
-    const parts: string[] = [];
-    if (createdSubmissions.length > 0) {
-      const studentNames = createdSubmissions.map(s => s.studentName).join(', ');
-      parts.push(`Auto-grouped ${createdSubmissions.length} student(s): ${studentNames}`);
-    }
-    if (ungroupedItems.length > 0) {
-      parts.push(`${ungroupedItems.length} file(s) need manual assignment`);
-    }
+    // Add all pages to pending
+    setPendingPages(prev => [...prev, ...newPages]);
     
     toast({ 
-      title: parts.length > 0 ? parts.join(' • ') : `${newFileItems.length} file(s) added`,
-      duration: 5000,
+      title: `${newPages.length} file(s) added`,
+      description: 'Processing and detecting student names...',
+      duration: 3000,
     });
 
-    // Process each file asynchronously (both grouped and ungrouped)
-    for (const fileItem of newFileItems) {
-      // Find if this file is in ungrouped or in a submission
-      const isInUngrouped = ungroupedItems.some(f => f.id === fileItem.id);
-      
-      if (isInUngrouped) {
-        processUngroupedFile(fileItem);
-      } else {
-        // Process files that are already in submissions
-        processGroupedFile(fileItem);
-      }
+    // Process each file
+    for (const page of newPages) {
+      processFile(page);
     }
-  }, [getFileId, generateThumbnail, generateId, toast, processUngroupedFile, updateSubmissionCombinedText]);
+  }, [generateId, toast, processFile]);
 
   /**
-   * Create a new student and assign selected ungrouped files to them
+   * Rename a student in a group
    */
-  const createStudentWithFiles = useCallback((studentName: string, fileIds: string[]) => {
-    if (fileIds.length === 0) {
-      toast({ title: 'No files selected', variant: 'destructive' });
-      return null;
-    }
-
-    // Get files from ungrouped pool
-    const filesToAssign = ungroupedFiles.filter(f => fileIds.includes(f.id));
-    if (filesToAssign.length === 0) {
-      toast({ title: 'Selected files not found', variant: 'destructive' });
-      return null;
-    }
-
-    const submissionId = generateId();
-    const newSubmission: StudentSubmission = {
-      id: submissionId,
-      studentName: studentName.trim() || `Student ${submissions.length + 1}`,
-      files: filesToAssign,
-      combinedText: '',
-      createdAt: new Date(),
-    };
-
-    // Remove files from ungrouped pool
-    setUngroupedFiles(prev => prev.filter(f => !fileIds.includes(f.id)));
-    
-    // Add to submissions
-    setSubmissions(prev => [...prev, newSubmission]);
-    
-    // Update combined text
-    setTimeout(() => updateSubmissionCombinedText(submissionId), 0);
-
-    toast({ title: `${studentName || 'Student'} created with ${filesToAssign.length} file(s)` });
-    return submissionId;
-  }, [ungroupedFiles, submissions.length, generateId, updateSubmissionCombinedText, toast]);
-
-  /**
-   * Assign ungrouped files to an existing student submission
-   */
-  const assignFilesToStudent = useCallback((submissionId: string, fileIds: string[]) => {
-    const filesToAssign = ungroupedFiles.filter(f => fileIds.includes(f.id));
-    if (filesToAssign.length === 0) return;
-
-    // Remove from ungrouped
-    setUngroupedFiles(prev => prev.filter(f => !fileIds.includes(f.id)));
-    
-    // Add to submission
-    setSubmissions(prev => prev.map(sub => {
-      if (sub.id !== submissionId) return sub;
-      return { ...sub, files: [...sub.files, ...filesToAssign] };
-    }));
-    
-    updateSubmissionCombinedText(submissionId);
-    toast({ title: `${filesToAssign.length} file(s) assigned to student` });
-  }, [ungroupedFiles, updateSubmissionCombinedText, toast]);
-
-  /**
-   * Unassign files from a student back to ungrouped pool
-   */
-  const unassignFilesFromStudent = useCallback((submissionId: string, fileIds: string[]) => {
-    setSubmissions(prev => {
-      const submission = prev.find(s => s.id === submissionId);
-      const filesToUnassign = submission?.files.filter(f => fileIds.includes(f.id)) || [];
-      
-      if (filesToUnassign.length > 0) {
-        setUngroupedFiles(uf => [...uf, ...filesToUnassign]);
-      }
-      
-      return prev.map(sub => {
-        if (sub.id !== submissionId) return sub;
-        return { ...sub, files: sub.files.filter(f => !fileIds.includes(f.id)) };
-      });
-    });
-    
-    updateSubmissionCombinedText(submissionId);
-    toast({ title: 'File(s) moved back to ungrouped' });
-  }, [updateSubmissionCombinedText, toast]);
-
-  /**
-   * Remove an ungrouped file
-   */
-  const removeUngroupedFile = useCallback((fileId: string) => {
-    setUngroupedFiles(prev => {
-      const file = prev.find(f => f.id === fileId);
-      if (file?.thumbnailUrl) {
-        URL.revokeObjectURL(file.thumbnailUrl);
-      }
-      return prev.filter(f => f.id !== fileId);
-    });
-  }, []);
-
-  /**
-   * Rename a student submission
-   */
-  const renameSubmission = useCallback((submissionId: string, newName: string) => {
-    setSubmissions(prev => prev.map(sub => 
-      sub.id === submissionId ? { ...sub, studentName: newName } : sub
+  const renameStudent = useCallback((groupId: string, newName: string) => {
+    setGroups(prev => prev.map(group => 
+      group.groupId === groupId 
+        ? { ...group, studentName: newName.trim(), needsReview: false } 
+        : group
     ));
-  }, []);
-
-  /**
-   * Move a file from one submission to another
-   */
-  const moveFileBetweenSubmissions = useCallback((
-    fromSubmissionId: string, 
-    toSubmissionId: string, 
-    fileId: string
-  ) => {
-    setSubmissions(prev => {
-      const fromSubmission = prev.find(s => s.id === fromSubmissionId);
-      const fileToMove = fromSubmission?.files.find(f => f.id === fileId);
-      
-      if (!fileToMove) return prev;
-
-      return prev.map(sub => {
-        if (sub.id === fromSubmissionId) {
-          return { ...sub, files: sub.files.filter(f => f.id !== fileId) };
-        }
-        if (sub.id === toSubmissionId) {
-          return { ...sub, files: [...sub.files, fileToMove] };
-        }
-        return sub;
-      });
-    });
-
-    updateSubmissionCombinedText(fromSubmissionId);
-    updateSubmissionCombinedText(toSubmissionId);
-    toast({ title: 'File moved to another student' });
-  }, [updateSubmissionCombinedText, toast]);
-
-  /**
-   * Remove a file from a submission
-   */
-  const removeFile = useCallback((submissionId: string, fileId: string) => {
-    setSubmissions(prev => prev.map(sub => {
-      if (sub.id !== submissionId) return sub;
-      
-      const fileToRemove = sub.files.find(f => f.id === fileId);
-      if (fileToRemove?.thumbnailUrl) {
-        URL.revokeObjectURL(fileToRemove.thumbnailUrl);
-      }
-      
-      return { ...sub, files: sub.files.filter(f => f.id !== fileId) };
-    }));
-    updateSubmissionCombinedText(submissionId);
-  }, [updateSubmissionCombinedText]);
-
-  /**
-   * Delete an entire submission (returns files to ungrouped)
-   */
-  const deleteSubmission = useCallback((submissionId: string) => {
-    setSubmissions(prev => {
-      const submission = prev.find(s => s.id === submissionId);
-      if (submission) {
-        // Return files to ungrouped
-        setUngroupedFiles(uf => [...uf, ...submission.files]);
-      }
-      return prev.filter(s => s.id !== submissionId);
-    });
-    toast({ title: 'Student removed - files returned to ungrouped' });
+    toast({ title: 'Student name updated' });
   }, [toast]);
 
   /**
-   * Update combined text manually for a submission
+   * Remove a page from a group
    */
-  const setSubmissionCombinedText = useCallback((submissionId: string, text: string) => {
-    setSubmissions(prev => prev.map(sub => 
-      sub.id === submissionId ? { ...sub, combinedText: text } : sub
-    ));
+  const removePage = useCallback((groupId: string, pageId: string) => {
+    setGroups(prev => {
+      const updatedGroups = prev.map(group => {
+        if (group.groupId !== groupId) return group;
+        return { ...group, pages: group.pages.filter(p => p.id !== pageId) };
+      });
+      // Remove empty groups
+      return updatedGroups.filter(g => g.pages.length > 0);
+    });
   }, []);
 
   /**
-   * Clear all submissions and ungrouped files
+   * Remove a pending page
+   */
+  const removePendingPage = useCallback((pageId: string) => {
+    setPendingPages(prev => prev.filter(p => p.id !== pageId));
+  }, []);
+
+  /**
+   * Delete an entire group
+   */
+  const deleteGroup = useCallback((groupId: string) => {
+    setGroups(prev => prev.filter(g => g.groupId !== groupId));
+    toast({ title: 'Student submission removed' });
+  }, [toast]);
+
+  /**
+   * Clear all submissions and pending pages
    */
   const clearAll = useCallback(() => {
-    setUngroupedFiles(prev => {
-      prev.forEach(f => {
-        if (f.thumbnailUrl) URL.revokeObjectURL(f.thumbnailUrl);
-      });
-      return [];
-    });
-    setSubmissions(prev => {
-      prev.forEach(sub => {
-        sub.files.forEach(f => {
-          if (f.thumbnailUrl) URL.revokeObjectURL(f.thumbnailUrl);
-        });
-      });
-      return [];
-    });
+    setPendingPages([]);
+    setGroups([]);
     extractionQueue.current = [];
   }, []);
 
-  // Calculate statistics
-  const totalUngroupedFiles = ungroupedFiles.length;
-  const ungroupedReadyFiles = ungroupedFiles.filter(f => f.status === 'ready').length;
-  const ungroupedExtractingFiles = ungroupedFiles.some(f => 
-    f.status === 'queued' || f.status === 'uploading' || f.status === 'uploaded' || f.status === 'extracting'
-  );
+  /**
+   * Check for multiple students detected in a single group's combined text
+   * This is a safety check
+   */
+  const getMultipleStudentsWarning = useCallback((): string | null => {
+    for (const group of groups) {
+      if (group.pages.length > 1) {
+        const detectedNames = detectMultipleStudentsInText(group.combinedText);
+        if (detectedNames.length > 1) {
+          return `Multiple students detected in "${group.studentName}" group — please verify or split.`;
+        }
+      }
+    }
+    return null;
+  }, [groups]);
 
-  const totalSubmissions = submissions.length;
-  const totalAssignedFiles = submissions.reduce((acc, sub) => acc + sub.files.length, 0);
-  const completedFiles = submissions.reduce((acc, sub) => 
-    acc + sub.files.filter(f => f.status === 'ready').length, 0
+  // Calculate statistics
+  const totalPendingPages = pendingPages.length;
+  const totalGroups = groups.length;
+  const totalGroupedPages = groups.reduce((acc, g) => acc + g.pages.length, 0);
+  const totalPages = totalPendingPages + totalGroupedPages;
+  
+  const readyPages = groups.reduce((acc, g) => 
+    acc + g.pages.filter(p => p.status === 'ready').length, 0
   );
-  const failedFiles = submissions.reduce((acc, sub) => 
-    acc + sub.files.filter(f => f.status === 'failed').length, 0
-  );
-  const isExtracting = ungroupedExtractingFiles || submissions.some(sub => 
-    sub.files.some(f => 
-      f.status === 'queued' || 
-      f.status === 'uploading' || 
-      f.status === 'uploaded' || 
-      f.status === 'extracting'
-    )
+  const failedPages = groups.reduce((acc, g) => 
+    acc + g.pages.filter(p => p.status === 'failed').length, 0
+  ) + pendingPages.filter(p => p.status === 'failed').length;
+  
+  const isExtracting = pendingPages.some(p => 
+    p.status === 'queued' || p.status === 'uploading' || p.status === 'uploaded' || p.status === 'extracting'
   );
   
-  // Check if all files are assigned (no ungrouped files remaining)
-  const allFilesAssigned = ungroupedFiles.length === 0;
+  const needsReviewCount = groups.filter(g => g.needsReview).length;
   
-  // Check if grading can proceed
-  const hasReadySubmissions = submissions.some(sub => 
-    sub.files.some(f => f.status === 'ready')
-  );
-  const canGrade = allFilesAssigned && hasReadySubmissions && !isExtracting;
+  // Can grade if: no pending pages, at least one group with ready pages
+  const hasReadyGroups = groups.some(g => g.pages.some(p => p.status === 'ready'));
+  const canGrade = totalPendingPages === 0 && hasReadyGroups && !isExtracting;
   
-  const totalFiles = totalUngroupedFiles + totalAssignedFiles;
-  const progress = totalFiles > 0 ? ((completedFiles + ungroupedReadyFiles) / totalFiles) * 100 : 0;
+  const progress = totalPages > 0 ? ((readyPages) / totalPages) * 100 : 0;
+
+  // Multiple students warning
+  const multipleStudentsWarning = getMultipleStudentsWarning();
 
   return {
-    // Ungrouped files
-    ungroupedFiles,
-    addFiles,
-    removeUngroupedFile,
-    retryUngroupedExtraction,
+    // Pending pages (still being processed)
+    pendingPages,
+    removePendingPage,
+    retryPendingExtraction,
     
-    // Student assignments
-    createStudentWithFiles,
-    assignFilesToStudent,
-    unassignFilesFromStudent,
-    
-    // Submissions
-    submissions,
-    renameSubmission,
-    moveFileBetweenSubmissions,
-    removeFile,
-    deleteSubmission,
+    // Grouped submissions
+    groups,
+    renameStudent,
+    removePage,
+    deleteGroup,
     retryExtraction,
-    setSubmissionCombinedText,
     
-    // Utilities
+    // Actions
+    addFiles,
     clearAll,
     
     // Statistics
-    totalUngroupedFiles,
-    ungroupedReadyFiles,
-    totalSubmissions,
-    totalAssignedFiles,
-    totalFiles,
-    completedFiles,
-    failedFiles,
+    totalPages,
+    totalPendingPages,
+    totalGroups,
+    totalGroupedPages,
+    readyPages,
+    failedPages,
     isExtracting,
-    allFilesAssigned,
-    hasReadySubmissions,
+    needsReviewCount,
+    hasReadyGroups,
     canGrade,
     progress,
+    
+    // Warnings
+    multipleStudentsWarning,
+    
+    // Legacy compatibility aliases
+    submissions: groups.map(g => ({
+      id: g.groupId,
+      studentName: g.studentName,
+      assignmentName: g.assignmentId !== 'default' ? g.assignmentId : undefined,
+      files: g.pages.map(p => ({
+        id: p.id,
+        file: p.file,
+        fileName: p.originalFileName,
+        mimeType: p.mimeType,
+        size: p.size,
+        status: p.status,
+        extractedText: p.extractedText,
+        createdAt: p.uploadedAt,
+        error: p.error,
+      })),
+      combinedText: g.combinedText,
+      createdAt: g.createdAt,
+      autoDetected: true,
+    })),
+    ungroupedFiles: pendingPages.map(p => ({
+      id: p.id,
+      file: p.file,
+      fileName: p.originalFileName,
+      mimeType: p.mimeType,
+      size: p.size,
+      status: p.status,
+      extractedText: p.extractedText,
+      createdAt: p.uploadedAt,
+      error: p.error,
+    })),
+    totalUngroupedFiles: totalPendingPages,
+    allFilesAssigned: totalPendingPages === 0,
+    hasReadySubmissions: hasReadyGroups,
+    totalFiles: totalPages,
+    completedFiles: readyPages,
   };
 }
