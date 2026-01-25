@@ -37,8 +37,8 @@ export type FileStatus = 'queued' | 'uploading' | 'uploaded' | 'extracting' | 'r
 const isProcessingStatus = (status: FileStatus): boolean => 
   ['queued', 'uploading', 'uploaded', 'extracting'].includes(status);
 
-// Extraction timeout in milliseconds (30 seconds)
-const EXTRACTION_TIMEOUT_MS = 30000;
+// Extraction timeout in milliseconds (15 seconds for pilot demo)
+const EXTRACTION_TIMEOUT_MS = 15000;
 
 export interface PageRecord {
   id: string;
@@ -193,7 +193,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       
       // Create a timeout promise
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Extraction timeout - please retry')), extractionTimeoutMs);
+        setTimeout(() => reject(new Error('Timed out — skipped for pilot demo')), extractionTimeoutMs);
       });
       
       // Race between extraction and timeout
