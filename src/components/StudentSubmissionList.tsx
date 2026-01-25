@@ -153,14 +153,19 @@ function FilePreviewDialog({
   previewFile: FilePreviewInfo | null; 
   onClose: () => void;
 }) {
+  const [showExtractedText, setShowExtractedText] = useState(false);
+  
   if (!previewFile) return null;
   
   const { file, studentName, pageNumber } = previewFile;
   const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
   
+  // Build PDF data URL from base64 if available
+  const pdfDataUrl = isPdf && file.dataUrl ? file.dataUrl : null;
+  
   return (
     <Dialog open={!!previewFile} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             <span className="truncate">{file.fileName}</span>
@@ -176,34 +181,83 @@ function FilePreviewDialog({
                 Ungrouped
               </Badge>
             )}
+            {file.extractedText && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-7 text-xs"
+                onClick={() => setShowExtractedText(!showExtractedText)}
+              >
+                <FileText className="w-3 h-3 mr-1" />
+                {showExtractedText ? 'Hide' : 'Show'} Extracted Text
+              </Button>
+            )}
           </DialogTitle>
         </DialogHeader>
         
-        <div className="flex-1 overflow-auto bg-muted/30 rounded-lg p-2 min-h-[400px]">
-          {file.thumbnailUrl && !isPdf ? (
-            <img 
-              src={file.thumbnailUrl} 
-              alt={file.fileName}
-              className="w-full h-auto max-h-[70vh] object-contain rounded"
-            />
-          ) : isPdf ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
-              <FileText className="w-16 h-16 text-destructive/50" />
-              <p className="text-sm">PDF preview not available</p>
-              <p className="text-xs">Use extracted text to verify content</p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
-              <Image className="w-16 h-16" />
-              <p className="text-sm">Preview not available</p>
+        <div className="flex-1 flex gap-3 min-h-[500px] overflow-hidden">
+          {/* Primary: Document Preview */}
+          <div className={cn(
+            "flex-1 overflow-hidden bg-muted/30 rounded-lg",
+            showExtractedText && file.extractedText ? "w-1/2" : "w-full"
+          )}>
+            {file.thumbnailUrl && !isPdf ? (
+              <img 
+                src={file.thumbnailUrl} 
+                alt={file.fileName}
+                className="w-full h-full object-contain rounded"
+              />
+            ) : isPdf && pdfDataUrl ? (
+              <iframe
+                src={`${pdfDataUrl}#toolbar=1&navpanes=0&scrollbar=1`}
+                className="w-full h-full rounded border-0"
+                title={`PDF Preview: ${file.fileName}`}
+              />
+            ) : isPdf ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2 p-4">
+                <FileText className="w-16 h-16 text-destructive/50" />
+                <p className="text-sm font-medium">PDF preview loading...</p>
+                <p className="text-xs text-center">
+                  If preview doesn't load, check the extracted text below for content verification.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-2">
+                <Image className="w-16 h-16" />
+                <p className="text-sm">Preview not available</p>
+              </div>
+            )}
+          </div>
+          
+          {/* Secondary: Extracted Text Panel (toggleable) */}
+          {showExtractedText && file.extractedText && (
+            <div className="w-1/2 flex flex-col bg-muted/20 rounded-lg border overflow-hidden">
+              <div className="px-3 py-2 bg-muted/50 border-b flex items-center gap-2">
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Extracted Text</span>
+              </div>
+              <div className="flex-1 overflow-auto p-3">
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">{file.extractedText}</p>
+              </div>
             </div>
           )}
         </div>
         
-        {file.extractedText && (
-          <div className="mt-2 p-3 bg-muted/50 rounded-lg max-h-32 overflow-auto">
-            <p className="text-xs font-medium text-muted-foreground mb-1">Extracted Text Preview:</p>
-            <p className="text-sm whitespace-pre-wrap line-clamp-4">{file.extractedText}</p>
+        {/* Compact extracted text hint when panel is hidden */}
+        {!showExtractedText && file.extractedText && (
+          <div className="mt-2 p-2 bg-muted/30 rounded-lg flex items-center gap-2">
+            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <p className="text-xs text-muted-foreground truncate flex-1">
+              {file.extractedText.substring(0, 100)}...
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs"
+              onClick={() => setShowExtractedText(true)}
+            >
+              View Full Text
+            </Button>
           </div>
         )}
       </DialogContent>

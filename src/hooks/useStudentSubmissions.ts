@@ -23,6 +23,7 @@ export interface UploadedFileItem {
   size: number;
   status: FileStatus;
   thumbnailUrl?: string;
+  dataUrl?: string; // Full base64 data URL for PDF preview
   extractedText: string;
   error?: string;
   createdAt: Date;
@@ -470,8 +471,25 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         ext === 'heic' || 
         ext === 'heif';
 
+      const isPdf = fileType === 'application/pdf' || ext === 'pdf';
+
       const id = getFileId(selectedFile);
       const thumbnailUrl = !isHeicOrHeif ? generateThumbnail(selectedFile) : undefined;
+      
+      // Generate dataUrl for PDFs to enable inline preview
+      let dataUrl: string | undefined;
+      if (isPdf) {
+        try {
+          dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(selectedFile);
+          });
+        } catch (err) {
+          console.warn('Failed to generate PDF data URL:', err);
+        }
+      }
       
       const fileItem: UploadedFileItem = {
         id,
@@ -482,6 +500,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         size: selectedFile.size,
         status: 'queued',
         thumbnailUrl,
+        dataUrl,
         extractedText: '',
         createdAt: new Date(),
       };
