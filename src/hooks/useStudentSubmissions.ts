@@ -1,7 +1,8 @@
 /**
  * Student Submissions Hook
  * 
- * Manages student work uploads grouped by student submission.
+ * Manages student work uploads with MANDATORY grouping step.
+ * Files start as UNGROUPED and must be explicitly assigned to students before grading.
  * Each submission can contain multiple files (multi-page PDF or multiple images).
  * Files within a submission are graded together; different submissions are graded separately.
  */
@@ -51,11 +52,15 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   const { maxConcurrentExtractions, maxDimension, jpegQuality } = { ...DEFAULT_OPTIONS, ...options };
   const { toast } = useToast();
   
+  // Ungrouped files pool - files that haven't been assigned to any student
+  const [ungroupedFiles, setUngroupedFiles] = useState<UploadedFileItem[]>([]);
+  
+  // Student submissions - files grouped by student
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
   
   // Track active extractions for concurrency control
   const activeExtractions = useRef(0);
-  const extractionQueue = useRef<{ submissionId: string; fileId: string }[]>([]);
+  const extractionQueue = useRef<{ fileId: string; isUngrouped: boolean; submissionId?: string }[]>([]);
 
   /**
    * Generate unique ID
@@ -180,6 +185,18 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, []);
 
   /**
+   * Update ungrouped file status
+   */
+  const updateUngroupedFileStatus = useCallback((
+    fileId: string, 
+    updates: Partial<UploadedFileItem>
+  ) => {
+    setUngroupedFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, ...updates } : f
+    ));
+  }, []);
+
+  /**
    * Update file status within a submission
    */
   const updateFileStatus = useCallback((
@@ -196,7 +213,6 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         )
       };
     }));
-    // Update combined text after file status change
     updateSubmissionCombinedText(submissionId);
   }, [updateSubmissionCombinedText]);
 
@@ -243,57 +259,104 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       const item = extractionQueue.current.shift();
       if (!item) continue;
       
-      const { submissionId, fileId } = item;
+      const { fileId, isUngrouped, submissionId } = item;
       activeExtractions.current++;
       
-      // Get file from state
-      setSubmissions(prev => {
-        const submission = prev.find(s => s.id === submissionId);
-        const fileItem = submission?.files.find(f => f.id === fileId);
-        
-        if (!fileItem || fileItem.status !== 'uploaded') {
-          activeExtractions.current--;
-          return prev;
-        }
-        
-        // Start extraction in background
-        (async () => {
-          updateFileStatus(submissionId, fileId, { status: 'extracting' });
+      // Get file from appropriate state
+      if (isUngrouped) {
+        setUngroupedFiles(prev => {
+          const fileItem = prev.find(f => f.id === fileId);
           
-          try {
-            const text = await extractTextFromFile(fileItem.file);
-            updateFileStatus(submissionId, fileId, { 
-              status: 'ready', 
-              extractedText: text,
-              error: undefined 
-            });
-          } catch (err) {
-            console.error('Extraction failed for', fileItem.fileName, err);
-            updateFileStatus(submissionId, fileId, { 
-              status: 'failed',
-              error: err instanceof Error ? err.message : 'Unknown error'
-            });
-          } finally {
+          if (!fileItem || fileItem.status !== 'uploaded') {
             activeExtractions.current--;
-            processExtractionQueue();
+            return prev;
           }
-        })();
-        
-        return prev;
-      });
+          
+          // Start extraction in background
+          (async () => {
+            updateUngroupedFileStatus(fileId, { status: 'extracting' });
+            
+            try {
+              const text = await extractTextFromFile(fileItem.file);
+              updateUngroupedFileStatus(fileId, { 
+                status: 'ready', 
+                extractedText: text,
+                error: undefined 
+              });
+            } catch (err) {
+              console.error('Extraction failed for', fileItem.fileName, err);
+              updateUngroupedFileStatus(fileId, { 
+                status: 'failed',
+                error: err instanceof Error ? err.message : 'Unknown error'
+              });
+            } finally {
+              activeExtractions.current--;
+              processExtractionQueue();
+            }
+          })();
+          
+          return prev;
+        });
+      } else if (submissionId) {
+        setSubmissions(prev => {
+          const submission = prev.find(s => s.id === submissionId);
+          const fileItem = submission?.files.find(f => f.id === fileId);
+          
+          if (!fileItem || fileItem.status !== 'uploaded') {
+            activeExtractions.current--;
+            return prev;
+          }
+          
+          // Start extraction in background
+          (async () => {
+            updateFileStatus(submissionId, fileId, { status: 'extracting' });
+            
+            try {
+              const text = await extractTextFromFile(fileItem.file);
+              updateFileStatus(submissionId, fileId, { 
+                status: 'ready', 
+                extractedText: text,
+                error: undefined 
+              });
+            } catch (err) {
+              console.error('Extraction failed for', fileItem.fileName, err);
+              updateFileStatus(submissionId, fileId, { 
+                status: 'failed',
+                error: err instanceof Error ? err.message : 'Unknown error'
+              });
+            } finally {
+              activeExtractions.current--;
+              processExtractionQueue();
+            }
+          })();
+          
+          return prev;
+        });
+      }
     }
-  }, [maxConcurrentExtractions, extractTextFromFile, updateFileStatus]);
+  }, [maxConcurrentExtractions, extractTextFromFile, updateUngroupedFileStatus, updateFileStatus]);
 
   /**
    * Queue file for extraction
    */
-  const queueExtraction = useCallback((submissionId: string, fileId: string) => {
-    extractionQueue.current.push({ submissionId, fileId });
+  const queueExtraction = useCallback((fileId: string, isUngrouped: boolean, submissionId?: string) => {
+    extractionQueue.current.push({ fileId, isUngrouped, submissionId });
     processExtractionQueue();
   }, [processExtractionQueue]);
 
   /**
-   * Retry extraction for a failed file
+   * Retry extraction for a failed ungrouped file
+   */
+  const retryUngroupedExtraction = useCallback((fileId: string) => {
+    setUngroupedFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, status: 'uploaded' as FileStatus, error: undefined } : f
+    ));
+    queueExtraction(fileId, true);
+    toast({ title: 'Retrying extraction...' });
+  }, [queueExtraction, toast]);
+
+  /**
+   * Retry extraction for a submission file
    */
   const retryExtraction = useCallback((submissionId: string, fileId: string) => {
     setSubmissions(prev => prev.map(sub => {
@@ -305,108 +368,14 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         )
       };
     }));
-    queueExtraction(submissionId, fileId);
+    queueExtraction(fileId, false, submissionId);
     toast({ title: 'Retrying extraction...' });
   }, [queueExtraction, toast]);
 
   /**
-   * Create a new student submission with files
-   */
-  const createSubmission = useCallback(async (selectedFiles: FileList | File[], studentName?: string) => {
-    const allowedMimes = [
-      'application/pdf',
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/webp',
-      'image/heic',
-      'image/heif',
-    ];
-
-    const newFileItems: UploadedFileItem[] = [];
-    const errors: string[] = [];
-
-    for (const selectedFile of Array.from(selectedFiles)) {
-      const fileType = (selectedFile.type || '').toLowerCase();
-      const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-      const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
-      const okByMime = allowedMimes.includes(fileType);
-
-      if (!okByExt && !okByMime) {
-        errors.push(`Skipped ${selectedFile.name}: Unsupported file type`);
-        continue;
-      }
-
-      if (selectedFile.size > 10 * 1024 * 1024) {
-        errors.push(`Skipped ${selectedFile.name}: File too large (max 10MB)`);
-        continue;
-      }
-
-      const isHeicOrHeif = 
-        fileType === 'image/heic' || 
-        fileType === 'image/heif' ||
-        ext === 'heic' || 
-        ext === 'heif';
-
-      const id = getFileId(selectedFile);
-      const thumbnailUrl = !isHeicOrHeif ? generateThumbnail(selectedFile) : undefined;
-      
-      const fileItem: UploadedFileItem = {
-        id,
-        file: selectedFile,
-        originalFile: isHeicOrHeif ? selectedFile : undefined,
-        fileName: selectedFile.name,
-        mimeType: selectedFile.type,
-        size: selectedFile.size,
-        status: 'queued',
-        thumbnailUrl,
-        extractedText: '',
-        createdAt: new Date(),
-      };
-      
-      newFileItems.push(fileItem);
-    }
-
-    if (errors.length > 0) {
-      toast({
-        title: 'Some files were skipped',
-        description: errors.join('. '),
-        variant: 'destructive',
-      });
-    }
-
-    if (newFileItems.length === 0) return null;
-
-    // Create new submission
-    const submissionId = generateId();
-    const submissionNumber = submissions.length + 1;
-    const defaultName = studentName || `Student ${submissionNumber}`;
-    
-    const newSubmission: StudentSubmission = {
-      id: submissionId,
-      studentName: defaultName,
-      files: newFileItems,
-      combinedText: '',
-      createdAt: new Date(),
-    };
-
-    setSubmissions(prev => [...prev, newSubmission]);
-    updateSubmissionCombinedText(submissionId);
-
-    toast({ title: `Submission created with ${newFileItems.length} file(s)` });
-
-    // Process each file asynchronously
-    for (const fileItem of newFileItems) {
-      processFile(submissionId, fileItem);
-    }
-
-    return submissionId;
-  }, [submissions.length, generateId, getFileId, generateThumbnail, toast, updateSubmissionCombinedText]);
-
-  /**
    * Process a single file (conversion, compression, queue for extraction)
    */
-  const processFile = useCallback(async (submissionId: string, fileItem: UploadedFileItem) => {
+  const processUngroupedFile = useCallback(async (fileItem: UploadedFileItem) => {
     try {
       let processedFile = fileItem.file;
       const ext = fileItem.fileName.split('.').pop()?.toLowerCase();
@@ -416,13 +385,13 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         ext === 'heic' || 
         ext === 'heif';
 
-      updateFileStatus(submissionId, fileItem.id, { status: 'uploading' });
+      updateUngroupedFileStatus(fileItem.id, { status: 'uploading' });
 
       if (isHeicOrHeif) {
         try {
           processedFile = await convertHeicToJpeg(fileItem.file);
           const newThumbnail = generateThumbnail(processedFile);
-          updateFileStatus(submissionId, fileItem.id, {
+          updateUngroupedFileStatus(fileItem.id, {
             file: processedFile,
             fileName: processedFile.name,
             mimeType: processedFile.type,
@@ -431,7 +400,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
           });
         } catch (err) {
           console.error('HEIC conversion failed:', err);
-          updateFileStatus(submissionId, fileItem.id, {
+          updateUngroupedFileStatus(fileItem.id, {
             status: 'failed',
             error: 'HEIC conversion failed. Try uploading as JPG/PNG.',
           });
@@ -441,7 +410,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         try {
           const compressed = await compressImage(processedFile);
           processedFile = new File([compressed], processedFile.name, { type: 'image/jpeg' });
-          updateFileStatus(submissionId, fileItem.id, {
+          updateUngroupedFileStatus(fileItem.id, {
             file: processedFile,
             size: processedFile.size,
           });
@@ -450,22 +419,22 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
         }
       }
 
-      updateFileStatus(submissionId, fileItem.id, { status: 'uploaded' });
-      queueExtraction(submissionId, fileItem.id);
+      updateUngroupedFileStatus(fileItem.id, { status: 'uploaded' });
+      queueExtraction(fileItem.id, true);
       
     } catch (err) {
       console.error('File processing failed:', err);
-      updateFileStatus(submissionId, fileItem.id, {
+      updateUngroupedFileStatus(fileItem.id, {
         status: 'failed',
         error: err instanceof Error ? err.message : 'Processing failed',
       });
     }
-  }, [convertHeicToJpeg, compressImage, generateThumbnail, updateFileStatus, queueExtraction]);
+  }, [convertHeicToJpeg, compressImage, generateThumbnail, updateUngroupedFileStatus, queueExtraction]);
 
   /**
-   * Add files to an existing submission
+   * Add files to ungrouped pool (NEW: files start here instead of auto-creating submissions)
    */
-  const addFilesToSubmission = useCallback(async (submissionId: string, selectedFiles: FileList | File[]) => {
+  const addFiles = useCallback(async (selectedFiles: FileList | File[]) => {
     const allowedMimes = [
       'application/pdf',
       'image/jpeg',
@@ -530,18 +499,107 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
 
     if (newFileItems.length === 0) return;
 
+    setUngroupedFiles(prev => [...prev, ...newFileItems]);
+    toast({ title: `${newFileItems.length} file(s) added to ungrouped pages` });
+
+    // Process each file asynchronously
+    for (const fileItem of newFileItems) {
+      processUngroupedFile(fileItem);
+    }
+  }, [getFileId, generateThumbnail, toast, processUngroupedFile]);
+
+  /**
+   * Create a new student and assign selected ungrouped files to them
+   */
+  const createStudentWithFiles = useCallback((studentName: string, fileIds: string[]) => {
+    if (fileIds.length === 0) {
+      toast({ title: 'No files selected', variant: 'destructive' });
+      return null;
+    }
+
+    // Get files from ungrouped pool
+    const filesToAssign = ungroupedFiles.filter(f => fileIds.includes(f.id));
+    if (filesToAssign.length === 0) {
+      toast({ title: 'Selected files not found', variant: 'destructive' });
+      return null;
+    }
+
+    const submissionId = generateId();
+    const newSubmission: StudentSubmission = {
+      id: submissionId,
+      studentName: studentName.trim() || `Student ${submissions.length + 1}`,
+      files: filesToAssign,
+      combinedText: '',
+      createdAt: new Date(),
+    };
+
+    // Remove files from ungrouped pool
+    setUngroupedFiles(prev => prev.filter(f => !fileIds.includes(f.id)));
+    
+    // Add to submissions
+    setSubmissions(prev => [...prev, newSubmission]);
+    
+    // Update combined text
+    setTimeout(() => updateSubmissionCombinedText(submissionId), 0);
+
+    toast({ title: `${studentName || 'Student'} created with ${filesToAssign.length} file(s)` });
+    return submissionId;
+  }, [ungroupedFiles, submissions.length, generateId, updateSubmissionCombinedText, toast]);
+
+  /**
+   * Assign ungrouped files to an existing student submission
+   */
+  const assignFilesToStudent = useCallback((submissionId: string, fileIds: string[]) => {
+    const filesToAssign = ungroupedFiles.filter(f => fileIds.includes(f.id));
+    if (filesToAssign.length === 0) return;
+
+    // Remove from ungrouped
+    setUngroupedFiles(prev => prev.filter(f => !fileIds.includes(f.id)));
+    
+    // Add to submission
     setSubmissions(prev => prev.map(sub => {
       if (sub.id !== submissionId) return sub;
-      return { ...sub, files: [...sub.files, ...newFileItems] };
+      return { ...sub, files: [...sub.files, ...filesToAssign] };
     }));
     
     updateSubmissionCombinedText(submissionId);
-    toast({ title: `${newFileItems.length} file(s) added to submission` });
+    toast({ title: `${filesToAssign.length} file(s) assigned to student` });
+  }, [ungroupedFiles, updateSubmissionCombinedText, toast]);
 
-    for (const fileItem of newFileItems) {
-      processFile(submissionId, fileItem);
-    }
-  }, [getFileId, generateThumbnail, toast, updateSubmissionCombinedText, processFile]);
+  /**
+   * Unassign files from a student back to ungrouped pool
+   */
+  const unassignFilesFromStudent = useCallback((submissionId: string, fileIds: string[]) => {
+    setSubmissions(prev => {
+      const submission = prev.find(s => s.id === submissionId);
+      const filesToUnassign = submission?.files.filter(f => fileIds.includes(f.id)) || [];
+      
+      if (filesToUnassign.length > 0) {
+        setUngroupedFiles(uf => [...uf, ...filesToUnassign]);
+      }
+      
+      return prev.map(sub => {
+        if (sub.id !== submissionId) return sub;
+        return { ...sub, files: sub.files.filter(f => !fileIds.includes(f.id)) };
+      });
+    });
+    
+    updateSubmissionCombinedText(submissionId);
+    toast({ title: 'File(s) moved back to ungrouped' });
+  }, [updateSubmissionCombinedText, toast]);
+
+  /**
+   * Remove an ungrouped file
+   */
+  const removeUngroupedFile = useCallback((fileId: string) => {
+    setUngroupedFiles(prev => {
+      const file = prev.find(f => f.id === fileId);
+      if (file?.thumbnailUrl) {
+        URL.revokeObjectURL(file.thumbnailUrl);
+      }
+      return prev.filter(f => f.id !== fileId);
+    });
+  }, []);
 
   /**
    * Rename a student submission
@@ -579,7 +637,7 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
 
     updateSubmissionCombinedText(fromSubmissionId);
     updateSubmissionCombinedText(toSubmissionId);
-    toast({ title: 'File moved to another submission' });
+    toast({ title: 'File moved to another student' });
   }, [updateSubmissionCombinedText, toast]);
 
   /**
@@ -600,17 +658,18 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, [updateSubmissionCombinedText]);
 
   /**
-   * Delete an entire submission
+   * Delete an entire submission (returns files to ungrouped)
    */
   const deleteSubmission = useCallback((submissionId: string) => {
     setSubmissions(prev => {
       const submission = prev.find(s => s.id === submissionId);
-      submission?.files.forEach(f => {
-        if (f.thumbnailUrl) URL.revokeObjectURL(f.thumbnailUrl);
-      });
+      if (submission) {
+        // Return files to ungrouped
+        setUngroupedFiles(uf => [...uf, ...submission.files]);
+      }
       return prev.filter(s => s.id !== submissionId);
     });
-    toast({ title: 'Submission removed' });
+    toast({ title: 'Student removed - files returned to ungrouped' });
   }, [toast]);
 
   /**
@@ -623,9 +682,15 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, []);
 
   /**
-   * Clear all submissions
+   * Clear all submissions and ungrouped files
    */
-  const clearAllSubmissions = useCallback(() => {
+  const clearAll = useCallback(() => {
+    setUngroupedFiles(prev => {
+      prev.forEach(f => {
+        if (f.thumbnailUrl) URL.revokeObjectURL(f.thumbnailUrl);
+      });
+      return [];
+    });
     setSubmissions(prev => {
       prev.forEach(sub => {
         sub.files.forEach(f => {
@@ -638,15 +703,21 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
   }, []);
 
   // Calculate statistics
+  const totalUngroupedFiles = ungroupedFiles.length;
+  const ungroupedReadyFiles = ungroupedFiles.filter(f => f.status === 'ready').length;
+  const ungroupedExtractingFiles = ungroupedFiles.some(f => 
+    f.status === 'queued' || f.status === 'uploading' || f.status === 'uploaded' || f.status === 'extracting'
+  );
+
   const totalSubmissions = submissions.length;
-  const totalFiles = submissions.reduce((acc, sub) => acc + sub.files.length, 0);
+  const totalAssignedFiles = submissions.reduce((acc, sub) => acc + sub.files.length, 0);
   const completedFiles = submissions.reduce((acc, sub) => 
     acc + sub.files.filter(f => f.status === 'ready').length, 0
   );
   const failedFiles = submissions.reduce((acc, sub) => 
     acc + sub.files.filter(f => f.status === 'failed').length, 0
   );
-  const isExtracting = submissions.some(sub => 
+  const isExtracting = ungroupedExtractingFiles || submissions.some(sub => 
     sub.files.some(f => 
       f.status === 'queued' || 
       f.status === 'uploading' || 
@@ -654,28 +725,55 @@ export function useStudentSubmissions(options: UseStudentSubmissionsOptions = {}
       f.status === 'extracting'
     )
   );
+  
+  // Check if all files are assigned (no ungrouped files remaining)
+  const allFilesAssigned = ungroupedFiles.length === 0;
+  
+  // Check if grading can proceed
   const hasReadySubmissions = submissions.some(sub => 
     sub.files.some(f => f.status === 'ready')
   );
-  const progress = totalFiles > 0 ? (completedFiles / totalFiles) * 100 : 0;
+  const canGrade = allFilesAssigned && hasReadySubmissions && !isExtracting;
+  
+  const totalFiles = totalUngroupedFiles + totalAssignedFiles;
+  const progress = totalFiles > 0 ? ((completedFiles + ungroupedReadyFiles) / totalFiles) * 100 : 0;
 
   return {
+    // Ungrouped files
+    ungroupedFiles,
+    addFiles,
+    removeUngroupedFile,
+    retryUngroupedExtraction,
+    
+    // Student assignments
+    createStudentWithFiles,
+    assignFilesToStudent,
+    unassignFilesFromStudent,
+    
+    // Submissions
     submissions,
-    createSubmission,
-    addFilesToSubmission,
     renameSubmission,
     moveFileBetweenSubmissions,
     removeFile,
     deleteSubmission,
     retryExtraction,
     setSubmissionCombinedText,
-    clearAllSubmissions,
+    
+    // Utilities
+    clearAll,
+    
+    // Statistics
+    totalUngroupedFiles,
+    ungroupedReadyFiles,
     totalSubmissions,
+    totalAssignedFiles,
     totalFiles,
     completedFiles,
     failedFiles,
     isExtracting,
+    allFilesAssigned,
     hasReadySubmissions,
+    canGrade,
     progress,
   };
 }
