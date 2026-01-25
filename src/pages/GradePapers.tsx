@@ -409,7 +409,7 @@ export default function GradePapers() {
   }
 
   const hasAnyFiles = studentSubmissions.totalPages > 0;
-  const isExtracting = studentSubmissions.isExtracting || assignmentUpload.isExtracting || answerKeyUpload.isExtracting;
+  const isExtracting = studentSubmissions.isExtracting || assignmentUpload.isProcessing || answerKeyUpload.isProcessing;
   
   // Grading is enabled when all files are processed and we have ready groups
   const canGenerate = studentSubmissions.canGrade && !studentSubmissions.multipleStudentsWarning;

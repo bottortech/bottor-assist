@@ -227,9 +227,10 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
 
         const result = await extractTextFromFile(item.file);
 
-        if (result.success) {
+        if (result.success === true) {
           updateFile(item.id, { status: "ready", extractedText: result.text, error: undefined });
         } else {
+          // TypeScript narrowing: result is now { success: false; error: string }
           updateFile(item.id, { status: "failed", error: result.error });
         }
       } catch (e: any) {
@@ -289,6 +290,24 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   }, [files]);
 
   const isProcessing = useMemo(() => files.some((f) => isProcessingStatus(f.status)), [files]);
+  const isExtracting = isProcessing; // Alias for compatibility
+
+  // Computed stats
+  const totalFiles = files.length;
+  const completedFiles = files.filter((f) => f.status === "ready").length;
+  const failedFiles = files.filter((f) => f.status === "failed").length;
+  const progress = totalFiles > 0 ? ((completedFiles + failedFiles) / totalFiles) * 100 : 0;
+
+  const retryExtraction = useCallback(
+    (fileId: string) => {
+      const file = files.find((f) => f.id === fileId);
+      if (!file || file.status !== "failed") return;
+      updateFile(fileId, { status: "queued", error: undefined, extractedText: undefined });
+      queueTick.current++;
+      toast({ title: "Retrying extraction..." });
+    },
+    [files, toast, updateFile]
+  );
 
   const retryFailed = useCallback(() => {
     const failed = files.filter((f) => f.status === "failed");
@@ -301,13 +320,23 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     toast({ title: "Retry started", description: `Retrying ${failed.length} file(s).` });
   }, [files, toast, updateFile]);
 
+  const retryAllFailed = retryFailed; // Alias for compatibility
+
   return {
     files,
+    combinedText,
+    isExtracting,
+    isProcessing,
     addFiles,
     removeFile,
     clearAll,
+    retryExtraction,
     retryFailed,
-    isProcessing,
-    combinedText,
+    retryAllFailed,
+    // Stats
+    totalFiles,
+    completedFiles,
+    failedFiles,
+    progress,
   };
 }

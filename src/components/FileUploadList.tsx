@@ -94,9 +94,11 @@ const StatusBadge = React.forwardRef<HTMLDivElement, { status: FileStatus }>(
 StatusBadge.displayName = 'StatusBadge';
 
 function FileThumbnail({ file }: { file: UploadedFileItem }) {
-  // Check if file is an image type for potential thumbnail
-  const isImage = file.fileType.startsWith('image/');
-  const isPdf = file.fileType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
+  // Check file type from the underlying File object or guess from filename
+  const mimeType = file.file?.type || '';
+  const fileName = file.fileName.toLowerCase();
+  const isImage = mimeType.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/.test(fileName);
+  const isPdf = mimeType === 'application/pdf' || fileName.endsWith('.pdf');
   
   return (
     <div className="w-10 h-10 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
