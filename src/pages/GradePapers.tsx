@@ -134,12 +134,12 @@ export default function GradePapers() {
   const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
 
   // Student submissions hook (automatic grouping)
-  const studentSubmissions = useStudentSubmissions({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  const studentSubmissions = useStudentSubmissions({ maxConcurrentExtractions: 2 });
   
   // Other file upload hooks
-  const assignmentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
-  const answerKeyUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
-  const rubricUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  const assignmentUpload = useFileUpload({ maxConcurrentExtractions: 2 });
+  const answerKeyUpload = useFileUpload({ maxConcurrentExtractions: 2 });
+  const rubricUpload = useFileUpload({ maxConcurrentExtractions: 2 });
 
   const [form, setForm] = useState<GradePapersForm>({
     grade_level: '', subject: '', assignment_type: '', rubric: '', answer_key: '',
@@ -214,24 +214,24 @@ export default function GradePapers() {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      studentSubmissions.addFiles(e.target.files);
+      studentSubmissions.addFiles(Array.from(e.target.files));
       setSubmissionResults([]);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleAssignmentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) assignmentUpload.addFiles(e.target.files);
+    if (e.target.files) assignmentUpload.addFiles(Array.from(e.target.files));
     if (assignmentFileInputRef.current) assignmentFileInputRef.current.value = '';
   };
 
   const handleAnswerKeyFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) answerKeyUpload.addFiles(e.target.files);
+    if (e.target.files) answerKeyUpload.addFiles(Array.from(e.target.files));
     if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = '';
   };
 
   const handleRubricFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) rubricUpload.addFiles(e.target.files);
+    if (e.target.files) rubricUpload.addFiles(Array.from(e.target.files));
     if (rubricFileInputRef.current) rubricFileInputRef.current.value = '';
   };
 

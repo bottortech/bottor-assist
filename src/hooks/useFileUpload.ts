@@ -128,12 +128,11 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
         ),
       ]);
 
-      if (!result.success) {
-        updateFileStatus(fileId, { status: "failed", error: result.error || "Extraction failed" });
-        return;
+      if (result.success === true) {
+        updateFileStatus(fileId, { status: "ready", extractedText: result.text, error: undefined });
+      } else {
+        updateFileStatus(fileId, { status: "failed", error: (result as { success: false; error: string }).error });
       }
-
-      updateFileStatus(fileId, { status: "ready", extractedText: result.text, error: undefined });
     },
     [extractTextFromFile, extractionTimeoutMs, updateFileStatus],
   );
@@ -267,6 +266,12 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     return () => clearInterval(interval);
   }, [extractionTimeoutMs, updateFileStatus]);
 
+  // Computed stats
+  const totalFiles = files.length;
+  const completedFiles = files.filter(f => f.status === 'ready').length;
+  const failedFiles = files.filter(f => f.status === 'failed').length;
+  const progress = totalFiles > 0 ? ((completedFiles + failedFiles) / totalFiles) * 100 : 0;
+
   return {
     files,
     combinedText,
@@ -278,5 +283,11 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
 
     retryExtraction,
     retryAllFailed,
+
+    // Stats for FileUploadList
+    totalFiles,
+    completedFiles,
+    failedFiles,
+    progress,
   };
 }
