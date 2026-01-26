@@ -125,7 +125,7 @@ export default function QuickNotes() {
     noSpeechWarning,
     start: startRecording,
     stop: stopRecording,
-    reset: resetTranscript,
+    clearTranscript,
   } = useSpeechRecognition();
   
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
@@ -144,10 +144,10 @@ export default function QuickNotes() {
         }
         return fullTranscript.trim();
       });
-      // Reset transcript after appending
-      resetTranscript();
+      // Clear transcript buffer after appending (do NOT stop listening)
+      clearTranscript();
     }
-  }, [fullTranscript, resetTranscript]);
+  }, [clearTranscript, fullTranscript]);
 
   const handleStartRecording = async () => {
     setMicPermissionDenied(false);
@@ -169,6 +169,7 @@ export default function QuickNotes() {
   const handleStopRecording = () => {
     stopRecording();
   };
+
   const handleTemplateSelect = (templateKey: string) => {
     const template = TEMPLATES[templateKey as keyof typeof TEMPLATES];
     if (template) {
@@ -385,12 +386,12 @@ export default function QuickNotes() {
                 {/* Status indicator */}
                 <div className="flex items-center justify-center gap-3 py-3">
                   <div className="relative">
-                    <Mic className={`w-6 h-6 ${speechStatus === 'paused' ? 'text-amber-500' : 'text-destructive'}`} />
+                    <Mic className={`w-6 h-6 ${speechStatus === 'paused' ? 'text-muted-foreground' : 'text-destructive'}`} />
                     <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full animate-pulse ${
-                      speechStatus === 'paused' ? 'bg-amber-500' : 'bg-destructive'
+                      speechStatus === 'paused' ? 'bg-muted-foreground' : 'bg-destructive'
                     }`} />
                   </div>
-                  <span className={`text-sm font-medium ${speechStatus === 'paused' ? 'text-amber-500' : 'text-destructive'}`}>
+                  <span className={`text-sm font-medium ${speechStatus === 'paused' ? 'text-muted-foreground' : 'text-destructive'}`}>
                     {speechStatus === 'paused' ? 'Paused (listening…)' : 'Listening…'}
                   </span>
                 </div>
