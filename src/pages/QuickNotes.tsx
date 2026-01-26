@@ -9,7 +9,8 @@
  * FEATURES:
  * - Large text area for quick notes
  * - Template insertion for common note types
- * - Coming soon: Speech-to-text recording
+ * - Speech-to-text recording with silence detection
+ * - AI formatting for clean, structured notes
  * - Save to history
  * =============================================================================
  */
@@ -38,6 +39,10 @@ import {
   Loader2,
   FileText,
   AlertCircle,
+  Sparkles,
+  Copy,
+  Replace,
+  CheckCircle,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -135,6 +140,12 @@ export default function QuickNotes() {
   const [saving, setSaving] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   
+  // AI Formatting state
+  const [formattedNote, setFormattedNote] = useState('');
+  const [isFormatting, setIsFormatting] = useState(false);
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  
   // Append finalized transcript to notes
   useEffect(() => {
     if (fullTranscript) {
@@ -184,6 +195,62 @@ export default function QuickNotes() {
     }
   };
 
+  const handleFormatNote = async () => {
+    if (!notes.trim()) return;
+    
+    setIsFormatting(true);
+    setFormatError(null);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('format-teacher-note', {
+        body: { rawNotes: notes },
+      });
+      
+      if (error) throw error;
+      
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+      
+      setFormattedNote(data.formattedNote || '');
+      toast({ title: 'Note formatted successfully!' });
+    } catch (error) {
+      console.error('Error formatting note:', error);
+      const message = error instanceof Error ? error.message : 'Failed to format note';
+      setFormatError(message);
+      toast({
+        title: 'Formatting failed',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsFormatting(false);
+    }
+  };
+
+  const handleCopyFormatted = async () => {
+    if (!formattedNote) return;
+    
+    try {
+      await navigator.clipboard.writeText(formattedNote);
+      setCopied(true);
+      toast({ title: 'Copied to clipboard!' });
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      toast({
+        title: 'Copy failed',
+        description: 'Please try selecting and copying manually.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleReplaceWithFormatted = () => {
+    if (!formattedNote) return;
+    setNotes(formattedNote);
+    toast({ title: 'Notes replaced with formatted version' });
+  };
+
   const handleSave = async () => {
     // Prompt guests to sign up
     if (isGuest || !user) {
@@ -221,6 +288,7 @@ export default function QuickNotes() {
         summary_json: {
           note_type: 'quick_note',
           content: notes,
+          formatted_notes: formattedNote || null,
           created_via: 'quick_notes_page',
         },
       };
@@ -459,6 +527,100 @@ export default function QuickNotes() {
                 <p className="text-sm text-muted-foreground text-center">
                   Click to start speaking. Your words will appear in the notes above.
                 </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* AI Format Section */}
+        <Card className="border-0 shadow-md bg-card-gradient">
+          <CardContent className="pt-6 space-y-4">
+            <Label className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              Format Note (AI)
+            </Label>
+            
+            <p className="text-sm text-muted-foreground">
+              Use AI to organize your notes into a clean, structured format with headings, bullets, and action items.
+            </p>
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-3">
+              <Button
+                onClick={handleFormatNote}
+                disabled={!notes.trim() || isFormatting}
+                className="flex-1 sm:flex-none"
+              >
+                {isFormatting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Formatting…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Format My Note
+                  </>
+                )}
+              </Button>
+              
+              <Button
+                variant="secondary"
+                onClick={handleCopyFormatted}
+                disabled={!formattedNote}
+                className="flex-1 sm:flex-none"
+              >
+                {copied ? (
+                  <>
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy Formatted
+                  </>
+                )}
+              </Button>
+              
+              <Button
+                variant="secondary"
+                onClick={handleReplaceWithFormatted}
+                disabled={!formattedNote}
+                className="flex-1 sm:flex-none"
+              >
+                <Replace className="w-4 h-4 mr-2" />
+                Replace Notes
+              </Button>
+            </div>
+
+            {/* Error Message */}
+            {formatError && (
+              <div className="flex items-start gap-3 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-sm text-destructive">{formatError}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFormatNote}
+                    disabled={isFormatting}
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Formatted Note Preview */}
+            {formattedNote && (
+              <div className="space-y-2">
+                <Label className="text-sm text-muted-foreground">Formatted Note Preview</Label>
+                <div className="p-4 rounded-lg bg-muted/50 border border-border min-h-[150px] max-h-[400px] overflow-y-auto">
+                  <pre className="text-sm text-foreground whitespace-pre-wrap font-sans leading-relaxed">
+                    {formattedNote}
+                  </pre>
+                </div>
               </div>
             )}
           </CardContent>
