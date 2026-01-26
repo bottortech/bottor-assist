@@ -174,6 +174,7 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
   const words = rawName.trim().split(/\s+/);
   const cleanedWords: string[] = [];
   let hitStopWord = false;
+  let hasSpecialChars = false;
   
   for (const word of words) {
     // Extract only letters for stop-word comparison (ignore apostrophes/hyphens)
@@ -182,6 +183,10 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
     if (NAME_STOP_WORDS.includes(lowerWord)) {
       hitStopWord = true;
       break;
+    }
+    // Check for apostrophes or hyphens (valid but flag as low confidence per UX requirement)
+    if (/[''-]/.test(word)) {
+      hasSpecialChars = true;
     }
     // Keep words that have letters - allow apostrophes and hyphens as valid name chars
     if (word.replace(/[^a-zA-Z'-]/g, '').length > 0) {
@@ -199,8 +204,8 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
   
   const cleanedName = cleanedWords.join(' ');
   
-  // Low confidence if: we had to remove stop words, or not all words are capitalized
-  const confidence: 'high' | 'low' = (hitStopWord || !allCapitalized) ? 'low' : 'high';
+  // Low confidence if: we had to remove stop words, name has special chars, or not all capitalized
+  const confidence: 'high' | 'low' = (hitStopWord || hasSpecialChars || !allCapitalized) ? 'low' : 'high';
   
   return { name: cleanedName, confidence };
 }
@@ -456,6 +461,10 @@ export default function GradePapers() {
   // Student groups for batch grading
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
+  
+  // Inline name editing state
+  const [editingNameIndex, setEditingNameIndex] = useState<number | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState("");
 
   const [grading, setGrading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -516,10 +525,29 @@ export default function GradePapers() {
           ...updated[groupIndex],
           studentName: newName,
           nameConfirmed: true,
+          nameConfidence: 'high', // Mark as high confidence once confirmed
         };
       }
       return updated;
     });
+  };
+
+  // Inline name editing helpers
+  const startNameEdit = (index: number, currentName: string) => {
+    setEditingNameIndex(index);
+    setEditingNameValue(currentName === 'Unknown Student' ? '' : currentName);
+  };
+
+  const confirmNameEdit = (index: number) => {
+    const trimmedName = editingNameValue.trim();
+    updateStudentName(index, trimmedName || 'Unknown Student');
+    setEditingNameIndex(null);
+    setEditingNameValue('');
+  };
+
+  const cancelNameEdit = () => {
+    setEditingNameIndex(null);
+    setEditingNameValue('');
   };
 
   // Detect rubric and update grading mode
@@ -951,97 +979,147 @@ export default function GradePapers() {
                   <Label className="text-sm font-medium">Detected Students ({studentGroups.length})</Label>
                 </div>
                 
+                {/* Non-blocking verification banner */}
+                {studentGroups.some(g => !g.nameConfirmed && (g.nameSource === 'unknown' || g.nameConfidence === 'low')) && (
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        Names detected automatically
+                      </p>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Please confirm or edit any names marked for verification to ensure accurate grading. You can proceed without confirming — we'll use the detected names.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="space-y-2">
                   {studentGroups.map((group, idx) => {
-                    // Show inline editing for: unknown source OR low confidence names that aren't confirmed
-                    const needsConfirmation = !group.nameConfirmed && 
+                    // Determine confidence state
+                    const isHighConfidence = group.nameConfirmed || 
+                      (group.nameSource === 'document' && group.nameConfidence === 'high');
+                    const needsVerification = !group.nameConfirmed && 
                       (group.nameSource === 'unknown' || group.nameConfidence === 'low');
+                    const isEditing = editingNameIndex === idx;
                     
                     return (
                       <div
                         key={`${group.detectedName}-${idx}`}
-                        className={`flex items-center gap-2 p-2 rounded-md border transition-colors cursor-pointer ${
+                        className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
                           idx === selectedGroupIndex 
-                            ? 'border-primary bg-primary/10' 
-                            : 'border-muted bg-muted/30 hover:border-primary/50'
+                            ? 'border-primary bg-primary/5' 
+                            : 'border-muted bg-background hover:border-primary/30'
                         }`}
                         onClick={() => setSelectedGroupIndex(idx)}
                       >
-                        <div className="flex-1 min-w-0">
-                          {needsConfirmation ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                value={group.studentName === 'Unknown Student' ? '' : group.studentName}
-                                onChange={(e) => updateStudentName(idx, e.target.value || 'Unknown Student')}
-                                placeholder="Enter student name..."
-                                className="h-7 text-sm flex-1"
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  updateStudentName(idx, group.studentName);
-                                }}
-                                title="Confirm name"
-                              >
-                                <Check className="w-3 h-3" />
-                              </Button>
+                        {/* Confidence indicator */}
+                        <div className="flex-shrink-0">
+                          {isHighConfidence ? (
+                            <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                             </div>
                           ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium truncate">{group.studentName}</span>
-                              <Badge variant="outline" className="text-xs flex-shrink-0">
-                                {group.files.length} file{group.files.length !== 1 ? 's' : ''}
-                              </Badge>
-                              {group.nameSource === 'document' && group.nameConfidence === 'high' && (
-                                <Badge variant="secondary" className="text-xs flex-shrink-0">
-                                  <FileText className="w-3 h-3 mr-1" />
-                                  from doc
-                                </Badge>
-                              )}
-                              {(group.nameSource === 'filename' || group.nameConfidence === 'low') && (
-                                <Badge variant="outline" className="text-xs flex-shrink-0 text-muted-foreground">
-                                  {group.nameSource === 'filename' ? 'from filename' : 'edited'}
-                                </Badge>
-                              )}
-                              {group.result && <Check className="w-4 h-4 text-primary flex-shrink-0" />}
-                            </div>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center cursor-help">
+                                    <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="left">
+                                  <p className="text-xs max-w-[200px]">
+                                    {group.nameSource === 'unknown' 
+                                      ? 'Name could not be detected. Please enter manually.'
+                                      : 'Name detected but may need verification. Click to edit.'}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                         
-                        {needsConfirmation && (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Info className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-xs">
-                                  {group.nameSource === 'unknown' 
-                                    ? 'Student name not detected. Please enter manually.'
-                                    : 'Name may be incomplete. Please verify or edit.'}
-                                </p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        )}
+                        {/* Name field */}
+                        <div className="flex-1 min-w-0">
+                          {isEditing ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                autoFocus
+                                value={editingNameValue}
+                                onChange={(e) => setEditingNameValue(e.target.value)}
+                                placeholder="Enter student name..."
+                                className="h-8 text-sm flex-1"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    confirmNameEdit(idx);
+                                  } else if (e.key === 'Escape') {
+                                    cancelNameEdit();
+                                  }
+                                }}
+                              />
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  confirmNameEdit(idx);
+                                }}
+                                title="Confirm"
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cancelNameEdit();
+                                }}
+                                title="Cancel"
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div 
+                              className="flex flex-col gap-0.5 cursor-text"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startNameEdit(idx, group.studentName);
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-medium truncate ${
+                                  group.studentName === 'Unknown Student' ? 'text-muted-foreground italic' : ''
+                                }`}>
+                                  {group.studentName === 'Unknown Student' ? 'Click to enter name' : group.studentName}
+                                </span>
+                                <Badge variant="outline" className="text-xs flex-shrink-0 font-normal">
+                                  {group.files.length} file{group.files.length !== 1 ? 's' : ''}
+                                </Badge>
+                                {group.result && (
+                                  <Badge variant="secondary" className="text-xs flex-shrink-0 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                                    Graded
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {isHighConfidence 
+                                  ? 'Detected from document' 
+                                  : needsVerification 
+                                    ? 'Needs verification — click to edit'
+                                    : 'Detected from filename'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
                 </div>
-                
-                {/* Warning if any groups need confirmation */}
-                {studentGroups.some(g => !g.nameConfirmed && (g.nameSource === 'unknown' || g.nameConfidence === 'low')) && (
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/30">
-                    <Info className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                    <span className="text-xs text-amber-600 dark:text-amber-400">
-                      Some student names need verification. Please confirm or edit names above to ensure accurate grading.
-                    </span>
-                  </div>
-                )}
               </div>
             )}
           </CardContent>
