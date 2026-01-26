@@ -45,6 +45,7 @@ interface SpeechRecognition extends EventTarget {
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
   onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
+  onspeechstart: (() => void) | null;
   start(): void;
   stop(): void;
   abort(): void;
@@ -59,9 +60,9 @@ export interface UseSpeechRecognitionReturn {
   liveCaption: string;
   fullTranscript: string;
   noSpeechWarning: boolean;
+  silenceSeconds: number;
   start: () => void;
   stop: () => void;
-  /** Clears transcript buffers without stopping recognition. */
   clearTranscript: () => void;
   reset: () => void;
 }
@@ -69,6 +70,7 @@ export interface UseSpeechRecognitionReturn {
 const NO_SPEECH_WARNING_TIMEOUT = 2000; // 2 seconds - show warning
 const PAUSE_THRESHOLD = 1000; // 1 second - show "paused" status
 const SILENCE_TIMEOUT = 10000; // 10 seconds - stop recording
+const RESTART_DELAY = 300; // 300ms delay before auto-restart
 
 export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [isListening, setIsListening] = useState(false);
@@ -76,6 +78,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [liveCaption, setLiveCaption] = useState('');
   const [fullTranscript, setFullTranscript] = useState('');
   const [noSpeechWarning, setNoSpeechWarning] = useState(false);
+  const [silenceSeconds, setSilenceSeconds] = useState(0);
   
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const noSpeechTimerRef = useRef<number | null>(null);
@@ -84,7 +87,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const lastSpeechAtRef = useRef<number>(Date.now());
   const hasReceivedSpeechRef = useRef(false);
   const isActiveRef = useRef(false);
-  const stoppedBySilenceRef = useRef(false);
+  const manualStopRequestedRef = useRef(false);
   
   const SpeechRecognitionAPI = typeof window !== 'undefined' 
     ? window.SpeechRecognition || window.webkitSpeechRecognition 
@@ -114,10 +117,12 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   }, []);
 
   const stopInternal = useCallback(() => {
+    console.log('[SpeechRecognition] stopInternal called');
     isActiveRef.current = false;
     clearNoSpeechTimer();
     clearSilenceWatchdog();
     clearRestartTimer();
+    setSilenceSeconds(0);
     
     if (recognitionRef.current) {
       try {
@@ -125,7 +130,6 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       } catch (e) {
         // Ignore
       }
-      recognitionRef.current = null;
     }
     
     setIsListening(false);
@@ -141,6 +145,13 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     }, NO_SPEECH_WARNING_TIMEOUT);
   }, [clearNoSpeechTimer]);
 
+  // Reset silence timer - called on any speech activity
+  const resetSilenceTimer = useCallback(() => {
+    lastSpeechAtRef.current = Date.now();
+    setSilenceSeconds(0);
+    setStatus('listening');
+  }, []);
+
   // Silence watchdog - checks every 250ms for silence duration
   const startSilenceWatchdog = useCallback(() => {
     clearSilenceWatchdog();
@@ -152,11 +163,13 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       }
       
       const silenceDuration = Date.now() - lastSpeechAtRef.current;
+      const seconds = Math.floor(silenceDuration / 1000);
+      setSilenceSeconds(seconds);
       
       if (silenceDuration >= SILENCE_TIMEOUT) {
         // 10+ seconds of silence - stop recording
         console.log('[SpeechRecognition] Stopping due to 10s silence');
-        stoppedBySilenceRef.current = true;
+        manualStopRequestedRef.current = true; // Prevent auto-restart
         setStatus('stopped-silence');
         stopInternal();
       } else if (silenceDuration >= PAUSE_THRESHOLD) {
@@ -169,36 +182,28 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     }, 250);
   }, [clearSilenceWatchdog, stopInternal]);
 
-  const start = useCallback(() => {
-    if (!SpeechRecognitionAPI) {
-      console.warn('[SpeechRecognition] Not supported in this browser');
-      return;
-    }
-
-    // Reset silence stop flag
-    stoppedBySilenceRef.current = false;
-
-    // Stop any existing recognition
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        // Ignore
-      }
-    }
-
+  const createRecognition = useCallback(() => {
+    if (!SpeechRecognitionAPI) return null;
+    
     const recognition = new SpeechRecognitionAPI();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     recognition.maxAlternatives = 1;
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      // Update last speech timestamp on every result
-      lastSpeechAtRef.current = Date.now();
+    recognition.onspeechstart = () => {
+      console.log('[SpeechRecognition] onspeechstart fired');
+      resetSilenceTimer();
       hasReceivedSpeechRef.current = true;
       setNoSpeechWarning(false);
-      setStatus('listening');
+      clearNoSpeechTimer();
+    };
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      // Update last speech timestamp on every result
+      resetSilenceTimer();
+      hasReceivedSpeechRef.current = true;
+      setNoSpeechWarning(false);
       clearNoSpeechTimer();
       
       let interim = '';
@@ -209,7 +214,13 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         const transcript = result[0].transcript;
         
         if (result.isFinal) {
-          final += transcript + ' ';
+          // Add proper punctuation/spacing
+          let text = transcript.trim();
+          // Add period if doesn't end with punctuation
+          if (text && !/[.!?]$/.test(text)) {
+            text += '.';
+          }
+          final += text + ' ';
         } else {
           interim = transcript;
         }
@@ -232,56 +243,100 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
           setNoSpeechWarning(true);
         }
         // Don't stop on no-speech error - let the silence watchdog handle it
+      } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        console.error('[SpeechRecognition] Permission denied');
+        manualStopRequestedRef.current = true;
+        stopInternal();
+        setStatus('idle');
       } else if (event.error !== 'aborted') {
         console.error('[SpeechRecognition] Unexpected error:', event.error);
       }
     };
 
     recognition.onend = () => {
-      console.log('[SpeechRecognition] Ended, isActive:', isActiveRef.current);
+      const silenceDuration = Date.now() - lastSpeechAtRef.current;
+      console.log('[SpeechRecognition] onend fired, isActive:', isActiveRef.current, 
+        'manualStop:', manualStopRequestedRef.current, 
+        'silenceDuration:', Math.round(silenceDuration / 1000) + 's');
       
-      // Check if we should restart or stay stopped
-      if (isActiveRef.current) {
-        const silenceDuration = Date.now() - lastSpeechAtRef.current;
+      // Only auto-restart if:
+      // 1. Still in active recording mode
+      // 2. User didn't manually click stop
+      // 3. Silence hasn't exceeded threshold
+      if (isActiveRef.current && !manualStopRequestedRef.current && silenceDuration < SILENCE_TIMEOUT) {
+        console.log('[SpeechRecognition] Scheduling auto-restart');
+        clearRestartTimer();
         
-        if (silenceDuration < SILENCE_TIMEOUT) {
-          // Still within silence threshold - auto-restart
+        restartTimerRef.current = window.setTimeout(() => {
+          if (!isActiveRef.current || manualStopRequestedRef.current) {
+            console.log('[SpeechRecognition] Cancelled restart - no longer active');
+            return;
+          }
+          
           try {
-            // Some browsers throw if start() is called synchronously inside onend.
-            clearRestartTimer();
-            restartTimerRef.current = window.setTimeout(() => {
+            console.log('[SpeechRecognition] Auto-restarting...');
+            recognition.start();
+          } catch (e) {
+            console.warn('[SpeechRecognition] Failed to restart:', e);
+            // If restart fails, try creating a fresh instance
+            const newRecognition = createRecognition();
+            if (newRecognition) {
+              recognitionRef.current = newRecognition;
               try {
-                recognition.start();
-                console.log('[SpeechRecognition] Auto-restarted (silence:', Math.round(silenceDuration / 1000), 's)');
-              } catch (e) {
-                console.warn('[SpeechRecognition] Failed to restart (async):', e);
+                newRecognition.start();
+                console.log('[SpeechRecognition] Restarted with fresh instance');
+              } catch (e2) {
+                console.error('[SpeechRecognition] Fresh instance also failed:', e2);
                 setIsListening(false);
                 setStatus('idle');
                 isActiveRef.current = false;
               }
-            }, 50);
-          } catch (e) {
-            console.warn('[SpeechRecognition] Failed to restart:', e);
-            setIsListening(false);
-            setStatus('idle');
-            isActiveRef.current = false;
+            }
           }
-        } else {
-          // Exceeded silence threshold - stop
-          console.log('[SpeechRecognition] Not restarting - exceeded silence threshold');
-          stoppedBySilenceRef.current = true;
-          setStatus('stopped-silence');
-          setIsListening(false);
-          isActiveRef.current = false;
-          clearSilenceWatchdog();
-        }
-      } else {
+        }, RESTART_DELAY);
+      } else if (silenceDuration >= SILENCE_TIMEOUT) {
+        // Exceeded silence threshold - ensure stopped
+        console.log('[SpeechRecognition] Not restarting - exceeded silence threshold');
+        setStatus('stopped-silence');
         setIsListening(false);
-        if (!stoppedBySilenceRef.current) {
-          setStatus('idle');
-        }
+        isActiveRef.current = false;
+        clearSilenceWatchdog();
+      } else if (manualStopRequestedRef.current) {
+        console.log('[SpeechRecognition] Not restarting - manual stop requested');
+        setIsListening(false);
+        setStatus('idle');
+        isActiveRef.current = false;
       }
     };
+
+    return recognition;
+  }, [SpeechRecognitionAPI, clearNoSpeechTimer, clearRestartTimer, clearSilenceWatchdog, resetSilenceTimer, stopInternal]);
+
+  const start = useCallback(() => {
+    if (!SpeechRecognitionAPI) {
+      console.warn('[SpeechRecognition] Not supported in this browser');
+      return;
+    }
+
+    console.log('[SpeechRecognition] Starting...');
+    
+    // Reset flags
+    manualStopRequestedRef.current = false;
+    
+    // Clear any pending restart
+    clearRestartTimer();
+
+    // Stop any existing recognition
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {
+        // Ignore
+      }
+    }
+
+    const recognition = createRecognition();
+    if (!recognition) return;
 
     try {
       recognition.start();
@@ -289,19 +344,21 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       isActiveRef.current = true;
       hasReceivedSpeechRef.current = false;
       lastSpeechAtRef.current = Date.now();
+      setSilenceSeconds(0);
       setIsListening(true);
       setStatus('listening');
       setNoSpeechWarning(false);
       startNoSpeechTimer();
       startSilenceWatchdog();
-      console.log('[SpeechRecognition] Started');
+      console.log('[SpeechRecognition] Started successfully');
     } catch (e) {
       console.error('[SpeechRecognition] Failed to start:', e);
     }
-  }, [SpeechRecognitionAPI, clearNoSpeechTimer, startNoSpeechTimer, startSilenceWatchdog, clearSilenceWatchdog, clearRestartTimer]);
+  }, [SpeechRecognitionAPI, clearRestartTimer, createRecognition, startNoSpeechTimer, startSilenceWatchdog]);
 
   const stop = useCallback(() => {
-    stoppedBySilenceRef.current = false;
+    console.log('[SpeechRecognition] Manual stop requested');
+    manualStopRequestedRef.current = true;
     setStatus('idle');
     stopInternal();
   }, [stopInternal]);
@@ -312,16 +369,20 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   }, []);
 
   const reset = useCallback(() => {
+    manualStopRequestedRef.current = true;
     stop();
     clearTranscript();
     setNoSpeechWarning(false);
     hasReceivedSpeechRef.current = false;
+    setSilenceSeconds(0);
   }, [clearTranscript, stop]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      console.log('[SpeechRecognition] Cleanup on unmount');
       isActiveRef.current = false;
+      manualStopRequestedRef.current = true;
       clearNoSpeechTimer();
       clearSilenceWatchdog();
       clearRestartTimer();
@@ -342,6 +403,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     liveCaption,
     fullTranscript,
     noSpeechWarning,
+    silenceSeconds,
     start,
     stop,
     clearTranscript,
