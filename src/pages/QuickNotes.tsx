@@ -14,10 +14,11 @@
  * =============================================================================
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useGuestMode } from '@/hooks/useGuestMode';
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -32,9 +33,11 @@ import {
 import {
   ArrowLeft,
   Mic,
+  MicOff,
   Save,
   Loader2,
   FileText,
+  AlertCircle,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -111,11 +114,60 @@ export default function QuickNotes() {
   const { isGuest } = useGuestMode();
   const navigate = useNavigate();
   const { toast } = useToast();
+  
+  // Speech recognition
+  const {
+    isSupported: speechSupported,
+    isListening,
+    liveCaption,
+    fullTranscript,
+    noSpeechWarning,
+    start: startRecording,
+    stop: stopRecording,
+    reset: resetTranscript,
+  } = useSpeechRecognition();
+  
+  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
 
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  
+  // Append finalized transcript to notes
+  useEffect(() => {
+    if (fullTranscript) {
+      setNotes(prev => {
+        // Add space or newline if there's existing content
+        if (prev.trim()) {
+          return prev + ' ' + fullTranscript.trim();
+        }
+        return fullTranscript.trim();
+      });
+      // Reset transcript after appending
+      resetTranscript();
+    }
+  }, [fullTranscript, resetTranscript]);
 
+  const handleStartRecording = async () => {
+    setMicPermissionDenied(false);
+    
+    try {
+      // Request mic permission first
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      startRecording();
+    } catch (err) {
+      console.warn('[QuickNotes] Mic permission denied:', err);
+      setMicPermissionDenied(true);
+      toast({
+        title: 'Microphone Access Needed',
+        description: 'Please allow microphone access to use speech-to-text.',
+      });
+    }
+  };
+
+  const handleStopRecording = () => {
+    stopRecording();
+  };
   const handleTemplateSelect = (templateKey: string) => {
     const template = TEMPLATES[templateKey as keyof typeof TEMPLATES];
     if (template) {
@@ -283,7 +335,7 @@ export default function QuickNotes() {
           </CardContent>
         </Card>
 
-        {/* Recording Section (Coming Soon) */}
+        {/* Recording Section */}
         <Card className="border-0 shadow-md bg-card-gradient">
           <CardContent className="pt-6 space-y-4">
             <Label className="flex items-center gap-2">
@@ -291,19 +343,87 @@ export default function QuickNotes() {
               Record Notes (Speech-to-Text)
             </Label>
             
-            <Button
-              disabled
-              variant="secondary"
-              size="lg"
-              className="w-full opacity-60 cursor-not-allowed"
-            >
-              <Mic className="w-5 h-5 mr-2" />
-              Record (Coming Soon)
-            </Button>
-            
-            <p className="text-sm text-muted-foreground text-center">
-              Recording is being finalized. For now, type notes or paste a transcript.
-            </p>
+            {!speechSupported ? (
+              // Browser doesn't support Speech Recognition
+              <div className="flex items-start gap-3 p-4 rounded-lg bg-muted/50 border border-border">
+                <AlertCircle className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+                <p className="text-sm text-muted-foreground">
+                  Speech-to-text isn't supported in this browser. Please type or paste a transcript.
+                </p>
+              </div>
+            ) : micPermissionDenied ? (
+              // Mic permission was denied
+              <div className="flex items-start gap-3 p-4 rounded-lg bg-muted/50 border border-border">
+                <MicOff className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Microphone access was denied. To use speech-to-text, please enable microphone access in your browser settings.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleStartRecording}
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              </div>
+            ) : isListening ? (
+              // Currently recording
+              <div className="space-y-4">
+                <Button
+                  onClick={handleStopRecording}
+                  variant="destructive"
+                  size="lg"
+                  className="w-full"
+                >
+                  <MicOff className="w-5 h-5 mr-2" />
+                  Stop Recording
+                </Button>
+                
+                {/* Listening indicator */}
+                <div className="flex items-center justify-center gap-3 py-3">
+                  <div className="relative">
+                    <Mic className="w-6 h-6 text-destructive" />
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-destructive rounded-full animate-pulse" />
+                  </div>
+                  <span className="text-sm font-medium text-destructive">Listening…</span>
+                </div>
+                
+                {/* Live caption preview */}
+                {liveCaption && (
+                  <div className="p-3 rounded-lg bg-muted/50 border border-border">
+                    <p className="text-sm text-muted-foreground italic">{liveCaption}</p>
+                  </div>
+                )}
+                
+                {/* No speech warning */}
+                {noSpeechWarning && (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-accent/50 border border-accent">
+                    <AlertCircle className="w-4 h-4 text-accent-foreground shrink-0" />
+                    <p className="text-sm text-accent-foreground">
+                      We can't hear you — check your mic
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              // Ready to record
+              <div className="space-y-3">
+                <Button
+                  onClick={handleStartRecording}
+                  variant="secondary"
+                  size="lg"
+                  className="w-full"
+                >
+                  <Mic className="w-5 h-5 mr-2" />
+                  Start Recording
+                </Button>
+                <p className="text-sm text-muted-foreground text-center">
+                  Click to start speaking. Your words will appear in the notes above.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
