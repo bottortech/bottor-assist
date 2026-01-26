@@ -132,6 +132,7 @@ interface StudentGroup {
   studentName: string;
   detectedName: string; // Original detected name (for display)
   nameSource: 'document' | 'filename' | 'unknown'; // How the name was detected
+  nameConfidence: 'high' | 'low'; // Confidence in the detected name
   nameConfirmed: boolean; // Teacher has confirmed/edited the name
   files: UploadedFileItem[];
   extractedText: string;
@@ -143,28 +144,81 @@ type GradingMode = "scoring" | "feedback-only";
 type RubricMode = "none" | "draft" | "locked";
 
 /**
+ * Stop-word labels that should NOT be part of a student name
+ * These commonly appear after names on worksheets
+ */
+const NAME_STOP_WORDS = [
+  'date', 'name', 'student', 'grade', 'class', 'period', 
+  'teacher', 'id', 'score', 'points', 'page', 'section',
+  'assignment', 'subject', 'course', 'hour', 'block', 'room',
+  'number', 'no', 'total', 'time', 'due'
+];
+
+/**
+ * Clean a detected name by removing trailing stop-word labels
+ * @returns cleaned name and confidence level
+ */
+function cleanStudentName(rawName: string): { name: string; confidence: 'high' | 'low' } {
+  if (!rawName) return { name: '', confidence: 'low' };
+  
+  const words = rawName.trim().split(/\s+/);
+  const cleanedWords: string[] = [];
+  let hitStopWord = false;
+  
+  for (const word of words) {
+    const lowerWord = word.toLowerCase();
+    // Stop if we hit a stop-word label
+    if (NAME_STOP_WORDS.includes(lowerWord)) {
+      hitStopWord = true;
+      break;
+    }
+    cleanedWords.push(word);
+  }
+  
+  // Validate: must be 2-4 capitalized words
+  if (cleanedWords.length < 2 || cleanedWords.length > 4) {
+    return { name: rawName.trim(), confidence: 'low' };
+  }
+  
+  // Check if all words are properly capitalized (start with uppercase)
+  const allCapitalized = cleanedWords.every(w => /^[A-Z]/.test(w));
+  
+  const cleanedName = cleanedWords.join(' ');
+  
+  // Low confidence if: we had to remove stop words, or not all words are capitalized
+  const confidence: 'high' | 'low' = (hitStopWord || !allCapitalized) ? 'low' : 'high';
+  
+  return { name: cleanedName, confidence };
+}
+
+/**
  * Common name patterns to detect in OCR text
  */
 const NAME_PATTERNS = [
-  // "Name: John Smith" or "Student Name: John Smith"
-  /(?:student\s*)?name\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  // "Name: John Smith" or "Student Name: John Smith" - capture everything after the colon
+  /(?:student\s*)?name\s*[:=]\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
   // "Name ___John Smith___" (with underlines)
-  /name\s*[_\s]*[:=]?\s*[_\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  /name\s*[_\s]*[:=]?\s*[_\s]*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
   // "John Smith" at the very start of document (first line)
-  /^([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s|$)/m,
+  /^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s|$)/m,
   // "Student: John Smith"
-  /student\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  /student\s*[:=]\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
   // "By: John Smith" or "By John Smith"
-  /by\s*[:=]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  /by\s*[:=]?\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
 ];
 
 /**
  * Detect student name from extracted document text (OCR)
  * Priority: Document content > Filename fallback
+ * Now includes stop-word filtering and confidence scoring
  */
-function detectStudentNameFromText(text: string): { name: string; source: 'document' | 'unknown' } {
+function detectStudentNameFromText(text: string): { 
+  name: string; 
+  source: 'document' | 'unknown';
+  confidence: 'high' | 'low';
+} {
   if (!text || !text.trim()) {
-    return { name: '', source: 'unknown' };
+    return { name: '', source: 'unknown', confidence: 'low' };
   }
 
   // Look at first ~25 lines for name patterns
@@ -173,16 +227,20 @@ function detectStudentNameFromText(text: string): { name: string; source: 'docum
   for (const pattern of NAME_PATTERNS) {
     const match = firstLines.match(pattern);
     if (match && match[1]) {
-      const name = match[1].trim();
+      const rawName = match[1].trim();
+      
+      // Clean the name using stop-word filtering
+      const { name: cleanedName, confidence } = cleanStudentName(rawName);
+      
       // Validate it looks like a real name (2-4 words, reasonable length)
-      const words = name.split(/\s+/);
-      if (words.length >= 2 && words.length <= 4 && name.length >= 3 && name.length <= 50) {
-        return { name, source: 'document' };
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
+        return { name: cleanedName, source: 'document', confidence };
       }
     }
   }
 
-  return { name: '', source: 'unknown' };
+  return { name: '', source: 'unknown', confidence: 'low' };
 }
 
 /**
@@ -240,6 +298,7 @@ function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
     const docResult = detectStudentNameFromText(file.extractedText);
     let studentName = docResult.name;
     let nameSource: 'document' | 'filename' | 'unknown' = docResult.source;
+    let nameConfidence: 'high' | 'low' = docResult.confidence;
 
     // Fallback to filename
     if (!studentName) {
@@ -247,6 +306,8 @@ function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
       if (fileResult.found) {
         studentName = fileResult.name;
         nameSource = 'filename';
+        // Filename-based detection is lower confidence
+        nameConfidence = 'low';
       }
     }
 
@@ -254,6 +315,7 @@ function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
     if (!studentName) {
       studentName = 'Unknown Student';
       nameSource = 'unknown';
+      nameConfidence = 'low';
     }
 
     // Find existing group or create new
@@ -268,7 +330,9 @@ function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
         studentName,
         detectedName: studentName,
         nameSource,
-        nameConfirmed: nameSource === 'document', // Auto-confirm if from document
+        nameConfidence,
+        // Auto-confirm only if from document with high confidence
+        nameConfirmed: nameSource === 'document' && nameConfidence === 'high',
         files: [file],
         extractedText: file.extractedText,
         result: null,
@@ -811,7 +875,9 @@ export default function GradePapers() {
                 
                 <div className="space-y-2">
                   {studentGroups.map((group, idx) => {
-                    const needsConfirmation = group.nameSource === 'unknown' && !group.nameConfirmed;
+                    // Show inline editing for: unknown source OR low confidence names that aren't confirmed
+                    const needsConfirmation = !group.nameConfirmed && 
+                      (group.nameSource === 'unknown' || group.nameConfidence === 'low');
                     
                     return (
                       <div
@@ -841,6 +907,7 @@ export default function GradePapers() {
                                   e.stopPropagation();
                                   updateStudentName(idx, group.studentName);
                                 }}
+                                title="Confirm name"
                               >
                                 <Check className="w-3 h-3" />
                               </Button>
@@ -851,15 +918,15 @@ export default function GradePapers() {
                               <Badge variant="outline" className="text-xs flex-shrink-0">
                                 {group.files.length} file{group.files.length !== 1 ? 's' : ''}
                               </Badge>
-                              {group.nameSource === 'document' && (
+                              {group.nameSource === 'document' && group.nameConfidence === 'high' && (
                                 <Badge variant="secondary" className="text-xs flex-shrink-0">
                                   <FileText className="w-3 h-3 mr-1" />
                                   from doc
                                 </Badge>
                               )}
-                              {group.nameSource === 'filename' && (
+                              {(group.nameSource === 'filename' || group.nameConfidence === 'low') && (
                                 <Badge variant="outline" className="text-xs flex-shrink-0 text-muted-foreground">
-                                  from filename
+                                  {group.nameSource === 'filename' ? 'from filename' : 'edited'}
                                 </Badge>
                               )}
                               {group.result && <Check className="w-4 h-4 text-primary flex-shrink-0" />}
@@ -874,7 +941,11 @@ export default function GradePapers() {
                                 <Info className="w-4 h-4 text-amber-500 flex-shrink-0" />
                               </TooltipTrigger>
                               <TooltipContent>
-                                <p className="text-xs">Student name not detected. Please enter manually.</p>
+                                <p className="text-xs">
+                                  {group.nameSource === 'unknown' 
+                                    ? 'Student name not detected. Please enter manually.'
+                                    : 'Name may be incomplete. Please verify or edit.'}
+                                </p>
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -885,11 +956,11 @@ export default function GradePapers() {
                 </div>
                 
                 {/* Warning if any groups need confirmation */}
-                {studentGroups.some(g => g.nameSource === 'unknown' && !g.nameConfirmed) && (
+                {studentGroups.some(g => !g.nameConfirmed && (g.nameSource === 'unknown' || g.nameConfidence === 'low')) && (
                   <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/30">
                     <Info className="w-4 h-4 text-amber-500 flex-shrink-0" />
                     <span className="text-xs text-amber-600 dark:text-amber-400">
-                      Some student names could not be detected. Please enter names above to ensure accurate grading.
+                      Some student names need verification. Please confirm or edit names above to ensure accurate grading.
                     </span>
                   </div>
                 )}
