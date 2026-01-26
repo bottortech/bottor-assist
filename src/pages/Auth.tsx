@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Mic } from 'lucide-react';
+import { GraduationCap, UserCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { z } from 'zod';
 
@@ -20,6 +21,7 @@ export default function Auth() {
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { signIn, signUp, user } = useAuth();
+  const { enterGuestMode } = useGuestMode();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -72,13 +74,18 @@ export default function Auth() {
     }
   };
 
+  const handleGuestContinue = () => {
+    enterGuestMode();
+    navigate('/grade');
+  };
+
   return (
     <div className="min-h-screen bg-bottor-gradient flex items-center justify-center p-4">
       <div className="w-full max-w-md animate-fade-in">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary text-primary-foreground mb-4 shadow-lg">
-            <Mic className="w-8 h-8" />
+            <GraduationCap className="w-8 h-8" />
           </div>
           <h1 className="text-2xl font-bold text-gradient-primary">Bottor Assist</h1>
           <p className="text-muted-foreground mt-1">Teach. I'll handle the notes.</p>
@@ -95,7 +102,7 @@ export default function Auth() {
                 : 'Get started with Bottor Assist'}
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
@@ -144,8 +151,40 @@ export default function Auth() {
                   : 'Already have an account? Sign in'}
               </button>
             </div>
+
+            {/* Guest Mode Section */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-muted" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full h-12"
+                onClick={handleGuestContinue}
+              >
+                <UserCircle className="w-5 h-5 mr-2" />
+                Continue as Guest
+              </Button>
+              <p className="text-xs text-center text-muted-foreground">
+                No account needed to test Bottor Assist.
+              </p>
+            </div>
           </CardContent>
         </Card>
+
+        {/* Pilot Badge */}
+        <div className="mt-6 text-center">
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+            Pilot Mode — sample documents only
+          </span>
+        </div>
       </div>
     </div>
   );

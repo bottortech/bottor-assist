@@ -16,6 +16,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useGuestMode } from "@/hooks/useGuestMode";
 import { useSavedRubrics } from "@/hooks/useSavedRubrics";
 import { useFileUpload, UploadedFileItem } from "@/hooks/useFileUpload";
 import { Button } from "@/components/ui/button";
@@ -280,6 +281,7 @@ function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
 
 export default function GradePapers() {
   const { user, loading: authLoading } = useAuth();
+  const { isGuest } = useGuestMode();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -646,7 +648,16 @@ export default function GradePapers() {
 
   const handleSave = async () => {
     const currentGroup = studentGroups[selectedGroupIndex];
-    if (!user || !currentGroup?.result) return;
+    if (!currentGroup?.result) return;
+
+    // Prompt guests to sign up
+    if (isGuest || !user) {
+      toast({ 
+        title: "Account Required", 
+        description: "Create a free account to save and revisit your grading sessions.",
+      });
+      return;
+    }
 
     setSaving(true);
     try {
@@ -699,14 +710,31 @@ export default function GradePapers() {
   return (
     <div className="min-h-screen bg-bottor-gradient">
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
-        <div className="max-w-2xl mx-auto flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Home
-          </Button>
-          <h1 className="text-xl font-bold text-foreground">Grade Papers</h1>
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Home
+            </Button>
+            <h1 className="text-xl font-bold text-foreground">Grade Papers</h1>
+          </div>
+          {isGuest && (
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+              Pilot Mode
+            </span>
+          )}
         </div>
       </header>
+
+      {/* Guest Pilot Notice */}
+      {isGuest && (
+        <div className="max-w-2xl mx-auto px-4 pt-4">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm text-muted-foreground">
+            <Info className="w-4 h-4 text-primary flex-shrink-0" />
+            <span>Pilot Mode — sample documents only. Feedback welcome.</span>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
         {/* ===== STUDENT WORK (REQUIRED) ===== */}

@@ -22,6 +22,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
@@ -46,6 +47,7 @@ interface SessionData {
 export default function Session() {
   const { sessionId } = useParams();
   const { user, loading: authLoading } = useAuth();
+  const { isGuest } = useGuestMode();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -58,15 +60,15 @@ export default function Session() {
   const [parentMessage, setParentMessage] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // [AUTH GUARD] Redirect unauthenticated users
+  // [AUTH GUARD] Redirect unauthenticated/guest users (guests can't have saved sessions)
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (!authLoading && (!user || isGuest)) {
       navigate('/auth', { replace: true });
     }
     if (!sessionId) {
       navigate('/', { replace: true });
     }
-  }, [user, authLoading, sessionId, navigate]);
+  }, [user, authLoading, sessionId, isGuest, navigate]);
 
   // [DATA FETCH] Load session on mount
   useEffect(() => {

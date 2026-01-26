@@ -17,6 +17,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -107,6 +108,7 @@ Notes for Next Time:
 
 export default function QuickNotes() {
   const { user, loading: authLoading } = useAuth();
+  const { isGuest } = useGuestMode();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -128,11 +130,11 @@ export default function QuickNotes() {
   };
 
   const handleSave = async () => {
-    if (!user) {
+    // Prompt guests to sign up
+    if (isGuest || !user) {
       toast({
-        title: 'Please sign in',
-        description: 'You need to be signed in to save notes.',
-        variant: 'destructive',
+        title: 'Account Required',
+        description: 'Create a free account to save and revisit your notes.',
       });
       return;
     }
@@ -211,19 +213,26 @@ export default function QuickNotes() {
     <div className="min-h-screen bg-bottor-gradient">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
-        <div className="max-w-2xl mx-auto flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate('/')}
-            className="text-muted-foreground"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Home
-          </Button>
-          <div>
-            <h1 className="text-xl font-bold text-foreground">Quick Notes</h1>
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/')}
+              className="text-muted-foreground"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Home
+            </Button>
+            <div>
+              <h1 className="text-xl font-bold text-foreground">Quick Notes</h1>
+            </div>
           </div>
+          {isGuest && (
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+              Pilot Mode
+            </span>
+          )}
         </div>
       </header>
 

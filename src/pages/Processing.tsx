@@ -20,6 +20,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Loader2, RefreshCw, ArrowLeft } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -28,21 +29,22 @@ import { useToast } from '@/hooks/use-toast';
 export default function Processing() {
   const { sessionId } = useParams();
   const { user, loading: authLoading } = useAuth();
+  const { isGuest } = useGuestMode();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   const [status, setStatus] = useState<string>('processing');
   const [error, setError] = useState<string | null>(null);
 
-  // [AUTH GUARD] Redirect unauthenticated users
+  // [AUTH GUARD] Redirect unauthenticated/guest users (guests can't have saved sessions)
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (!authLoading && (!user || isGuest)) {
       navigate('/auth', { replace: true });
     }
     if (!sessionId) {
       navigate('/', { replace: true });
     }
-  }, [user, authLoading, sessionId, navigate]);
+  }, [user, authLoading, sessionId, isGuest, navigate]);
 
   // [POLL] Check session status periodically
   useEffect(() => {
