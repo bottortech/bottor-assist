@@ -3,13 +3,15 @@
  * 
  * Displays uploaded files with:
  * - Thumbnails for images
- * - Status chips (Queued, Uploading, Uploaded, Extracting, Ready, Failed)
+ * - Status chips (Queued, Uploading, Processing, Ready, Failed)
+ * - Status message showing current activity
  * - Retry button for failed files
- * - Remove button
+ * - Remove button for any file
  * - Global progress bar
+ * - Inline tip for stalled uploads
  */
 
-import { FileText, Loader2, X, RefreshCw, Check, AlertCircle, Clock, Upload, Image } from 'lucide-react';
+import { FileText, Loader2, X, RefreshCw, Check, AlertCircle, Clock, Upload, Image, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -46,14 +48,8 @@ const statusConfig: Record<FileStatus, {
     icon: Upload,
     className: 'bg-secondary text-secondary-foreground'
   },
-  uploaded: { 
-    label: 'Uploaded', 
-    variant: 'secondary', 
-    icon: Check,
-    className: 'bg-muted text-muted-foreground'
-  },
-  extracting: { 
-    label: 'Extracting', 
+  processing: { 
+    label: 'Processing', 
     variant: 'default', 
     icon: Loader2,
     className: 'bg-primary/90 text-primary-foreground animate-pulse'
@@ -72,18 +68,21 @@ const statusConfig: Record<FileStatus, {
   },
 };
 
-function StatusBadge({ status }: { status: FileStatus }) {
+function StatusBadge({ status, statusMessage }: { status: FileStatus; statusMessage?: string }) {
   const config = statusConfig[status];
   const Icon = config.icon;
-  const isAnimated = status === 'extracting' || status === 'uploading';
+  const isAnimated = status === 'processing' || status === 'uploading';
+  
+  // Show status message if available, otherwise show default label
+  const displayLabel = statusMessage || config.label;
   
   return (
     <Badge 
       variant={config.variant}
-      className={cn('text-xs px-2 py-0.5 gap-1', config.className)}
+      className={cn('text-xs px-2 py-0.5 gap-1 max-w-[140px]', config.className)}
     >
-      <Icon className={cn('w-3 h-3', isAnimated && 'animate-spin')} />
-      {config.label}
+      <Icon className={cn('w-3 h-3 flex-shrink-0', isAnimated && 'animate-spin')} />
+      <span className="truncate">{displayLabel}</span>
     </Badge>
   );
 }
@@ -183,16 +182,23 @@ export function FileUploadList({
             
             {/* File Info */}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{file.fileName}</p>
-              <p className="text-xs text-muted-foreground">
-                {formatFileSize(file.size)}
-              </p>
+              <p className="text-sm font-medium truncate">{file.displayName || file.fileName}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {formatFileSize(file.size)}
+                </span>
+                {file.error && (
+                  <span className="text-xs text-destructive truncate max-w-[120px]" title={file.error}>
+                    {file.error}
+                  </span>
+                )}
+              </div>
             </div>
             
             {/* Status Badge */}
-            <StatusBadge status={file.status} />
+            <StatusBadge status={file.status} statusMessage={file.statusMessage} />
             
-            {/* Actions */}
+            {/* Actions - always show both Retry (if applicable) and Remove */}
             <div className="flex items-center gap-1 flex-shrink-0">
               {file.status === 'failed' && (
                 <Button
@@ -206,30 +212,40 @@ export function FileUploadList({
                 </Button>
               )}
               
-              {file.status !== 'extracting' && file.status !== 'uploading' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onRemove(file.id)}
-                  className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                  title="Remove file"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              )}
+              {/* Remove button - always available */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onRemove(file.id)}
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                title="Remove file"
+              >
+                <X className="w-4 h-4" />
+              </Button>
               
-              {(file.status === 'extracting' || file.status === 'uploading') && (
-                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              {/* Loading indicator for active states */}
+              {(file.status === 'processing' || file.status === 'uploading') && (
+                <Loader2 className="w-4 h-4 animate-spin text-primary ml-1" />
               )}
             </div>
           </div>
         ))}
       </div>
       
+      {/* Inline tip for stalled uploads */}
+      {isExtracting && (
+        <div className="flex items-start gap-2 p-2 rounded-md bg-muted/50 border border-muted">
+          <Info className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-muted-foreground">
+            If an upload stalls, tap Retry — no need to reselect files.
+          </p>
+        </div>
+      )}
+      
       {/* Error hint */}
       {failedFiles > 0 && (
         <p className="text-xs text-muted-foreground">
-          💡 Tip: For failed files, you can retry extraction or manually paste the text in the combined text area below.
+          💡 Tip: For failed files, tap <RefreshCw className="w-3 h-3 inline mx-0.5" /> to retry, or manually paste the text below.
         </p>
       )}
     </div>

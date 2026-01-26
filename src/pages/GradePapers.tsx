@@ -688,7 +688,12 @@ export default function GradePapers() {
   }
 
   const isExtracting = studentUpload.isExtracting || rubricUpload.isExtracting || answerKeyUpload.isExtracting;
-  const canGenerate = studentUpload.hasReadyFiles && !isExtracting && !grading;
+  const hasFailedFiles = studentUpload.failedFiles > 0;
+  const allFilesReady = studentUpload.totalFiles > 0 && studentUpload.completedFiles === studentUpload.totalFiles;
+  
+  // Can generate if: has ready files AND (all files ready OR user can proceed with ready only) AND not currently grading
+  const canGenerate = studentUpload.hasReadyFiles && !grading;
+  const shouldWaitForProcessing = isExtracting && !hasFailedFiles;
   const currentGroup = studentGroups[selectedGroupIndex];
 
   return (
@@ -1155,12 +1160,33 @@ export default function GradePapers() {
         )}
 
         {/* ===== GENERATE BUTTON ===== */}
-        <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border">
+        <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border space-y-2">
+          {/* Show info about processing state */}
+          {shouldWaitForProcessing && (
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Processing {studentUpload.completedFiles}/{studentUpload.totalFiles} files...
+            </div>
+          )}
+          
+          {/* Show warning if some files failed but can still proceed */}
+          {hasFailedFiles && studentUpload.hasReadyFiles && !isExtracting && (
+            <div className="flex items-center justify-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+              <Info className="w-4 h-4" />
+              {studentUpload.failedFiles} file(s) failed — you can proceed with {studentUpload.completedFiles} ready file(s)
+            </div>
+          )}
+          
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div>
-                  <Button onClick={handleGenerateGrades} disabled={!canGenerate} className="w-full" size="lg">
+                  <Button 
+                    onClick={handleGenerateGrades} 
+                    disabled={!canGenerate || shouldWaitForProcessing} 
+                    className="w-full" 
+                    size="lg"
+                  >
                     {grading ? (
                       <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                     ) : (
@@ -1168,13 +1194,20 @@ export default function GradePapers() {
                     )}
                     {studentGroups.length > 1
                       ? `Grade All Students (${studentGroups.length})`
-                      : "Generate Draft Grade + Feedback"}
+                      : hasFailedFiles && studentUpload.hasReadyFiles
+                        ? "Proceed with Ready Files"
+                        : "Generate Draft Grade + Feedback"}
                   </Button>
                 </div>
               </TooltipTrigger>
-              {!canGenerate && isExtracting && (
+              {shouldWaitForProcessing && (
                 <TooltipContent>
-                  <p>Waiting for text extraction...</p>
+                  <p>Waiting for text extraction to complete...</p>
+                </TooltipContent>
+              )}
+              {!canGenerate && !shouldWaitForProcessing && !studentUpload.hasReadyFiles && (
+                <TooltipContent>
+                  <p>Upload student work files first</p>
                 </TooltipContent>
               )}
             </Tooltip>
