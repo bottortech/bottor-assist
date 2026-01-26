@@ -123,6 +123,7 @@ export default function QuickNotes() {
     liveCaption,
     fullTranscript,
     noSpeechWarning,
+    silenceSeconds,
     start: startRecording,
     stop: stopRecording,
     clearTranscript,
@@ -373,15 +374,17 @@ export default function QuickNotes() {
             ) : isListening ? (
               // Currently recording
               <div className="space-y-4">
-                <Button
-                  onClick={handleStopRecording}
-                  variant="destructive"
-                  size="lg"
-                  className="w-full"
-                >
-                  <MicOff className="w-5 h-5 mr-2" />
-                  Stop Recording
-                </Button>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleStopRecording}
+                    variant="destructive"
+                    size="lg"
+                    className="flex-1"
+                  >
+                    <MicOff className="w-5 h-5 mr-2" />
+                    Stop Recording
+                  </Button>
+                </div>
                 
                 {/* Status indicator */}
                 <div className="flex items-center justify-center gap-3 py-3">
@@ -391,10 +394,22 @@ export default function QuickNotes() {
                       speechStatus === 'paused' ? 'bg-muted-foreground' : 'bg-destructive'
                     }`} />
                   </div>
-                  <span className={`text-sm font-medium ${speechStatus === 'paused' ? 'text-muted-foreground' : 'text-destructive'}`}>
-                    {speechStatus === 'paused' ? 'Paused (listening…)' : 'Listening…'}
-                  </span>
+                  <div className="text-center">
+                    <span className={`text-sm font-medium ${speechStatus === 'paused' ? 'text-muted-foreground' : 'text-destructive'}`}>
+                      {speechStatus === 'paused' ? 'Paused (still listening…)' : 'Listening…'}
+                    </span>
+                    {speechStatus === 'paused' && silenceSeconds >= 1 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Auto-stops in {10 - silenceSeconds}s
+                      </p>
+                    )}
+                  </div>
                 </div>
+
+                {/* Auto-stop info */}
+                <p className="text-xs text-muted-foreground text-center">
+                  Recording auto-stops after 10 seconds of silence
+                </p>
                 
                 {/* Live caption preview */}
                 {liveCaption && (
