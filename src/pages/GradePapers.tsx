@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
+import { GuestFeedbackModal } from "@/components/GuestFeedbackModal";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -319,6 +320,7 @@ export default function GradePapers() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
   // Combined text from files + manual textarea
   const rubricTextCombined = useMemo(() => {
@@ -490,6 +492,11 @@ export default function GradePapers() {
 
     setGrading(false);
     toast({ title: `Graded ${updatedGroups.length} student(s)!` });
+
+    // Show feedback modal for guests after grading completes
+    if (isGuest) {
+      setTimeout(() => setShowFeedbackModal(true), 1000);
+    }
   };
 
   const updateGroupResult = (groupIndex: number, field: keyof GradingResult, value: string) => {
@@ -1353,6 +1360,12 @@ export default function GradePapers() {
           </div>
         )}
       </main>
+
+      {/* Guest Feedback Modal */}
+      <GuestFeedbackModal
+        open={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+      />
     </div>
   );
 }
