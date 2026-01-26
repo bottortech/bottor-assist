@@ -61,6 +61,8 @@ export interface UseSpeechRecognitionReturn {
   noSpeechWarning: boolean;
   start: () => void;
   stop: () => void;
+  /** Clears transcript buffers without stopping recognition. */
+  clearTranscript: () => void;
   reset: () => void;
 }
 
@@ -78,6 +80,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const noSpeechTimerRef = useRef<number | null>(null);
   const silenceWatchdogRef = useRef<number | null>(null);
+  const restartTimerRef = useRef<number | null>(null);
   const lastSpeechAtRef = useRef<number>(Date.now());
   const hasReceivedSpeechRef = useRef(false);
   const isActiveRef = useRef(false);
@@ -103,10 +106,18 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     }
   }, []);
 
+  const clearRestartTimer = useCallback(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  }, []);
+
   const stopInternal = useCallback(() => {
     isActiveRef.current = false;
     clearNoSpeechTimer();
     clearSilenceWatchdog();
+    clearRestartTimer();
     
     if (recognitionRef.current) {
       try {
@@ -119,7 +130,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     
     setIsListening(false);
     setLiveCaption('');
-  }, [clearNoSpeechTimer, clearSilenceWatchdog]);
+  }, [clearNoSpeechTimer, clearRestartTimer, clearSilenceWatchdog]);
 
   const startNoSpeechTimer = useCallback(() => {
     clearNoSpeechTimer();
@@ -236,8 +247,19 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         if (silenceDuration < SILENCE_TIMEOUT) {
           // Still within silence threshold - auto-restart
           try {
-            recognition.start();
-            console.log('[SpeechRecognition] Auto-restarted (silence:', Math.round(silenceDuration / 1000), 's)');
+            // Some browsers throw if start() is called synchronously inside onend.
+            clearRestartTimer();
+            restartTimerRef.current = window.setTimeout(() => {
+              try {
+                recognition.start();
+                console.log('[SpeechRecognition] Auto-restarted (silence:', Math.round(silenceDuration / 1000), 's)');
+              } catch (e) {
+                console.warn('[SpeechRecognition] Failed to restart (async):', e);
+                setIsListening(false);
+                setStatus('idle');
+                isActiveRef.current = false;
+              }
+            }, 50);
           } catch (e) {
             console.warn('[SpeechRecognition] Failed to restart:', e);
             setIsListening(false);
@@ -276,7 +298,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     } catch (e) {
       console.error('[SpeechRecognition] Failed to start:', e);
     }
-  }, [SpeechRecognitionAPI, clearNoSpeechTimer, startNoSpeechTimer, startSilenceWatchdog, clearSilenceWatchdog]);
+  }, [SpeechRecognitionAPI, clearNoSpeechTimer, startNoSpeechTimer, startSilenceWatchdog, clearSilenceWatchdog, clearRestartTimer]);
 
   const stop = useCallback(() => {
     stoppedBySilenceRef.current = false;
@@ -284,12 +306,17 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     stopInternal();
   }, [stopInternal]);
 
+  const clearTranscript = useCallback(() => {
+    setFullTranscript('');
+    setLiveCaption('');
+  }, []);
+
   const reset = useCallback(() => {
     stop();
-    setFullTranscript('');
+    clearTranscript();
     setNoSpeechWarning(false);
     hasReceivedSpeechRef.current = false;
-  }, [stop]);
+  }, [clearTranscript, stop]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -297,6 +324,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       isActiveRef.current = false;
       clearNoSpeechTimer();
       clearSilenceWatchdog();
+      clearRestartTimer();
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -305,7 +333,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         }
       }
     };
-  }, [clearNoSpeechTimer, clearSilenceWatchdog]);
+  }, [clearNoSpeechTimer, clearRestartTimer, clearSilenceWatchdog]);
 
   return {
     isSupported,
@@ -316,6 +344,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     noSpeechWarning,
     start,
     stop,
+    clearTranscript,
     reset,
   };
 }
