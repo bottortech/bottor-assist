@@ -119,6 +119,7 @@ export default function QuickNotes() {
   const {
     isSupported: speechSupported,
     isListening,
+    status: speechStatus,
     liveCaption,
     fullTranscript,
     noSpeechWarning,
@@ -381,13 +382,17 @@ export default function QuickNotes() {
                   Stop Recording
                 </Button>
                 
-                {/* Listening indicator */}
+                {/* Status indicator */}
                 <div className="flex items-center justify-center gap-3 py-3">
                   <div className="relative">
-                    <Mic className="w-6 h-6 text-destructive" />
-                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-destructive rounded-full animate-pulse" />
+                    <Mic className={`w-6 h-6 ${speechStatus === 'paused' ? 'text-amber-500' : 'text-destructive'}`} />
+                    <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full animate-pulse ${
+                      speechStatus === 'paused' ? 'bg-amber-500' : 'bg-destructive'
+                    }`} />
                   </div>
-                  <span className="text-sm font-medium text-destructive">Listening…</span>
+                  <span className={`text-sm font-medium ${speechStatus === 'paused' ? 'text-amber-500' : 'text-destructive'}`}>
+                    {speechStatus === 'paused' ? 'Paused (listening…)' : 'Listening…'}
+                  </span>
                 </div>
                 
                 {/* Live caption preview */}
@@ -406,6 +411,22 @@ export default function QuickNotes() {
                     </p>
                   </div>
                 )}
+              </div>
+            ) : speechStatus === 'stopped-silence' ? (
+              // Stopped due to silence
+              <div className="space-y-3">
+                <Button
+                  onClick={handleStartRecording}
+                  variant="secondary"
+                  size="lg"
+                  className="w-full"
+                >
+                  <Mic className="w-5 h-5 mr-2" />
+                  Start Recording
+                </Button>
+                <p className="text-sm text-muted-foreground text-center">
+                  Stopped (10s silence). Click to record again.
+                </p>
               </div>
             ) : (
               // Ready to record
