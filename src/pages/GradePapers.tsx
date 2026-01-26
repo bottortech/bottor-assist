@@ -128,6 +128,9 @@ interface GradingResult {
 
 interface StudentGroup {
   studentName: string;
+  detectedName: string; // Original detected name (for display)
+  nameSource: 'document' | 'filename' | 'unknown'; // How the name was detected
+  nameConfirmed: boolean; // Teacher has confirmed/edited the name
   files: UploadedFileItem[];
   extractedText: string;
   result: GradingResult | null;
@@ -138,46 +141,85 @@ type GradingMode = "scoring" | "feedback-only";
 type RubricMode = "none" | "draft" | "locked";
 
 /**
- * Parse student name from filename
- * Patterns:
- *  - Lesson4_Functions__AaliyahJohnson__p1.pdf → "Aaliyah Johnson"
- *  - AaliyahJohnson_Assignment.pdf → "Aaliyah Johnson"
- *  - Student_Name_p1.jpg → "Student Name"
+ * Common name patterns to detect in OCR text
  */
-function parseStudentNameFromFilename(filename: string): string {
-  // Remove extension
-  const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+const NAME_PATTERNS = [
+  // "Name: John Smith" or "Student Name: John Smith"
+  /(?:student\s*)?name\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  // "Name ___John Smith___" (with underlines)
+  /name\s*[_\s]*[:=]?\s*[_\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  // "John Smith" at the very start of document (first line)
+  /^([A-Z][a-z]+\s+[A-Z][a-z]+)(?:\s|$)/m,
+  // "Student: John Smith"
+  /student\s*[:=]\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+  // "By: John Smith" or "By John Smith"
+  /by\s*[:=]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
+];
 
-  // Pattern 1: Double underscore format (Lesson4__StudentName__p1)
-  const doubleUnderscoreMatch = nameWithoutExt.match(/__([^_]+)__/);
-  if (doubleUnderscoreMatch) {
-    return formatStudentName(doubleUnderscoreMatch[1]);
+/**
+ * Detect student name from extracted document text (OCR)
+ * Priority: Document content > Filename fallback
+ */
+function detectStudentNameFromText(text: string): { name: string; source: 'document' | 'unknown' } {
+  if (!text || !text.trim()) {
+    return { name: '', source: 'unknown' };
   }
 
-  // Pattern 2: Look for camelCase or PascalCase name patterns
-  const camelCaseMatch = nameWithoutExt.match(/([A-Z][a-z]+[A-Z][a-z]+)/);
-  if (camelCaseMatch) {
-    return formatStudentName(camelCaseMatch[1]);
-  }
+  // Look at first ~25 lines for name patterns
+  const firstLines = text.split('\n').slice(0, 25).join('\n');
 
-  // Pattern 3: Underscore separated parts (try first segment if it looks like a name)
-  const parts = nameWithoutExt.split(/[_\-\s]+/);
-  if (parts.length >= 2) {
-    // Check if first two parts could be first/last name
-    const firstTwo = parts.slice(0, 2).join(" ");
-    if (/^[A-Za-z]+ [A-Za-z]+$/.test(firstTwo)) {
-      return firstTwo;
+  for (const pattern of NAME_PATTERNS) {
+    const match = firstLines.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim();
+      // Validate it looks like a real name (2-4 words, reasonable length)
+      const words = name.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && name.length >= 3 && name.length <= 50) {
+        return { name, source: 'document' };
+      }
     }
   }
 
-  return "Unknown Student";
+  return { name: '', source: 'unknown' };
+}
+
+/**
+ * Parse student name from filename (fallback)
+ * Patterns:
+ *  - Lesson4_Functions__AaliyahJohnson__p1.pdf → "Aaliyah Johnson"
+ *  - AaliyahJohnson_Assignment.pdf → "Aaliyah Johnson"
+ */
+function parseStudentNameFromFilename(filename: string): { name: string; found: boolean } {
+  const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+
+  // Pattern 1: Double underscore format
+  const doubleUnderscoreMatch = nameWithoutExt.match(/__([^_]+)__/);
+  if (doubleUnderscoreMatch) {
+    return { name: formatStudentName(doubleUnderscoreMatch[1]), found: true };
+  }
+
+  // Pattern 2: CamelCase/PascalCase
+  const camelCaseMatch = nameWithoutExt.match(/([A-Z][a-z]+[A-Z][a-z]+)/);
+  if (camelCaseMatch) {
+    return { name: formatStudentName(camelCaseMatch[1]), found: true };
+  }
+
+  // Pattern 3: Underscore separated (first two parts)
+  const parts = nameWithoutExt.split(/[_\-\s]+/);
+  if (parts.length >= 2) {
+    const firstTwo = parts.slice(0, 2).join(" ");
+    if (/^[A-Za-z]+ [A-Za-z]+$/.test(firstTwo)) {
+      return { name: firstTwo, found: true };
+    }
+  }
+
+  return { name: '', found: false };
 }
 
 /**
  * Format camelCase/PascalCase to "First Last"
  */
 function formatStudentName(name: string): string {
-  // Insert space before uppercase letters
   return name
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
@@ -185,15 +227,52 @@ function formatStudentName(name: string): string {
 }
 
 /**
- * Group files by parsed student name
+ * Group files by detected student name
+ * Priority: Document OCR > Filename > Unknown
  */
-function groupFilesByStudent(files: UploadedFileItem[]): Map<string, UploadedFileItem[]> {
-  const groups = new Map<string, UploadedFileItem[]>();
+function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
+  const groups: StudentGroup[] = [];
 
   for (const file of files) {
-    const studentName = parseStudentNameFromFilename(file.fileName);
-    const existing = groups.get(studentName) || [];
-    groups.set(studentName, [...existing, file]);
+    // Try document text first
+    const docResult = detectStudentNameFromText(file.extractedText);
+    let studentName = docResult.name;
+    let nameSource: 'document' | 'filename' | 'unknown' = docResult.source;
+
+    // Fallback to filename
+    if (!studentName) {
+      const fileResult = parseStudentNameFromFilename(file.fileName);
+      if (fileResult.found) {
+        studentName = fileResult.name;
+        nameSource = 'filename';
+      }
+    }
+
+    // Still no name
+    if (!studentName) {
+      studentName = 'Unknown Student';
+      nameSource = 'unknown';
+    }
+
+    // Find existing group or create new
+    const existingGroup = groups.find(g => g.studentName === studentName);
+    if (existingGroup) {
+      existingGroup.files.push(file);
+      existingGroup.extractedText = existingGroup.files
+        .map(f => f.extractedText)
+        .join('\n\n--- PAGE BREAK ---\n\n');
+    } else {
+      groups.push({
+        studentName,
+        detectedName: studentName,
+        nameSource,
+        nameConfirmed: nameSource === 'document', // Auto-confirm if from document
+        files: [file],
+        extractedText: file.extractedText,
+        result: null,
+        grading: false,
+      });
+    }
   }
 
   return groups;
@@ -277,18 +356,25 @@ export default function GradePapers() {
       return;
     }
 
-    const grouped = groupFilesByStudent(readyFiles);
-    const groups: StudentGroup[] = Array.from(grouped.entries()).map(([name, files]) => ({
-      studentName: name,
-      files,
-      extractedText: files.map((f) => f.extractedText).join("\n\n--- PAGE BREAK ---\n\n"),
-      result: null,
-      grading: false,
-    }));
-
+    const groups = groupFilesByStudent(readyFiles);
     setStudentGroups(groups);
     setSelectedGroupIndex(0);
   }, [studentUpload.files]);
+
+  // Update student name (for teacher editing)
+  const updateStudentName = (groupIndex: number, newName: string) => {
+    setStudentGroups(prev => {
+      const updated = [...prev];
+      if (updated[groupIndex]) {
+        updated[groupIndex] = {
+          ...updated[groupIndex],
+          studentName: newName,
+          nameConfirmed: true,
+        };
+      }
+      return updated;
+    });
+  };
 
   // Detect rubric and update grading mode
   useEffect(() => {
@@ -624,7 +710,7 @@ export default function GradePapers() {
             <div>
               <CardTitle className="text-lg">Student Work (Required)</CardTitle>
               <CardDescription className="text-xs">
-                Upload PDFs or images. Files are auto-grouped by student name in filename.
+                Bottor automatically detects student names inside each document. No special file naming required.
               </CardDescription>
             </div>
             {studentUpload.files.length > 0 && (
@@ -655,8 +741,8 @@ export default function GradePapers() {
               >
                 <Upload className="w-6 h-6 text-muted-foreground mb-2" />
                 <span className="text-sm text-muted-foreground">Click to upload PDFs or images</span>
-                <span className="text-xs text-muted-foreground mt-1">
-                  Filename format: Assignment__StudentName__p1.pdf
+                <span className="text-xs text-muted-foreground/70 mt-1">
+                  Any filename works — names detected from document content
                 </span>
               </label>
             </div>
@@ -677,24 +763,96 @@ export default function GradePapers() {
 
             {/* Student Groups Preview */}
             {studentGroups.length > 0 && (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-primary" />
                   <Label className="text-sm font-medium">Detected Students ({studentGroups.length})</Label>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {studentGroups.map((group, idx) => (
-                    <Badge
-                      key={group.studentName}
-                      variant={idx === selectedGroupIndex ? "default" : "outline"}
-                      className="cursor-pointer"
-                      onClick={() => setSelectedGroupIndex(idx)}
-                    >
-                      {group.studentName} ({group.files.length} file{group.files.length !== 1 ? "s" : ""})
-                      {group.result && <Check className="w-3 h-3 ml-1" />}
-                    </Badge>
-                  ))}
+                
+                <div className="space-y-2">
+                  {studentGroups.map((group, idx) => {
+                    const needsConfirmation = group.nameSource === 'unknown' && !group.nameConfirmed;
+                    
+                    return (
+                      <div
+                        key={`${group.detectedName}-${idx}`}
+                        className={`flex items-center gap-2 p-2 rounded-md border transition-colors cursor-pointer ${
+                          idx === selectedGroupIndex 
+                            ? 'border-primary bg-primary/10' 
+                            : 'border-muted bg-muted/30 hover:border-primary/50'
+                        }`}
+                        onClick={() => setSelectedGroupIndex(idx)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          {needsConfirmation ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={group.studentName === 'Unknown Student' ? '' : group.studentName}
+                                onChange={(e) => updateStudentName(idx, e.target.value || 'Unknown Student')}
+                                placeholder="Enter student name..."
+                                className="h-7 text-sm flex-1"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateStudentName(idx, group.studentName);
+                                }}
+                              >
+                                <Check className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium truncate">{group.studentName}</span>
+                              <Badge variant="outline" className="text-xs flex-shrink-0">
+                                {group.files.length} file{group.files.length !== 1 ? 's' : ''}
+                              </Badge>
+                              {group.nameSource === 'document' && (
+                                <Badge variant="secondary" className="text-xs flex-shrink-0">
+                                  <FileText className="w-3 h-3 mr-1" />
+                                  from doc
+                                </Badge>
+                              )}
+                              {group.nameSource === 'filename' && (
+                                <Badge variant="outline" className="text-xs flex-shrink-0 text-muted-foreground">
+                                  from filename
+                                </Badge>
+                              )}
+                              {group.result && <Check className="w-4 h-4 text-primary flex-shrink-0" />}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {needsConfirmation && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Info className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="text-xs">Student name not detected. Please enter manually.</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
+                
+                {/* Warning if any groups need confirmation */}
+                {studentGroups.some(g => g.nameSource === 'unknown' && !g.nameConfirmed) && (
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/30">
+                    <Info className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                    <span className="text-xs text-amber-600 dark:text-amber-400">
+                      Some student names could not be detected. Please enter names above to ensure accurate grading.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
