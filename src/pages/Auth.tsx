@@ -76,7 +76,7 @@ export default function Auth() {
 
   const handleGuestContinue = () => {
     enterGuestMode();
-    navigate('/grade');
+    navigate('/');
   };
 
   return (
