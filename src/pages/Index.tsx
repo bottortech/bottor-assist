@@ -108,13 +108,20 @@ export default function Index() {
     <div className="min-h-screen bg-bottor-gradient flex flex-col">
       {/* Header */}
       <header className="p-4 flex justify-between items-center">
-        {/* Guest/Pilot Badge */}
-        {isGuest && (
-          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
-            Pilot Mode — sample documents only
-          </span>
+        {/* Guest Mode Badge */}
+        {isGuest ? (
+          <div className="flex flex-col items-start gap-0.5">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+              <UserCircle className="w-3.5 h-3.5" />
+              Guest Mode
+            </span>
+            <span className="text-[10px] text-muted-foreground pl-3">
+              No account required
+            </span>
+          </div>
+        ) : (
+          <div />
         )}
-        {!isGuest && <div />}
         
         <Button
           variant="ghost"
