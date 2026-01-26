@@ -165,7 +165,7 @@ const METADATA_LINE_PREFIXES = [
 
 /**
  * Clean a detected name by removing trailing stop-word labels
- * Allows apostrophes and hyphens as valid name characters (e.g., O'Connor, Mary-Jane)
+ * Allows apostrophes and hyphens as valid name characters (e.g., O'Connor, Mary-Jane, D'Andre)
  * @returns cleaned name and confidence level
  */
 function cleanStudentName(rawName: string): { name: string; confidence: 'high' | 'low' } {
@@ -174,7 +174,7 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
   const words = rawName.trim().split(/\s+/);
   const cleanedWords: string[] = [];
   let hitStopWord = false;
-  let hasSpecialChars = false;
+  let hasMergedMetadata = false;
   
   for (const word of words) {
     // Extract only letters for stop-word comparison (ignore apostrophes/hyphens)
@@ -184,28 +184,40 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
       hitStopWord = true;
       break;
     }
-    // Check for apostrophes or hyphens (valid but flag as low confidence per UX requirement)
-    if (/[''-]/.test(word)) {
-      hasSpecialChars = true;
+    // Check if word contains numbers or unusual punctuation (indicates merged metadata)
+    if (/\d/.test(word) || /[^a-zA-Z''\-\s]/.test(word)) {
+      hasMergedMetadata = true;
+      break;
     }
     // Keep words that have letters - allow apostrophes and hyphens as valid name chars
-    if (word.replace(/[^a-zA-Z'-]/g, '').length > 0) {
+    if (word.replace(/[^a-zA-Z''\-]/g, '').length > 0) {
       cleanedWords.push(word);
     }
   }
   
-  // Validate: must be 2-4 capitalized words
+  // Validate: must be 2-4 words
   if (cleanedWords.length < 2 || cleanedWords.length > 4) {
     return { name: rawName.trim(), confidence: 'low' };
   }
   
-  // Check if all words are properly capitalized (start with uppercase, allow O'Connor style)
-  const allCapitalized = cleanedWords.every(w => /^[A-Z]/.test(w) || /^[A-Z]'[A-Z]/.test(w));
+  // Check if all words are properly capitalized
+  // Allow: "O'Connor", "D'Andre", "Mary-Jane", "Ana María-Lopez"
+  const allCapitalized = cleanedWords.every(w => {
+    // First letter should be uppercase
+    if (!/^[A-Z]/.test(w)) return false;
+    // For names with apostrophe followed by capital (O'Connor, D'Andre), that's valid
+    // For hyphenated names, each part should start with capital (Mary-Jane)
+    return true;
+  });
   
   const cleanedName = cleanedWords.join(' ');
   
-  // Low confidence if: we had to remove stop words, name has special chars, or not all capitalized
-  const confidence: 'high' | 'low' = (hitStopWord || hasSpecialChars || !allCapitalized) ? 'low' : 'high';
+  // Low confidence only if:
+  // - We had to remove stop words (name was merged with metadata)
+  // - Name has merged metadata (numbers, unusual punctuation)
+  // - Not all words are properly capitalized
+  // NOTE: Apostrophes and hyphens are VALID name characters and do NOT lower confidence
+  const confidence: 'high' | 'low' = (hitStopWord || hasMergedMetadata || !allCapitalized) ? 'low' : 'high';
   
   return { name: cleanedName, confidence };
 }
