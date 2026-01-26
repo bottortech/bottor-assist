@@ -155,6 +155,15 @@ const NAME_STOP_WORDS = [
 ];
 
 /**
+ * Metadata line prefixes - lines starting with these should be skipped entirely
+ */
+const METADATA_LINE_PREFIXES = [
+  'date', 'class', 'period', 'teacher', 'grade', 'subject',
+  'assignment', 'course', 'hour', 'block', 'room', 'score',
+  'points', 'total', 'page', 'section', 'id', 'number', 'due'
+];
+
+/**
  * Clean a detected name by removing trailing stop-word labels
  * @returns cleaned name and confidence level
  */
@@ -166,13 +175,16 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
   let hitStopWord = false;
   
   for (const word of words) {
-    const lowerWord = word.toLowerCase();
+    const lowerWord = word.toLowerCase().replace(/[^a-z]/g, '');
     // Stop if we hit a stop-word label
     if (NAME_STOP_WORDS.includes(lowerWord)) {
       hitStopWord = true;
       break;
     }
-    cleanedWords.push(word);
+    // Skip empty words or punctuation-only
+    if (word.replace(/[^a-zA-Z]/g, '').length > 0) {
+      cleanedWords.push(word);
+    }
   }
   
   // Validate: must be 2-4 capitalized words
@@ -192,24 +204,48 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
 }
 
 /**
- * Common name patterns to detect in OCR text
+ * Check if a line is a metadata line that should be skipped
  */
-const NAME_PATTERNS = [
-  // "Name: John Smith" or "Student Name: John Smith" - capture everything after the colon
-  /(?:student\s*)?name\s*[:=]\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
-  // "Name ___John Smith___" (with underlines)
-  /name\s*[_\s]*[:=]?\s*[_\s]*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
-  // "John Smith" at the very start of document (first line)
-  /^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s|$)/m,
-  // "Student: John Smith"
-  /student\s*[:=]\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
-  // "By: John Smith" or "By John Smith"
-  /by\s*[:=]?\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
-];
+function isMetadataLine(line: string): boolean {
+  const trimmed = line.trim().toLowerCase();
+  // Skip empty lines
+  if (!trimmed) return true;
+  // Check if line starts with a metadata prefix
+  return METADATA_LINE_PREFIXES.some(prefix => 
+    trimmed.startsWith(prefix + ':') || 
+    trimmed.startsWith(prefix + ' ') ||
+    trimmed === prefix
+  );
+}
+
+/**
+ * Extract the name value after a label like "Name:" or "Student Name:"
+ * Stops at any metadata label that follows
+ */
+function extractNameAfterLabel(text: string): string | null {
+  // Match "Name:" or "Student Name:" followed by the value
+  const labelMatch = text.match(/(?:student\s*)?name\s*[:=]\s*(.+)/i);
+  if (!labelMatch) return null;
+  
+  let nameValue = labelMatch[1].trim();
+  
+  // Stop at any metadata label that might follow on the same line
+  // e.g., "John Smith Date: 10/15" -> "John Smith"
+  for (const stopWord of NAME_STOP_WORDS) {
+    // Match stop word followed by colon, equals, or as standalone word boundary
+    const stopPattern = new RegExp(`\\b${stopWord}\\s*[:=]`, 'i');
+    const stopMatch = nameValue.match(stopPattern);
+    if (stopMatch && stopMatch.index !== undefined) {
+      nameValue = nameValue.substring(0, stopMatch.index).trim();
+    }
+  }
+  
+  return nameValue || null;
+}
 
 /**
  * Detect student name from extracted document text (OCR)
- * Priority: Document content > Filename fallback
+ * Priority: Explicit labels (Name:, Student Name:) > Filename fallback
  * Now includes stop-word filtering and confidence scoring
  */
 function detectStudentNameFromText(text: string): { 
@@ -221,18 +257,54 @@ function detectStudentNameFromText(text: string): {
     return { name: '', source: 'unknown', confidence: 'low' };
   }
 
-  // Look at first ~25 lines for name patterns
-  const firstLines = text.split('\n').slice(0, 25).join('\n');
+  // Look at first ~25 lines for name patterns, filtering out metadata lines
+  const lines = text.split('\n').slice(0, 25);
+  const relevantLines: string[] = [];
+  
+  for (const line of lines) {
+    // Skip metadata lines (lines starting with Date:, Class:, etc.)
+    if (!isMetadataLine(line)) {
+      relevantLines.push(line);
+    }
+  }
+  
+  const filteredText = relevantLines.join('\n');
 
-  for (const pattern of NAME_PATTERNS) {
-    const match = firstLines.match(pattern);
+  // First priority: Look for explicit "Name:" or "Student Name:" labels
+  for (const line of lines) {
+    const nameValue = extractNameAfterLabel(line);
+    if (nameValue) {
+      const { name: cleanedName, confidence } = cleanStudentName(nameValue);
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
+        return { name: cleanedName, source: 'document', confidence };
+      }
+    }
+  }
+
+  // Second priority: Look for name at start of first non-metadata line
+  const firstContentLine = relevantLines.find(l => l.trim().length > 0);
+  if (firstContentLine) {
+    const startMatch = firstContentLine.match(/^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s|$)/);
+    if (startMatch && startMatch[1]) {
+      const { name: cleanedName, confidence } = cleanStudentName(startMatch[1]);
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4) {
+        return { name: cleanedName, source: 'document', confidence };
+      }
+    }
+  }
+
+  // Third priority: Look for "By: Name" or "Student: Name" patterns
+  const byPatterns = [
+    /student\s*[:=]\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
+    /by\s*[:=]?\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
+  ];
+  
+  for (const pattern of byPatterns) {
+    const match = filteredText.match(pattern);
     if (match && match[1]) {
-      const rawName = match[1].trim();
-      
-      // Clean the name using stop-word filtering
-      const { name: cleanedName, confidence } = cleanStudentName(rawName);
-      
-      // Validate it looks like a real name (2-4 words, reasonable length)
+      const { name: cleanedName, confidence } = cleanStudentName(match[1].trim());
       const words = cleanedName.split(/\s+/);
       if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
         return { name: cleanedName, source: 'document', confidence };
