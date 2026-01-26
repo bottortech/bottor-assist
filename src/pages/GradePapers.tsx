@@ -165,6 +165,7 @@ const METADATA_LINE_PREFIXES = [
 
 /**
  * Clean a detected name by removing trailing stop-word labels
+ * Allows apostrophes and hyphens as valid name characters (e.g., O'Connor, Mary-Jane)
  * @returns cleaned name and confidence level
  */
 function cleanStudentName(rawName: string): { name: string; confidence: 'high' | 'low' } {
@@ -175,14 +176,15 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
   let hitStopWord = false;
   
   for (const word of words) {
+    // Extract only letters for stop-word comparison (ignore apostrophes/hyphens)
     const lowerWord = word.toLowerCase().replace(/[^a-z]/g, '');
     // Stop if we hit a stop-word label
     if (NAME_STOP_WORDS.includes(lowerWord)) {
       hitStopWord = true;
       break;
     }
-    // Skip empty words or punctuation-only
-    if (word.replace(/[^a-zA-Z]/g, '').length > 0) {
+    // Keep words that have letters - allow apostrophes and hyphens as valid name chars
+    if (word.replace(/[^a-zA-Z'-]/g, '').length > 0) {
       cleanedWords.push(word);
     }
   }
@@ -192,8 +194,8 @@ function cleanStudentName(rawName: string): { name: string; confidence: 'high' |
     return { name: rawName.trim(), confidence: 'low' };
   }
   
-  // Check if all words are properly capitalized (start with uppercase)
-  const allCapitalized = cleanedWords.every(w => /^[A-Z]/.test(w));
+  // Check if all words are properly capitalized (start with uppercase, allow O'Connor style)
+  const allCapitalized = cleanedWords.every(w => /^[A-Z]/.test(w) || /^[A-Z]'[A-Z]/.test(w));
   
   const cleanedName = cleanedWords.join(' ');
   
@@ -283,9 +285,10 @@ function detectStudentNameFromText(text: string): {
   }
 
   // Second priority: Look for name at start of first non-metadata line
+  // Allow apostrophes and hyphens in names (e.g., O'Connor, Mary-Jane)
   const firstContentLine = relevantLines.find(l => l.trim().length > 0);
   if (firstContentLine) {
-    const startMatch = firstContentLine.match(/^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s|$)/);
+    const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
     if (startMatch && startMatch[1]) {
       const { name: cleanedName, confidence } = cleanStudentName(startMatch[1]);
       const words = cleanedName.split(/\s+/);
@@ -296,9 +299,10 @@ function detectStudentNameFromText(text: string): {
   }
 
   // Third priority: Look for "By: Name" or "Student: Name" patterns
+  // Allow apostrophes and hyphens in names
   const byPatterns = [
-    /student\s*[:=]\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
-    /by\s*[:=]?\s*([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)+)/i,
+    /student\s*[:=]\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
+    /by\s*[:=]?\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
   ];
   
   for (const pattern of byPatterns) {
@@ -337,10 +341,12 @@ function parseStudentNameFromFilename(filename: string): { name: string; found: 
   }
 
   // Pattern 3: Underscore separated (first two parts)
-  const parts = nameWithoutExt.split(/[_\-\s]+/);
+  // Note: Don't split on hyphens in filenames as they may be part of names (Mary-Jane)
+  const parts = nameWithoutExt.split(/[_\s]+/);
   if (parts.length >= 2) {
     const firstTwo = parts.slice(0, 2).join(" ");
-    if (/^[A-Za-z]+ [A-Za-z]+$/.test(firstTwo)) {
+    // Allow apostrophes and hyphens in names
+    if (/^[A-Za-z'-]+ [A-Za-z'-]+$/.test(firstTwo)) {
       return { name: firstTwo, found: true };
     }
   }
