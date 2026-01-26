@@ -6,48 +6,43 @@
  * NEXT.JS MIGRATION: app/history/page.tsx
  * 
  * PURPOSE: Display list of all sessions with search/filter.
+ * Requires authentication - guests are prompted to sign up.
  * 
  * DATA FLOW:
  * 1. [FETCH] Load sessions from database on mount
  * 2. [DISPLAY] Render session cards with status badges
  * 3. [NAVIGATE] Click session → /session/:id
- * 
- * UI ONLY: This component only handles display. All data operations
- * are through the session service layer.
  * =============================================================================
  */
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import { ArrowLeft, Search, Mic, ChevronRight } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowLeft, Search, Mic, ChevronRight, UserCircle, Lock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import type { SessionListItem, SessionStatus } from '@/types/session';
 
 export default function History() {
   const { user, loading: authLoading } = useAuth();
+  const { isGuest, exitGuestMode } = useGuestMode();
   const navigate = useNavigate();
 
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  // [AUTH GUARD] Redirect unauthenticated users
+  // [DATA FETCH] Load sessions on mount (only for authenticated users)
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate('/auth', { replace: true });
+    if (!user) {
+      setLoading(false);
+      return;
     }
-  }, [user, authLoading, navigate]);
-
-  // [DATA FETCH] Load sessions on mount
-  useEffect(() => {
-    if (!user) return;
 
     const fetchSessions = async () => {
-      // [MIGRATION POINT: Session List Query]
       const { data, error } = await supabase
         .from('sessions')
         .select('id, title, snippet, created_at, duration_seconds, status')
@@ -91,10 +86,70 @@ export default function History() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
+  // Handle sign up for guests
+  const handleSignUp = () => {
+    if (isGuest) {
+      exitGuestMode();
+    }
+    navigate('/auth');
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-bottor-gradient flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Guest or unauthenticated users see sign-up prompt
+  if (isGuest || !user) {
+    return (
+      <div className="min-h-screen bg-bottor-gradient">
+        {/* Header */}
+        <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
+          <div className="max-w-2xl mx-auto">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/')}
+                className="text-muted-foreground"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Home
+              </Button>
+            </div>
+          </div>
+        </header>
+
+        {/* Sign Up Prompt */}
+        <main className="max-w-md mx-auto px-4 py-16">
+          <Card className="border-0 shadow-xl bg-card-gradient animate-fade-in">
+            <CardHeader className="text-center pb-4">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                <Lock className="w-8 h-8 text-primary" />
+              </div>
+              <CardTitle className="text-xl">Save Your Grading History</CardTitle>
+              <CardDescription className="text-base mt-2">
+                Create a free account to save and revisit your grading sessions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                variant="hero"
+                className="w-full"
+                onClick={handleSignUp}
+              >
+                <UserCircle className="w-5 h-5 mr-2" />
+                Create Free Account
+              </Button>
+              <p className="text-xs text-center text-muted-foreground">
+                Your current session results will be saved after you sign up.
+              </p>
+            </CardContent>
+          </Card>
+        </main>
       </div>
     );
   }
