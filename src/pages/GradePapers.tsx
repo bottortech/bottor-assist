@@ -772,6 +772,9 @@ export default function GradePapers() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  
+  // Feedback expansion state - collapsed by default for calm UX
+  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
 
   // Track if grading has completed for any student (for feedback timing)
   const hasGradingResults = studentGroups.some(g => g.result !== null);
@@ -2262,45 +2265,107 @@ export default function GradePapers() {
               </Card>
             )}
 
+            {/* Quick Summary - Strengths & Areas for Improvement headers (always visible) */}
             <Card className="border-0 shadow-md">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Strengths</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  value={currentGroup.result.strengths}
-                  onChange={(e) => updateGroupResult(selectedGroupIndex, "strengths", e.target.value)}
-                  rows={3}
-                />
+              <CardContent className="p-4 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Strengths Summary */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-sm font-medium text-foreground">Strengths</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">
+                      {currentGroup.result.strengths?.slice(0, 100) || "See detailed feedback"}
+                      {(currentGroup.result.strengths?.length || 0) > 100 ? "..." : ""}
+                    </p>
+                  </div>
+                  
+                  {/* Areas for Improvement Summary */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span className="text-sm font-medium text-foreground">Areas for Improvement</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">
+                      {currentGroup.result.areas_for_improvement?.slice(0, 100) || "See detailed feedback"}
+                      {(currentGroup.result.areas_for_improvement?.length || 0) > 100 ? "..." : ""}
+                    </p>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            <Card className="border-0 shadow-md">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Areas for Improvement</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  value={currentGroup.result.areas_for_improvement}
-                  onChange={(e) => updateGroupResult(selectedGroupIndex, "areas_for_improvement", e.target.value)}
-                  rows={3}
-                />
-              </CardContent>
-            </Card>
+            {/* ===== DETAILED FEEDBACK (Collapsible - closed by default) ===== */}
+            <Collapsible open={feedbackExpanded} onOpenChange={setFeedbackExpanded}>
+              <Card className="border shadow-md">
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-5 h-5 text-muted-foreground" />
+                        <CardTitle className="text-base font-medium">
+                          View Detailed Feedback
+                        </CardTitle>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="text-xs">
+                          {feedbackExpanded ? "Collapse" : "Expand"}
+                        </Badge>
+                        <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${
+                          feedbackExpanded ? "rotate-180" : ""
+                        }`} />
+                      </div>
+                    </div>
+                  </CardHeader>
+                </CollapsibleTrigger>
+                
+                <CollapsibleContent>
+                  <CardContent className="space-y-4 pt-0">
+                    {/* Strengths - Full */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        Strengths
+                      </Label>
+                      <Textarea
+                        value={currentGroup.result.strengths}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "strengths", e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                    
+                    {/* Areas for Improvement - Full */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        Areas for Improvement
+                      </Label>
+                      <Textarea
+                        value={currentGroup.result.areas_for_improvement}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "areas_for_improvement", e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                    
+                    {/* Draft Feedback - Full */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-primary" />
+                        Draft Feedback for Student
+                      </Label>
+                      <Textarea
+                        value={currentGroup.result.feedback_paragraph}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "feedback_paragraph", e.target.value)}
+                        rows={5}
+                      />
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
 
-            <Card className="border-0 shadow-md">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Draft Feedback</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  value={currentGroup.result.feedback_paragraph}
-                  onChange={(e) => updateGroupResult(selectedGroupIndex, "feedback_paragraph", e.target.value)}
-                  rows={5}
-                />
-              </CardContent>
-            </Card>
-
+            {/* Action Buttons */}
             <div className="flex flex-wrap gap-3">
               <Button
                 variant="outline"
