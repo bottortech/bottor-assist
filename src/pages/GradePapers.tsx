@@ -49,6 +49,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
+import { ScoringOptionsSection, ScoringMode, AutoScoreSettings, DEFAULT_AUTO_SCORE_SETTINGS } from "@/components/ScoringOptionsSection";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -123,6 +124,7 @@ interface GradePapersForm {
 
 interface GradingResult {
   score_suggestion: string;
+  score_derivation?: string;
   strengths: string;
   areas_for_improvement: string;
   feedback_paragraph: string;
@@ -142,6 +144,7 @@ interface StudentGroup {
 
 type GradingMode = "scoring" | "feedback-only";
 type RubricMode = "none" | "draft" | "locked";
+// ScoringMode is now imported from ScoringOptionsSection
 
 /**
  * Stop-word labels that should NOT be part of a student name
@@ -470,6 +473,10 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
+  // Scoring options state (new flexible scoring)
+  const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only");
+  const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
+
   // Student groups for batch grading
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
@@ -574,6 +581,10 @@ export default function GradePapers() {
 
     if (!hasRubric) {
       setRubricMode("none");
+      // Auto-switch to feedback-only if rubric-based was selected but no rubric
+      if (scoringMode === 'rubric-based') {
+        setScoringMode('feedback-only');
+      }
     } else if (rubricLocked) {
       setRubricMode("locked");
     } else {
@@ -593,7 +604,7 @@ export default function GradePapers() {
     } else {
       setDetectedRubricSource("");
     }
-  }, [rubricTextCombined, studentUpload.combinedText, rubricLocked, rubricUpload.files.length, form.rubric]);
+  }, [rubricTextCombined, studentUpload.combinedText, rubricLocked, rubricUpload.files.length, form.rubric, scoringMode]);
 
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -645,6 +656,8 @@ export default function GradePapers() {
             rubric: effectiveRubric,
             answer_key: answerKeyTextCombined || null,
             grading_mode: gradingMode,
+            scoring_mode: scoringMode,
+            auto_score_settings: scoringMode === 'auto-score' ? autoScoreSettings : undefined,
           },
         });
 
@@ -655,6 +668,7 @@ export default function GradePapers() {
           grading: false,
           result: {
             score_suggestion: data.score_suggestion || "N/A",
+            score_derivation: data.score_derivation || undefined,
             strengths: data.strengths || "Not provided",
             areas_for_improvement: data.areas_for_improvement || "Not provided",
             feedback_paragraph: data.feedback_paragraph || "Not provided",
@@ -1309,6 +1323,16 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
+        {/* ===== SCORING OPTIONS ===== */}
+        <ScoringOptionsSection
+          scoringMode={scoringMode}
+          onScoringModeChange={setScoringMode}
+          autoScoreSettings={autoScoreSettings}
+          onAutoScoreSettingsChange={setAutoScoreSettings}
+          hasRubric={rubricMode !== "none"}
+          disabled={rubricMode === "locked"}
+        />
+
         {/* ===== MANUAL OPTIONS (when not locked) ===== */}
         {rubricMode !== "locked" && (
           <Card className="border border-muted">
@@ -1527,12 +1551,24 @@ export default function GradePapers() {
                   </Button>
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-2">
                 <Input
                   value={currentGroup.result.score_suggestion}
                   onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
                   className="text-xl font-bold text-primary"
                 />
+                {currentGroup.result.score_derivation && (
+                  <p className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    {currentGroup.result.score_derivation}
+                  </p>
+                )}
+                {currentGroup.result.score_suggestion === "N/A" && scoringMode === "feedback-only" && (
+                  <p className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    No numeric score calculated. Select a scoring option above to enable scoring.
+                  </p>
+                )}
               </CardContent>
             </Card>
 
