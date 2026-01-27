@@ -12,6 +12,11 @@
  * - If no rubric detected, switches to "Feedback-only" mode (no scoring)
  * - Never invents a grading system - grades strictly by provided criteria
  * 
+ * INSTRUCTION-AWARE SCORING (for question-based assignments):
+ * - Parses directions to extract allowed error types (homophones, contractions, etc.)
+ * - Marks answers correct ONLY if they match the required error type from directions
+ * - Detects instruction mismatches and explains why answers were marked incorrect
+ * 
  * GUARDRAILS:
  * - Do not penalize for "Source 1 missing" unless rubric explicitly requires labeled sources
  * - Grade by matching content to rubric requirements, not by assuming form labels
@@ -51,6 +56,58 @@ interface GradeRequest {
   };
   quick_rubric_categories?: string;  // Comma-separated rubric categories with points
 }
+
+/**
+ * Error type keywords to detect from assignment directions
+ */
+const ERROR_TYPE_KEYWORDS: Record<string, string[]> = {
+  homophone: ['homophone', 'homophones', 'sound alike', 'sounds alike', 'sound-alike'],
+  contraction: ['contraction', 'contractions', "apostrophe for missing letters"],
+  possessive: ['possessive', 'possessives', 'ownership', "apostrophe for ownership"],
+  plural: ['plural', 'plurals', 'more than one'],
+  punctuation: ['punctuation', 'comma', 'period', 'apostrophe', 'question mark', 'exclamation'],
+  capitalization: ['capitalization', 'capital letter', 'capital letters', 'uppercase'],
+  spelling: ['spelling', 'misspelled', 'misspell', 'spell correctly', 'correct spelling'],
+  grammar: ['grammar', 'grammatical', 'verb tense', 'subject-verb'],
+  targeted_word_replacement: ['identify the error', 'cross it out', 'cross out', 'write the correct word', 'find the error', 'circle the error', 'underline the error', 'fix the error']
+};
+
+/**
+ * Common homophone pairs for detection
+ */
+const HOMOPHONE_PAIRS: string[][] = [
+  ['their', 'there', 'they\'re'],
+  ['your', 'you\'re'],
+  ['its', 'it\'s'],
+  ['to', 'too', 'two'],
+  ['then', 'than'],
+  ['were', 'where', 'we\'re', 'wear'],
+  ['hear', 'here'],
+  ['whether', 'weather'],
+  ['accept', 'except'],
+  ['affect', 'effect'],
+  ['principal', 'principle'],
+  ['stationary', 'stationery'],
+  ['complement', 'compliment'],
+  ['desert', 'dessert'],
+  ['loose', 'lose'],
+  ['passed', 'past'],
+  ['peace', 'piece'],
+  ['right', 'write'],
+  ['through', 'threw'],
+  ['allowed', 'aloud'],
+  ['break', 'brake'],
+  ['buy', 'by', 'bye'],
+  ['knew', 'new'],
+  ['know', 'no'],
+  ['our', 'hour'],
+  ['sight', 'site', 'cite'],
+  ['tail', 'tale'],
+  ['wait', 'weight'],
+  ['week', 'weak'],
+  ['which', 'witch'],
+  ['whole', 'hole']
+];
 
 serve(async (req) => {
   // Handle CORS preflight
@@ -94,9 +151,14 @@ serve(async (req) => {
       console.log(`[grade-paper] Quick rubric categories:`, quick_rubric_categories);
     }
 
+    // Parse directions to extract allowed error types (instruction-aware scoring)
+    const allText = [student_work, assignment_doc_text || '', rubric || ''].join('\n');
+    const allowedErrorTypes = parseDirectionsForErrorTypes(allText);
+    console.log(`[grade-paper] Detected allowed error types:`, allowedErrorTypes);
+
     // Build the grading prompt based on mode
-    const prompt = buildGradingPrompt(body);
-    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, auto_score_settings, quick_rubric_categories);
+    const prompt = buildGradingPrompt(body, allowedErrorTypes);
+    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, auto_score_settings, quick_rubric_categories, allowedErrorTypes);
 
     const response = await fetch(LOVABLE_AI_URL, {
       method: "POST",
@@ -116,8 +178,8 @@ serve(async (req) => {
             content: prompt,
           },
         ],
-        max_tokens: 2000,
-        temperature: 0.5,
+        max_tokens: 3000,
+        temperature: 0.3, // Lower temperature for more consistent scoring
       }),
     });
 
@@ -154,6 +216,22 @@ serve(async (req) => {
         throw new Error("No JSON found in response");
       }
 
+      // Add instruction-aware scoring metadata
+      gradingResult.allowed_error_types = allowedErrorTypes;
+      
+      // Check for high "unable to determine" rate
+      const perQuestion = gradingResult.per_question as Array<{ reason?: string }> | undefined;
+      if (perQuestion && Array.isArray(perQuestion)) {
+        const unableToDetermineCount = perQuestion.filter(q => 
+          q.reason?.toLowerCase().includes('unable to determine') ||
+          q.reason?.toLowerCase().includes('cannot determine')
+        ).length;
+        
+        if (perQuestion.length > 0 && unableToDetermineCount / perQuestion.length > 0.2) {
+          gradingResult.scoring_warning = "Some answers couldn't be reliably matched to the target word. Review recommended.";
+        }
+      }
+
       // Compute numeric score based on scoring mode
       if (scoring_mode === 'feedback-only') {
         // Feedback-only mode: no numeric score
@@ -171,6 +249,11 @@ serve(async (req) => {
         if (!gradingResult.score_derivation && computedScore.derivation) {
           gradingResult.score_derivation = computedScore.derivation;
         }
+        
+        // Add breakdown counts
+        gradingResult.correct_count = computedScore.correctCount;
+        gradingResult.incorrect_count = computedScore.incorrectCount;
+        gradingResult.partial_count = computedScore.partialCount;
       } else if (scoring_mode === 'rubric-based') {
         // Rubric-based: use AI's score directly
         if (typeof gradingResult.total_score === 'number' && gradingResult.max_score) {
@@ -235,7 +318,54 @@ serve(async (req) => {
 });
 
 /**
- * Compute auto-score from AI response data
+ * Parse assignment directions to extract allowed error types
+ * Returns array of error type strings that the directions specify
+ */
+function parseDirectionsForErrorTypes(text: string): string[] {
+  const lowerText = text.toLowerCase();
+  const detectedTypes: Set<string> = new Set();
+  
+  // Check for each error type keyword
+  for (const [errorType, keywords] of Object.entries(ERROR_TYPE_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (lowerText.includes(keyword)) {
+        detectedTypes.add(errorType);
+        break;
+      }
+    }
+  }
+  
+  // If no specific error types detected, return 'unknown'
+  if (detectedTypes.size === 0) {
+    return ['unknown'];
+  }
+  
+  return Array.from(detectedTypes);
+}
+
+/**
+ * Check if a word is part of a homophone pair
+ */
+function isHomophone(word: string): boolean {
+  const lowerWord = word.toLowerCase();
+  return HOMOPHONE_PAIRS.some(pair => pair.includes(lowerWord));
+}
+
+/**
+ * Get the homophone group for a word
+ */
+function getHomophoneGroup(word: string): string[] | null {
+  const lowerWord = word.toLowerCase();
+  for (const pair of HOMOPHONE_PAIRS) {
+    if (pair.includes(lowerWord)) {
+      return pair;
+    }
+  }
+  return null;
+}
+
+/**
+ * Compute auto-score from AI response data with instruction-aware logic
  * Ensures numeric score is always calculated when auto-score settings are provided
  */
 function computeAutoScore(
@@ -247,30 +377,23 @@ function computeAutoScore(
     partialCreditAllowed: boolean;
     usePointsPerQuestion: boolean;
   }
-): { earned: number; possible: number; derivation: string } {
+): { earned: number; possible: number; derivation: string; correctCount: number; incorrectCount: number; partialCount: number } {
   
-  // If AI already provided valid total_score and max_score, use them
-  if (typeof aiResponse.total_score === 'number' && typeof aiResponse.max_score === 'number') {
-    return {
-      earned: aiResponse.total_score as number,
-      possible: aiResponse.max_score as number,
-      derivation: (aiResponse.score_derivation as string) || `Score: ${aiResponse.total_score}/${aiResponse.max_score}`,
-    };
-  }
-
   // Calculate from per-question data if available
   const perQuestion = aiResponse.per_question as Array<{
     correct?: boolean | 'partial';
     points_earned?: number;
     points_possible?: number;
+    reason?: string;
   }> | undefined;
+
+  let numCorrect = 0;
+  let numPartial = 0;
+  let numIncorrect = 0;
 
   if (perQuestion && Array.isArray(perQuestion) && perQuestion.length > 0) {
     let totalEarned = 0;
     let totalPossible = 0;
-    let numCorrect = 0;
-    let numPartial = 0;
-    let numIncorrect = 0;
 
     for (const q of perQuestion) {
       if (typeof q.points_earned === 'number') {
@@ -289,14 +412,31 @@ function computeAutoScore(
     // If AI provided points, use those
     if (totalPossible > 0) {
       const derivation = buildScoreDerivation(numCorrect, numPartial, numIncorrect, totalEarned, totalPossible, settings);
-      return { earned: totalEarned, possible: totalPossible, derivation };
+      return { earned: totalEarned, possible: totalPossible, derivation, correctCount: numCorrect, incorrectCount: numIncorrect, partialCount: numPartial };
     }
   }
 
+  // If AI already provided valid total_score and max_score, use them
+  if (typeof aiResponse.total_score === 'number' && typeof aiResponse.max_score === 'number') {
+    // Try to get counts from response
+    numCorrect = typeof aiResponse.num_correct === 'number' ? aiResponse.num_correct : 0;
+    numPartial = typeof aiResponse.num_partial === 'number' ? aiResponse.num_partial : 0;
+    numIncorrect = typeof aiResponse.num_incorrect === 'number' ? aiResponse.num_incorrect : 0;
+    
+    return {
+      earned: aiResponse.total_score as number,
+      possible: aiResponse.max_score as number,
+      derivation: (aiResponse.score_derivation as string) || `Score: ${aiResponse.total_score}/${aiResponse.max_score}`,
+      correctCount: numCorrect,
+      incorrectCount: numIncorrect,
+      partialCount: numPartial
+    };
+  }
+
   // Fallback: compute from settings + any correctness counts AI provided
-  const numCorrect = typeof aiResponse.num_correct === 'number' ? aiResponse.num_correct : 0;
-  const numPartial = typeof aiResponse.num_partial === 'number' ? aiResponse.num_partial : 0;
-  const numIncorrect = typeof aiResponse.num_incorrect === 'number' ? aiResponse.num_incorrect : 0;
+  numCorrect = typeof aiResponse.num_correct === 'number' ? aiResponse.num_correct : 0;
+  numPartial = typeof aiResponse.num_partial === 'number' ? aiResponse.num_partial : 0;
+  numIncorrect = typeof aiResponse.num_incorrect === 'number' ? aiResponse.num_incorrect : 0;
   const totalQuestions = numCorrect + numPartial + numIncorrect;
 
   if (settings.usePointsPerQuestion && settings.pointsPerQuestion !== null && settings.questionCount !== null) {
@@ -310,7 +450,7 @@ function computeAutoScore(
     const earned = (numCorrect * ppq) + (numPartial * partialValue);
     
     const derivation = buildScoreDerivation(numCorrect, numPartial, numIncorrect, earned, possible, settings);
-    return { earned: Math.round(earned * 10) / 10, possible, derivation };
+    return { earned: Math.round(earned * 10) / 10, possible, derivation, correctCount: numCorrect, incorrectCount: numIncorrect, partialCount: numPartial };
     
   } else if (settings.totalPoints !== null) {
     // Total points mode - distribute proportionally
@@ -322,7 +462,7 @@ function computeAutoScore(
       const earned = Math.round(possible * (correctWeight + partialWeight) * 10) / 10;
       
       const derivation = buildScoreDerivation(numCorrect, numPartial, numIncorrect, earned, possible, settings);
-      return { earned, possible, derivation };
+      return { earned, possible, derivation, correctCount: numCorrect, incorrectCount: numIncorrect, partialCount: numPartial };
     }
     
     // No question data - return what AI gave or N/A
@@ -331,14 +471,17 @@ function computeAutoScore(
         earned: aiResponse.total_score as number,
         possible,
         derivation: `Score: ${aiResponse.total_score}/${possible}`,
+        correctCount: 0,
+        incorrectCount: 0,
+        partialCount: 0
       };
     }
     
-    return { earned: 0, possible, derivation: "Unable to determine score from student work" };
+    return { earned: 0, possible, derivation: "Unable to determine score from student work", correctCount: 0, incorrectCount: 0, partialCount: 0 };
   }
 
   // No valid settings - shouldn't happen but handle gracefully
-  return { earned: 0, possible: 0, derivation: "No scoring rules configured" };
+  return { earned: 0, possible: 0, derivation: "No scoring rules configured", correctCount: 0, incorrectCount: 0, partialCount: 0 };
 }
 
 /**
@@ -389,7 +532,7 @@ function buildScoreDerivation(
 }
 
 /**
- * Build system prompt based on scoring mode with smart fallback behavior
+ * Build system prompt based on scoring mode with instruction-aware logic
  */
 function buildSystemPrompt(
   scoringMode: 'feedback-only' | 'auto-score' | 'rubric-based', 
@@ -402,7 +545,8 @@ function buildSystemPrompt(
     partialCreditAllowed: boolean;
     usePointsPerQuestion: boolean;
   },
-  quickRubricCategories?: string
+  quickRubricCategories?: string,
+  allowedErrorTypes?: string[]
 ): string {
   const basePrompt = `You are Bottor Assist, an AI grading assistant for teachers.
 
@@ -432,6 +576,9 @@ GUARDRAILS:
 - Be specific and actionable in feedback
 - Always explain HOW the score was derived`;
 
+  // Build instruction-aware scoring rules for auto-score mode
+  const instructionAwareRules = buildInstructionAwareRules(allowedErrorTypes || ['unknown']);
+
   // Handle auto-score mode
   if (scoringMode === 'auto-score' && autoScoreSettings) {
     const hasPointSettings = autoScoreSettings.usePointsPerQuestion 
@@ -451,16 +598,22 @@ GUARDRAILS:
       
       return `${basePrompt}
 
+${instructionAwareRules}
+
 AUTO-SCORE MODE (Teacher-defined point rules):
 Calculate a numeric score using ONLY these teacher-provided settings:
 ${pointsExplanation}${partialCreditNote}
 
 SCORING PROCESS:
-1. Identify each question/item in the student work
-2. Compare to answer key (if provided) or evaluate correctness
-3. Award points according to the rules above
-4. Calculate total earned vs total possible
-5. EXPLAIN how you arrived at the score
+1. Parse any directions/instructions from the assignment to understand the error type being tested
+2. Identify each question/item in the student work
+3. For each question, determine the EXPECTED error type based on the actual error in the sentence
+4. Compare student's correction against the REQUIRED error type from directions
+5. Mark CORRECT only if the student fixed the actual erroneous word AND the error type matches directions
+6. Mark INCORRECT with reason if student fixed a different word or wrong error type
+7. Award points according to the rules above
+8. Calculate total earned vs total possible
+9. EXPLAIN how you arrived at the score with reason labels
 
 OUTPUT FORMAT (JSON only):
 {
@@ -470,13 +623,23 @@ OUTPUT FORMAT (JSON only):
     : autoScoreSettings.totalPoints || 0},
   "score_suggestion": "<earned>/<max>",
   "score_derivation": "<brief explanation of how score was calculated, e.g., '8 of 10 correct at 2 pts each = 16/20'>",
+  "num_correct": <number>,
+  "num_incorrect": <number>,
+  "num_partial": <number>,
   "per_question": [
     {
       "question": "<question number or identifier>",
-      "correct": <true/false/partial>,
+      "original_sentence": "<the original sentence with the error>",
+      "student_correction": "<what the student wrote>",
+      "student_target_word": "<the word the student attempted to fix>",
+      "expected_error_type": "<homophone|contraction|possessive|plural|punctuation|capitalization|spelling|grammar>",
+      "actual_error_word": "<the word that actually contains the error>",
+      "correct_answer": "<what the correct answer should be>",
+      "correct": <true|false|"partial">,
       "points_earned": <number>,
       "points_possible": <number>,
-      "notes": "<what was correct/incorrect>"
+      "reason": "<'Correct'|'Wrong correction'|'Instruction mismatch'|'Unable to determine target'|'Unscorable (directions don\\'t include this error type)'>",
+      "explanation": "<detailed explanation, especially for incorrect answers>"
     }
   ],
   "strengths_list": [
@@ -636,9 +799,62 @@ OUTPUT FORMAT (JSON only):
 }
 
 /**
+ * Build instruction-aware scoring rules based on detected error types
+ */
+function buildInstructionAwareRules(allowedErrorTypes: string[]): string {
+  const isUnknown = allowedErrorTypes.includes('unknown');
+  
+  if (isUnknown) {
+    return `INSTRUCTION-AWARE SCORING:
+⚠️ Could not confidently parse error types from directions.
+- Evaluate student corrections based on general correctness
+- If answer key is provided, use it for reference
+- Consider disabling numeric scoring if unsure about grading criteria`;
+  }
+
+  const typesList = allowedErrorTypes.map(t => `"${t}"`).join(', ');
+  
+  return `INSTRUCTION-AWARE SCORING (STRICT):
+The assignment directions specify these error types: [${typesList}]
+
+CRITICAL CORRECTNESS RULES:
+1. Mark an answer CORRECT only if ALL of these are true:
+   a) The student corrected the ACTUAL erroneous word/token in the sentence (not a different word)
+   b) The expected error type of that word matches one of the allowed types: [${typesList}]
+   c) The correction properly resolves the error (the sentence becomes grammatically correct)
+
+2. INSTRUCTION MISMATCH handling:
+   - If student corrects something valid but it's the WRONG CATEGORY for the directions:
+   - Mark as INCORRECT with reason = "Instruction mismatch"
+   - Explain: "Student changed {word}, but the required error type is {expected}. The target error was {actual_error} → {correct_answer}."
+   
+3. ERROR TYPE DETECTION:
+   - Homophone errors: words that sound alike but spelled differently (their/there, were/where, your/you're)
+   - Contraction errors: missing or misplaced apostrophes for contractions (its/it's, your/you're)
+   - Possessive errors: apostrophe usage for ownership (student's, teachers')
+   - Plural errors: singular vs plural forms (guide/guides)
+   - Punctuation errors: commas, periods, question marks
+   - Capitalization errors: proper nouns, sentence beginnings
+   - Spelling errors: misspelled words (not homophones)
+   - Grammar errors: verb tense, subject-verb agreement
+
+4. Common pitfalls to AVOID:
+   - Do NOT give credit for fixing capitalization if directions only mention homophones
+   - Do NOT give credit for fixing punctuation if directions only mention spelling
+   - If student changes "New Mexico" but the actual error was "were" → "where", mark INCORRECT
+
+5. REASON LABELS (use these exact strings):
+   - "Correct" - student fixed the right word with the right type of correction
+   - "Wrong correction" - student provided wrong answer for the target error
+   - "Instruction mismatch" - student fixed a valid error but wrong type for directions
+   - "Unable to determine target" - cannot identify which word student was correcting
+   - "Unscorable (directions don't include this error type)" - error exists but type not in directions`;
+}
+
+/**
  * Build the grading prompt with all context
  */
-function buildGradingPrompt(request: GradeRequest): string {
+function buildGradingPrompt(request: GradeRequest, allowedErrorTypes?: string[]): string {
   const { 
     student_work, 
     grade_level, 
@@ -668,8 +884,14 @@ function buildGradingPrompt(request: GradeRequest): string {
     `- Grade Level: ${grade_level || "Not specified"}`,
     `- Subject: ${subject || "Not specified"}`,
     `- Scoring Mode: ${scoringModeDesc}`,
-    "",
   ];
+
+  // Add detected error types info
+  if (allowedErrorTypes && allowedErrorTypes.length > 0 && !allowedErrorTypes.includes('unknown')) {
+    sections.push(`- Detected Error Types from Directions: ${allowedErrorTypes.join(', ')}`);
+  }
+  
+  sections.push("");
 
   // Include teacher's specific analysis prompt if provided
   if (prompt_text?.trim()) {
@@ -696,6 +918,7 @@ function buildGradingPrompt(request: GradeRequest): string {
     sections.push(
       `## Assignment / Rubric Document (extracted text)`,
       `Use this for context about the assignment and any grading criteria mentioned.`,
+      `IMPORTANT: Parse the DIRECTIONS section to understand what type of errors students should correct.`,
       "",
       assignment_doc_text,
       ""
@@ -719,6 +942,8 @@ function buildGradingPrompt(request: GradeRequest): string {
     `- If you detect sections, headings, or labels, use them to understand structure`,
     `- Do NOT assume or invent content that is not present`,
     `- If text is illegible or unclear, note it and do not guess`,
+    `- For question-based work, identify WHICH WORD the student attempted to correct`,
+    `- Compare the student's target word against the ACTUAL error in the sentence`,
     ``,
     `--- BEGIN STUDENT WORK ---`,
     student_work,
