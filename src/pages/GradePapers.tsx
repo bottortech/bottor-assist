@@ -26,7 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
 import {
   ArrowLeft,
   Sparkles,
@@ -63,36 +63,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-const SUBJECTS = [
-  "Mathematics",
-  "English Language Arts",
-  "Science",
-  "Social Studies",
-  "History",
-  "Geography",
-  "Art",
-  "Music",
-  "Foreign Language",
-  "Computer Science",
-  "Other",
-];
-
-const GRADES = [
-  "Pre-K",
-  "Kindergarten",
-  "Grade 1",
-  "Grade 2",
-  "Grade 3",
-  "Grade 4",
-  "Grade 5",
-  "Grade 6",
-  "Grade 7",
-  "Grade 8",
-  "Grade 9",
-  "Grade 10",
-  "Grade 11",
-  "Grade 12",
-];
+// Subject and Grade level lists removed for pilot - Bottor infers from content
 
 // Assignment types moved to optional advanced settings (not shown in pilot)
 
@@ -1399,116 +1370,79 @@ export default function GradePapers() {
           disabled={rubricMode === "locked"}
         />
 
-        {/* ===== MANUAL OPTIONS (when not locked) ===== */}
-        {rubricMode !== "locked" && (
-          <Card className="border border-muted">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Info className="w-4 h-4" />
-                Manual Grading Options
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Subject</Label>
-                  <Select value={form.subject} onValueChange={(v) => updateForm("subject", v)}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select subject" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background border shadow-lg z-50">
-                      {SUBJECTS.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Grade Level</Label>
-                  <Select value={form.grade_level} onValueChange={(v) => updateForm("grade_level", v)}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select grade" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background border shadow-lg z-50">
-                      {GRADES.map((g) => (
-                        <SelectItem key={g} value={g}>
-                          {g}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* Answer Key (Optional) - inside Manual Grading Options */}
-              <div className="pt-3 border-t border-muted space-y-3">
-                <Label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <FileSearch className="w-4 h-4" />
-                  Answer Key
-                  <span className="text-xs font-normal">Optional</span>
-                </Label>
-
-                {/* Answer Key File Upload */}
-                <div className="space-y-2">
-                  <div className="relative">
-                    <input
-                      ref={answerKeyFileInputRef}
-                      type="file"
-                      multiple
-                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                      onChange={handleAnswerKeyFileSelect}
-                      className="hidden"
-                      id="answerkey-file-upload"
-                    />
-                    <label
-                      htmlFor="answerkey-file-upload"
-                      className="flex items-center justify-center w-full h-14 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
-                    >
-                      <Upload className="w-4 h-4 text-muted-foreground mr-2" />
-                      <span className="text-sm text-muted-foreground">Upload answer key files</span>
-                    </label>
-                  </div>
-
-                  {/* Uploaded Answer Key Files List */}
-                  {answerKeyUpload.files.length > 0 && (
-                    <div className="space-y-1">
-                      {answerKeyUpload.files.map((file) => (
-                        <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                            <span className="text-sm truncate">{file.fileName}</span>
-                            <Badge variant="outline" className="text-xs flex-shrink-0">
-                              {file.status === "ready" ? "Ready" : file.status}
-                            </Badge>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => answerKeyUpload.removeFile(file.id)}
-                            className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                          >
-                            <X className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Answer Key Textarea */}
-                <Textarea
-                  placeholder="Or paste answer key here..."
-                  value={form.answer_key}
-                  onChange={(e) => updateForm("answer_key", e.target.value)}
-                  rows={3}
-                  className="text-sm"
+        {/* ===== ANSWER KEY (OPTIONAL) ===== */}
+        <Card className="border border-muted bg-muted/5">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileSearch className="w-5 h-5 text-muted-foreground" />
+              Answer Key
+              <span className="text-xs font-normal text-muted-foreground">Optional</span>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Upload or paste an answer key for accuracy-based feedback on worksheets and tests.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Answer Key File Upload */}
+            <div className="space-y-2">
+              <div className="relative">
+                <input
+                  ref={answerKeyFileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                  onChange={handleAnswerKeyFileSelect}
+                  className="hidden"
+                  id="answerkey-file-upload"
                 />
+                <label
+                  htmlFor="answerkey-file-upload"
+                  className="flex items-center justify-center w-full h-14 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                >
+                  <Upload className="w-4 h-4 text-muted-foreground mr-2" />
+                  <span className="text-sm text-muted-foreground">Upload answer key PDFs or images</span>
+                </label>
               </div>
-            </CardContent>
-          </Card>
-        )}
+
+              {/* Uploaded Answer Key Files List */}
+              {answerKeyUpload.files.length > 0 && (
+                <div className="space-y-1">
+                  {answerKeyUpload.files.map((file) => (
+                    <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <span className="text-sm truncate">{file.fileName}</span>
+                        <Badge variant="outline" className="text-xs flex-shrink-0">
+                          {file.status === "ready" ? "Ready" : file.status}
+                        </Badge>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => answerKeyUpload.removeFile(file.id)}
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Answer Key Textarea */}
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Or paste answer key text</Label>
+              <Textarea
+                placeholder="Paste answer key here..."
+                value={form.answer_key}
+                onChange={(e) => updateForm("answer_key", e.target.value)}
+                rows={3}
+                className="text-sm"
+              />
+            </div>
+          </CardContent>
+        </Card>
 
         {/* ===== GENERATE BUTTON ===== */}
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border space-y-2">
