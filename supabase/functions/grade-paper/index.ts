@@ -3,14 +3,14 @@
  * GRADE PAPER EDGE FUNCTION - BOTTOR ASSIST
  * =============================================================================
  * 
- * Two distinct grading modes:
- * 1. FEEDBACK-ONLY MODE: No rubric/answer key → qualitative feedback, no score
- * 2. RUBRIC/SCORING MODE: Rubric and/or answer key → numeric score + feedback
+ * MANDATORY NUMERIC SCORING:
+ * - Always produces a numeric score (X/TOTAL) with percent
+ * - Uses teacher-provided rubric if available
+ * - Falls back to default 20-point rubric if none provided
  * 
  * GUARDRAILS:
- * - Never invent rubric criteria, point values, or answer keys
- * - If information is missing, say so clearly
  * - Be accurate, conservative, and transparent
+ * - If confidence is low, flag for teacher review
  * =============================================================================
  */
 
@@ -23,16 +23,37 @@ const corsHeaders = {
 
 const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
+// Default rubric used when no rubric/scoring rules are detected
+const DEFAULT_RUBRIC = {
+  totalPoints: 20,
+  criteria: [
+    { name: "Accuracy / Correctness", points: 10, guidance: "Evaluate factual accuracy, correct answers, and sound reasoning" },
+    { name: "Work Shown / Reasoning", points: 5, guidance: "Evaluate explanation of thought process, steps shown, and logical progression" },
+    { name: "Completeness / Formatting", points: 5, guidance: "Evaluate whether all parts are addressed, proper format, and organization" }
+  ]
+};
+
+interface RubricCriterion {
+  name: string;
+  points: number;
+  guidance: string;
+}
+
+interface ParsedRubric {
+  totalPoints: number;
+  criteria: RubricCriterion[];
+  source: 'teacher' | 'auto-generated';
+}
+
 interface GradeRequest {
   student_work: string;
   grade_level?: string;
   subject?: string;
   assignment_type?: string;
-  rubric?: string;           // Combined rubric text (extracted + pasted)
-  answer_key?: string;       // Combined answer key text (extracted + pasted)
-  prompt_text?: string;      // Teacher's specific analysis question
+  rubric?: string;
+  answer_key?: string;
+  prompt_text?: string;
   assignment_doc_text?: string;
-  // Legacy fields for backward compatibility
   grading_mode?: 'scoring' | 'feedback-only';
   scoring_mode?: 'feedback-only' | 'auto-score' | 'rubric-based';
   auto_score_settings?: {
@@ -46,7 +67,6 @@ interface GradeRequest {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -78,30 +98,27 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Determine grading mode based on presence of grading criteria
-    const hasRubric = rubric && rubric.trim().length > 0;
-    const hasAnswerKey = answer_key && answer_key.trim().length > 0;
-    const hasQuickRubric = quick_rubric_categories && quick_rubric_categories.trim().length > 0;
-    const hasGradingCriteria = hasRubric || hasAnswerKey || hasQuickRubric;
-    
-    const gradingMode = hasGradingCriteria ? 'rubric_scoring' : 'feedback_only';
-    
-    console.log(`[grade-paper] Mode: ${gradingMode}`);
-    console.log(`[grade-paper] Has rubric: ${hasRubric}, Has answer key: ${hasAnswerKey}, Has quick rubric: ${hasQuickRubric}`);
+    // Parse or build rubric - ALWAYS get a rubric with points
+    const parsedRubric = buildRubric({
+      rubricText: rubric,
+      answerKey: answer_key,
+      quickRubricCategories: quick_rubric_categories,
+      autoScoreSettings: auto_score_settings
+    });
+
+    console.log(`[grade-paper] Rubric source: ${parsedRubric.source}, Total points: ${parsedRubric.totalPoints}`);
+    console.log(`[grade-paper] Criteria count: ${parsedRubric.criteria.length}`);
     console.log(`[grade-paper] Grade level: ${grade_level || 'unspecified'}, Subject: ${subject || 'unspecified'}`);
-    
-    // Build prompts based on mode
-    const { systemPrompt, userPrompt } = buildPrompts({
-      mode: gradingMode,
+
+    // Build the prompt - always scoring mode now
+    const { systemPrompt, userPrompt } = buildScoringPrompts({
       studentWork: student_work,
       subject,
       gradeLevel: grade_level,
       assignmentType: assignment_type,
-      rubric,
+      parsedRubric,
       answerKey: answer_key,
       assignmentDocText: assignment_doc_text,
-      autoScoreSettings: auto_score_settings,
-      quickRubricCategories: quick_rubric_categories
     });
 
     console.log(`[grade-paper] System prompt length: ${systemPrompt.length}`);
@@ -158,15 +175,18 @@ serve(async (req) => {
         throw new Error("No JSON found in response");
       }
 
-      // Normalize the response format
-      gradingResult = normalizeGradingResult(gradingResult, gradingMode);
+      // Normalize and validate the response
+      gradingResult = normalizeGradingResult(gradingResult, parsedRubric);
 
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
+      // Fallback result with default scoring
       gradingResult = {
-        mode: gradingMode,
-        score_suggestion: "N/A",
-        suggested_score: gradingMode === 'feedback_only' ? { display: "N/A" } : undefined,
+        mode: "scoring",
+        rubric_source: parsedRubric.source,
+        score_suggestion: `0/${parsedRubric.totalPoints}`,
+        score_percent: 0,
+        confidence: "low",
         strengths: ["Unable to parse AI response"],
         strengths_list: ["Unable to parse AI response"],
         areas_for_improvement: ["Manual review required - AI parsing failed"],
@@ -177,7 +197,7 @@ serve(async (req) => {
       };
     }
 
-    console.log("[grade-paper] Grading complete, mode:", gradingResult.mode, "score:", gradingResult.score_suggestion);
+    console.log("[grade-paper] Grading complete, score:", gradingResult.score_suggestion);
 
     return new Response(
       JSON.stringify(gradingResult),
@@ -193,17 +213,13 @@ serve(async (req) => {
 });
 
 /**
- * Build system and user prompts based on grading mode
+ * Build or parse rubric from provided inputs
+ * Falls back to default 20-point rubric if nothing usable is provided
  */
-function buildPrompts(params: {
-  mode: 'feedback_only' | 'rubric_scoring';
-  studentWork: string;
-  subject?: string;
-  gradeLevel?: string;
-  assignmentType?: string;
-  rubric?: string;
+function buildRubric(params: {
+  rubricText?: string;
   answerKey?: string;
-  assignmentDocText?: string;
+  quickRubricCategories?: string;
   autoScoreSettings?: {
     totalPoints: number | null;
     pointsPerQuestion: number | null;
@@ -211,193 +227,266 @@ function buildPrompts(params: {
     partialCreditAllowed: boolean;
     usePointsPerQuestion: boolean;
   };
-  quickRubricCategories?: string;
-}): { systemPrompt: string; userPrompt: string } {
-  
-  if (params.mode === 'feedback_only') {
-    return buildFeedbackOnlyPrompts(params);
-  } else {
-    return buildRubricScoringPrompts(params);
+}): ParsedRubric {
+  const { rubricText, answerKey, quickRubricCategories, autoScoreSettings } = params;
+
+  // Try to parse quick rubric categories first (most structured)
+  if (quickRubricCategories?.trim()) {
+    const parsed = parseQuickRubric(quickRubricCategories);
+    if (parsed) return parsed;
   }
+
+  // Try to use auto-score settings
+  if (autoScoreSettings) {
+    const parsed = parseAutoScoreSettings(autoScoreSettings);
+    if (parsed) return parsed;
+  }
+
+  // Try to extract points from rubric text
+  if (rubricText?.trim()) {
+    const parsed = parseRubricText(rubricText);
+    if (parsed) return parsed;
+  }
+
+  // If we have an answer key but no rubric, use default rubric
+  // The answer key will be used for correctness evaluation
+  if (answerKey?.trim()) {
+    return {
+      ...DEFAULT_RUBRIC,
+      source: 'auto-generated'
+    };
+  }
+
+  // Fallback to default rubric
+  return {
+    ...DEFAULT_RUBRIC,
+    source: 'auto-generated'
+  };
 }
 
 /**
- * FEEDBACK-ONLY MODE PROMPTS
- * No rubric, no scoring rules → qualitative feedback only
+ * Parse quick rubric format: "Category: X pts, Category2: Y pts"
  */
-function buildFeedbackOnlyPrompts(params: {
-  studentWork: string;
-  subject?: string;
-  gradeLevel?: string;
-  assignmentType?: string;
-}): { systemPrompt: string; userPrompt: string } {
+function parseQuickRubric(text: string): ParsedRubric | null {
+  const parts = text.split(',').map(p => p.trim()).filter(Boolean);
+  const criteria: RubricCriterion[] = [];
+  let total = 0;
+
+  for (const part of parts) {
+    const match = part.match(/^(.+?):\s*(\d+)\s*(?:pts?|points?)?$/i);
+    if (match) {
+      const points = parseInt(match[2], 10);
+      criteria.push({
+        name: match[1].trim(),
+        points,
+        guidance: `Evaluate ${match[1].trim().toLowerCase()}`
+      });
+      total += points;
+    }
+  }
+
+  if (criteria.length > 0 && total > 0) {
+    return { totalPoints: total, criteria, source: 'teacher' };
+  }
+  return null;
+}
+
+/**
+ * Parse auto-score settings into rubric format
+ */
+function parseAutoScoreSettings(settings: {
+  totalPoints: number | null;
+  pointsPerQuestion: number | null;
+  questionCount: number | null;
+  partialCreditAllowed: boolean;
+  usePointsPerQuestion: boolean;
+}): ParsedRubric | null {
+  if (settings.usePointsPerQuestion && settings.pointsPerQuestion && settings.questionCount) {
+    const total = settings.pointsPerQuestion * settings.questionCount;
+    return {
+      totalPoints: total,
+      criteria: [{
+        name: "Question Correctness",
+        points: total,
+        guidance: `${settings.questionCount} questions at ${settings.pointsPerQuestion} points each. ${settings.partialCreditAllowed ? 'Partial credit allowed.' : ''}`
+      }],
+      source: 'teacher'
+    };
+  }
+
+  if (settings.totalPoints) {
+    return {
+      totalPoints: settings.totalPoints,
+      criteria: [{
+        name: "Overall Score",
+        points: settings.totalPoints,
+        guidance: "Evaluate overall quality and correctness"
+      }],
+      source: 'teacher'
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Attempt to parse point values from rubric text
+ * Returns null if no clear point structure is found
+ */
+function parseRubricText(text: string): ParsedRubric | null {
+  // Look for patterns like "Total: 20 points" or "out of 100"
+  const totalMatch = text.match(/(?:total|out of|\/)\s*(\d+)\s*(?:pts?|points?)?/i);
   
-  const systemPrompt = `You are Bottor Assist, a teacher-facing grading assistant. You must be accurate, conservative, and transparent. Never invent rubric criteria, point values, or answer keys. If information is missing, say so clearly and proceed in feedback-only mode. Do not guess.`;
+  // Look for category patterns: "Category Name: X points" or "Category Name (X pts)"
+  const categoryPattern = /([A-Za-z][A-Za-z\s\/]+?)(?::|[\(\[])\s*(\d+)\s*(?:pts?|points?)?(?:[\)\]])?/g;
+  const criteria: RubricCriterion[] = [];
+  let match;
+  
+  while ((match = categoryPattern.exec(text)) !== null) {
+    const name = match[1].trim();
+    const points = parseInt(match[2], 10);
+    // Filter out obvious non-criteria matches
+    if (name.length > 2 && name.length < 50 && points > 0 && points <= 100) {
+      criteria.push({
+        name,
+        points,
+        guidance: `Teacher rubric criterion: ${name}`
+      });
+    }
+  }
 
-  const userPrompt = `Teacher context (optional):
-Subject: ${params.subject || "Not provided"}
-Grade level: ${params.gradeLevel || "Not provided"}
-Assignment type: ${params.assignmentType || "Not provided"}
+  // If we found criteria, use them
+  if (criteria.length > 0) {
+    const total = criteria.reduce((sum, c) => sum + c.points, 0);
+    return { totalPoints: total, criteria, source: 'teacher' };
+  }
 
-Inputs:
+  // If we found a total but no criteria, create a single criterion
+  if (totalMatch) {
+    const total = parseInt(totalMatch[1], 10);
+    if (total > 0 && total <= 1000) {
+      return {
+        totalPoints: total,
+        criteria: [{
+          name: "Overall Assessment",
+          points: total,
+          guidance: "Evaluate based on teacher's rubric criteria in the text"
+        }],
+        source: 'teacher'
+      };
+    }
+  }
 
-Student work text (OCR / extracted):
-${params.studentWork}
+  // Check for presence of rubric keywords without parseable points
+  const hasRubricKeywords = /rubric|criteria|grading|scoring|points/i.test(text);
+  if (hasRubricKeywords) {
+    // Rubric text exists but couldn't parse points - use text as guidance with default structure
+    return {
+      totalPoints: 20,
+      criteria: [
+        { name: "Rubric Criterion Alignment", points: 20, guidance: `Use teacher's rubric text for evaluation: ${text.substring(0, 500)}` }
+      ],
+      source: 'teacher' // Still teacher-provided, just couldn't parse points
+    };
+  }
 
-Task:
-You are in FEEDBACK-ONLY MODE. Do NOT generate a numeric score.
-
-Return:
-- Strengths (3–6 bullets) grounded in the student's work
-- Areas for Improvement (3–6 bullets) grounded in the student's work
-- Draft Feedback (1 short paragraph written directly to the student)
-- Teacher Notes (1–3 bullets: what you would check if a rubric/answer key were provided)
-
-Output format (STRICT JSON):
-{
-  "mode": "feedback_only",
-  "suggested_score": "N/A",
-  "strengths": ["..."],
-  "areas_for_improvement": ["..."],
-  "draft_feedback": "...",
-  "teacher_notes": ["..."]
-}`;
-
-  return { systemPrompt, userPrompt };
+  return null;
 }
 
 /**
- * RUBRIC/SCORING MODE PROMPTS
- * Points rubric + optional answer key → numeric score + feedback
+ * Build scoring prompts - always produces numeric score
  */
-function buildRubricScoringPrompts(params: {
+function buildScoringPrompts(params: {
   studentWork: string;
   subject?: string;
   gradeLevel?: string;
   assignmentType?: string;
-  rubric?: string;
+  parsedRubric: ParsedRubric;
   answerKey?: string;
   assignmentDocText?: string;
-  autoScoreSettings?: {
-    totalPoints: number | null;
-    pointsPerQuestion: number | null;
-    questionCount: number | null;
-    partialCreditAllowed: boolean;
-    usePointsPerQuestion: boolean;
-  };
-  quickRubricCategories?: string;
 }): { systemPrompt: string; userPrompt: string } {
+
+  const rubricText = params.parsedRubric.criteria.map(c => 
+    `- ${c.name}: ${c.points} points (${c.guidance})`
+  ).join('\n');
+
+  const isAutoGenerated = params.parsedRubric.source === 'auto-generated';
 
   const systemPrompt = `You are Bottor Assist, a teacher-facing grading assistant. You must be accurate, conservative, and transparent.
 
-Rules:
-1. NEVER guess rubric criteria, point values, or correct answers.
-2. If the rubric is present, grade ONLY using rubric criteria and point values.
-3. If an answer key is present, use it to evaluate correctness per question exactly.
-4. If both rubric and answer key are present: use the answer key for correctness and the rubric to guide feedback language and partial credit.
-5. If something cannot be determined from the student work (illegible, missing, ambiguous), mark it as "unclear" and assign 0 points unless the rubric explicitly defines partial credit for that case.
-6. Show your work: include a rubric breakdown with points earned per criterion and short evidence.
-7. Total score must equal the sum of awarded points.
-8. Be consistent: do not contradict yourself between breakdown and narrative.`;
+MANDATORY RULES:
+1. ALWAYS produce a numeric score out of ${params.parsedRubric.totalPoints} points.
+2. Score must be calculated by summing points from each rubric criterion.
+3. If the rubric is ${isAutoGenerated ? 'auto-generated (default template)' : 'teacher-provided'}, ${isAutoGenerated ? 'be transparent about this in teacher_notes' : 'follow it exactly'}.
+4. If an answer key is provided, use it to determine correctness.
+5. If something is unclear or illegible, award 0 points for that criterion and note it.
+6. Include a confidence level: "high" if grading is straightforward, "medium" if some interpretation needed, "low" if significant uncertainty.
+7. Be consistent: total earned points must equal the sum of criterion scores.
+8. Never contradict yourself between the breakdown and narrative feedback.`;
 
-  // Build the combined rubric text
-  let rubricSection = "";
-  if (params.rubric?.trim()) {
-    rubricSection = params.rubric;
-  }
-  if (params.quickRubricCategories?.trim()) {
-    rubricSection += (rubricSection ? "\n\n" : "") + `Quick Rubric Categories: ${params.quickRubricCategories}`;
-  }
-
-  // Build scoring rules from auto-score settings if provided
-  let scoringRulesText = "";
-  if (params.autoScoreSettings) {
-    const settings = params.autoScoreSettings;
-    if (settings.usePointsPerQuestion && settings.pointsPerQuestion !== null && settings.questionCount !== null) {
-      scoringRulesText = `Points per question: ${settings.pointsPerQuestion}, Question count: ${settings.questionCount}, Total possible: ${settings.pointsPerQuestion * settings.questionCount}`;
-    } else if (settings.totalPoints !== null) {
-      scoringRulesText = `Total points possible: ${settings.totalPoints}`;
-    }
-    if (settings.partialCreditAllowed) {
-      scoringRulesText += ". Partial credit is allowed.";
-    }
-  }
-
-  const userPrompt = `Teacher context (optional):
+  const userPrompt = `Teacher context:
 Subject: ${params.subject || "Not provided"}
 Grade level: ${params.gradeLevel || "Not provided"}
 Assignment type: ${params.assignmentType || "Not provided"}
 
-Inputs:
+RUBRIC (${isAutoGenerated ? 'Auto-Generated - Default Template' : 'Teacher-Provided'}):
+Total Points: ${params.parsedRubric.totalPoints}
+Criteria:
+${rubricText}
 
-Student work text (OCR / extracted):
+${params.answerKey ? `ANSWER KEY:\n${params.answerKey}\n` : ''}
+${params.assignmentDocText ? `ASSIGNMENT CONTEXT:\n${params.assignmentDocText}\n` : ''}
+
+STUDENT WORK:
 ${params.studentWork}
 
-Rubric text (REQUIRED for this mode):
-${rubricSection || "(No explicit rubric provided - use answer key for correctness evaluation)"}
+TASK:
+Grade this student work using the rubric above. You MUST:
+1. Evaluate each criterion and award points based on evidence in the student work
+2. Calculate total earned points (sum of all criterion scores)
+3. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
+4. Determine confidence level based on clarity of student work and rubric alignment
 
-Answer key text (optional):
-${params.answerKey || ""}
-
-Scoring rules (optional; if present, may be used ONLY if rubric does not define points):
-${scoringRulesText || ""}
-
-${params.assignmentDocText ? `Assignment document context:\n${params.assignmentDocText}\n` : ""}
-
-Task:
-Grade the student work using the rubric provided.
-
-1. Parse the rubric into criteria/categories with point values.
-2. For each criterion, award points based ONLY on evidence found in the student work.
-3. If an answer key is provided and the assignment is question-based, evaluate each question against the answer key and use that evidence to award rubric points and/or partial credit.
-4. Compute total points earned and total possible points.
-5. Produce feedback that references rubric criteria explicitly.
-
-Return:
-A) Suggested Score as "earned/possible" (example "17/20") and percent
-B) Rubric Breakdown: list each criterion with possible points, earned points, and 1–2 evidence sentences from the student work
-C) Strengths (3–6 bullets)
-D) Areas for Improvement (3–6 bullets)
-E) Draft Feedback (short paragraph to student)
-F) Teacher Notes (1–3 bullets: anything unclear, OCR issues, or rubric ambiguities)
-
-Output format (STRICT JSON):
+OUTPUT FORMAT (STRICT JSON):
 {
-  "mode": "rubric_scoring",
+  "mode": "scoring",
+  "rubric_source": "${params.parsedRubric.source}",
   "suggested_score": {
-    "earned_points": 0,
-    "possible_points": 0,
-    "display": "0/0",
-    "percent": 0
+    "earned_points": <number>,
+    "possible_points": ${params.parsedRubric.totalPoints},
+    "display": "<earned>/${params.parsedRubric.totalPoints}",
+    "percent": <number 0-100>,
+    "letter_grade": "<A/B/C/D/F based on percent>"
   },
+  "confidence": "<high|medium|low>",
   "rubric_breakdown": [
     {
-      "criterion": "...",
-      "possible_points": 0,
-      "earned_points": 0,
-      "evidence": "..."
+      "criterion": "<criterion name>",
+      "possible_points": <number>,
+      "earned_points": <number>,
+      "evidence": "<1-2 sentences citing specific evidence from student work>"
     }
   ],
-  "strengths": ["..."],
-  "areas_for_improvement": ["..."],
-  "draft_feedback": "...",
-  "teacher_notes": ["..."]
+  "strengths": ["<3-6 bullets>"],
+  "areas_for_improvement": ["<3-6 bullets>"],
+  "draft_feedback": "<1 paragraph written to the student>",
+  "teacher_notes": ["<1-3 bullets about grading decisions, unclear areas, or recommendations>"]
 }`;
 
   return { systemPrompt, userPrompt };
 }
 
 /**
- * Normalize the grading result to a consistent format
+ * Normalize and validate grading result
  */
 function normalizeGradingResult(
-  result: Record<string, unknown>, 
-  mode: 'feedback_only' | 'rubric_scoring'
+  result: Record<string, unknown>,
+  rubric: ParsedRubric
 ): Record<string, unknown> {
   
-  // Ensure mode is set
-  result.mode = result.mode || mode;
-  
+  result.mode = "scoring";
+  result.rubric_source = result.rubric_source || rubric.source;
+
   // Normalize strengths
   if (Array.isArray(result.strengths)) {
     result.strengths_list = result.strengths;
@@ -407,7 +496,7 @@ function normalizeGradingResult(
     result.strengths = [];
     result.strengths_list = [];
   }
-  
+
   // Normalize areas for improvement
   if (Array.isArray(result.areas_for_improvement)) {
     result.improvements_list = result.areas_for_improvement;
@@ -417,52 +506,75 @@ function normalizeGradingResult(
     result.areas_for_improvement = [];
     result.improvements_list = [];
   }
-  
+
   // Normalize feedback
   result.feedback_paragraph = result.draft_feedback || result.feedback_paragraph || "";
   result.draft_feedback = result.feedback_paragraph;
-  
-  // Normalize score based on mode
-  if (mode === 'feedback_only') {
-    result.score_suggestion = "N/A";
-    result.total_score = null;
-    result.max_score = null;
+
+  // Extract and validate score
+  const suggestedScore = result.suggested_score as Record<string, unknown> | undefined;
+  if (suggestedScore && typeof suggestedScore === 'object') {
+    const earned = Number(suggestedScore.earned_points) || 0;
+    const possible = rubric.totalPoints;
+    const percent = Math.round((earned / possible) * 100);
+    
+    result.total_score = earned;
+    result.max_score = possible;
+    result.score_suggestion = `${earned}/${possible}`;
+    result.score_percent = percent;
+    result.letter_grade = suggestedScore.letter_grade || getLetterGrade(percent);
+    result.confidence = result.confidence || "medium";
   } else {
-    // Extract score from suggested_score object if present
-    const suggestedScore = result.suggested_score as Record<string, unknown> | undefined;
-    if (suggestedScore && typeof suggestedScore === 'object') {
-      result.total_score = suggestedScore.earned_points;
-      result.max_score = suggestedScore.possible_points;
-      result.score_suggestion = suggestedScore.display || 
-        `${suggestedScore.earned_points}/${suggestedScore.possible_points}`;
-      result.score_percent = suggestedScore.percent;
-    } else if (typeof result.total_score === 'number' && typeof result.max_score === 'number') {
-      result.score_suggestion = `${result.total_score}/${result.max_score}`;
-    } else if (result.qualitative_rating) {
-      result.score_suggestion = result.qualitative_rating as string;
-    } else {
-      result.score_suggestion = "N/A";
-    }
-    
-    // Build score derivation from rubric breakdown if available
-    const breakdown = result.rubric_breakdown as Array<{
-      criterion: string;
-      earned_points: number;
-      possible_points: number;
-    }> | undefined;
-    
-    if (breakdown && Array.isArray(breakdown) && breakdown.length > 0) {
-      const derivationParts = breakdown.map(b => 
-        `${b.criterion}: ${b.earned_points}/${b.possible_points}`
-      );
-      result.score_derivation = derivationParts.join(', ');
-    }
+    // No valid score structure - use defaults
+    result.total_score = 0;
+    result.max_score = rubric.totalPoints;
+    result.score_suggestion = `0/${rubric.totalPoints}`;
+    result.score_percent = 0;
+    result.letter_grade = "F";
+    result.confidence = "low";
   }
-  
+
+  // Build score derivation from rubric breakdown
+  const breakdown = result.rubric_breakdown as Array<{
+    criterion: string;
+    earned_points: number;
+    possible_points: number;
+  }> | undefined;
+
+  if (breakdown && Array.isArray(breakdown) && breakdown.length > 0) {
+    const derivationParts = breakdown.map(b =>
+      `${b.criterion}: ${b.earned_points}/${b.possible_points}`
+    );
+    result.score_derivation = derivationParts.join(' | ');
+  }
+
   // Ensure teacher_notes exists
   if (!Array.isArray(result.teacher_notes)) {
     result.teacher_notes = [];
   }
-  
+
+  // Add auto-generated rubric note if applicable
+  if (rubric.source === 'auto-generated' && Array.isArray(result.teacher_notes)) {
+    const hasNote = (result.teacher_notes as string[]).some(n => 
+      n.toLowerCase().includes('auto-generated') || n.toLowerCase().includes('default')
+    );
+    if (!hasNote) {
+      (result.teacher_notes as string[]).unshift(
+        "Scored using Bottor's default 20-point template (no rubric detected). Consider providing a rubric for more precise scoring."
+      );
+    }
+  }
+
   return result;
+}
+
+/**
+ * Convert percent to letter grade
+ */
+function getLetterGrade(percent: number): string {
+  if (percent >= 90) return "A";
+  if (percent >= 80) return "B";
+  if (percent >= 70) return "C";
+  if (percent >= 60) return "D";
+  return "F";
 }
