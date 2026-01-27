@@ -622,37 +622,47 @@ export default function GradePapers() {
     setEditingNameValue('');
   };
 
-  // Detect rubric and update grading mode
+  // Detect rubric and ENFORCE scoring mode when rubric is present
+  // When a rubric is detected: auto-lock for grading, disable feedback-only
   useEffect(() => {
-    const hasRubric = rubricTextCombined.trim() || detectRubricInText(studentUpload.combinedText);
-    setGradingMode(hasRubric ? "scoring" : "feedback-only");
+    const hasRubricContent = rubricFinalText.trim().length > 0;
+    const hasAnswerKey = answerKeyTextCombined.trim().length > 0;
+    const hasGradingCriteriaDetected = hasRubricContent || hasAnswerKey;
 
-    if (!hasRubric) {
+    // ALWAYS use scoring mode (mandatory numeric scoring)
+    setGradingMode("scoring");
+
+    if (!hasGradingCriteriaDetected) {
+      // No rubric/answer key detected - use default scoring, allow mode changes
       setRubricMode("none");
-      // Auto-switch to feedback-only if rubric-based was selected but no rubric
-      if (scoringMode === 'rubric-based') {
-        setScoringMode('feedback-only');
-      }
-    } else if (rubricLocked) {
-      setRubricMode("locked");
+      setRubricLocked(false);
     } else {
-      setRubricMode("draft");
+      // Rubric/answer key detected - AUTO-LOCK for grading
+      // Users cannot switch to feedback-only while rubric is present
+      setRubricMode("locked");
+      setRubricLocked(true);
+      
+      // Force scoring mode when rubric is present
+      if (scoringMode === 'feedback-only') {
+        setScoringMode('rubric-based');
+      }
     }
 
-    if (rubricTextCombined.trim()) {
-      if (rubricUpload.files.length > 0 && form.rubric.trim()) {
+    // Set rubric source description
+    if (rubricFinalText.trim()) {
+      if (rubricExtractedText.trim() && form.rubric.trim()) {
         setDetectedRubricSource("Uploaded files + Manual entry");
-      } else if (rubricUpload.files.length > 0) {
+      } else if (rubricExtractedText.trim()) {
         setDetectedRubricSource("Uploaded files");
       } else {
         setDetectedRubricSource("Manual entry");
       }
-    } else if (detectRubricInText(studentUpload.combinedText)) {
-      setDetectedRubricSource("Student work");
+    } else if (hasAnswerKey) {
+      setDetectedRubricSource("Answer key (default scoring template)");
     } else {
       setDetectedRubricSource("");
     }
-  }, [rubricTextCombined, studentUpload.combinedText, rubricLocked, rubricUpload.files.length, form.rubric, scoringMode]);
+  }, [rubricFinalText, answerKeyTextCombined, rubricExtractedText, form.rubric, scoringMode]);
 
   const updateForm = (field: keyof GradePapersForm, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -1269,13 +1279,19 @@ export default function GradePapers() {
                   <div className="flex items-center gap-3">
                     <BookOpen className="w-5 h-5 text-muted-foreground" />
                     <div>
-                      <CardTitle className="text-base font-medium">
+                      <CardTitle className="text-base font-medium flex items-center gap-2">
                         Grading Criteria
-                        <span className="text-xs font-normal text-muted-foreground ml-2">Optional</span>
+                        <span className="text-xs font-normal text-muted-foreground">Optional</span>
+                        {hasGradingCriteria && (
+                          <Badge variant="secondary" className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                            <Lock className="w-3 h-3 mr-1" />
+                            Locked for Scoring
+                          </Badge>
+                        )}
                       </CardTitle>
                       <CardDescription className="text-xs mt-0.5">
                         {hasGradingCriteria 
-                          ? "Using your rubric for precise scoring"
+                          ? "Rubric detected and locked. Numeric score will be calculated from your criteria."
                           : "Numeric scoring always generated. Add rubric for criteria-aligned grading."}
                       </CardDescription>
                     </div>
@@ -1576,12 +1592,12 @@ export default function GradePapers() {
               </Card>
             )}
 
-            {/* Suggested Score - ALWAYS shown (numeric scoring is mandatory) */}
-            <Card className="border-0 shadow-md bg-primary/5">
+            {/* Suggested Score - PROMINENTLY DISPLAYED FIRST (numeric scoring is mandatory) */}
+            <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex justify-between items-center">
                   <div className="flex items-center gap-2">
-                    <span>{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Suggested Score</span>
+                    <span className="text-xl font-bold">{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Score</span>
                     {/* Scoring source badge */}
                     {currentGroup.result.rubric_source === 'auto-generated' ? (
                       <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300">
@@ -1589,6 +1605,7 @@ export default function GradePapers() {
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                        <Lock className="w-3 h-3 mr-1" />
                         Rubric-based scoring
                       </Badge>
                     )}
@@ -1603,21 +1620,26 @@ export default function GradePapers() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex items-center gap-4">
-                  <Input
-                    value={currentGroup.result.score_suggestion}
-                    onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
-                    className="text-xl font-bold text-primary max-w-32"
-                  />
+                {/* Large prominent score display */}
+                <div className="flex items-center gap-4 py-2">
+                  <div className="flex items-baseline gap-2">
+                    <Input
+                      value={currentGroup.result.score_suggestion}
+                      onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
+                      className="text-3xl font-bold text-primary max-w-36 h-14 text-center border-2 border-primary/20"
+                    />
+                  </div>
                   {currentGroup.result.score_percent !== undefined && (
-                    <span className="text-2xl font-bold text-muted-foreground">
-                      {currentGroup.result.score_percent}%
-                    </span>
-                  )}
-                  {currentGroup.result.letter_grade && (
-                    <Badge variant="secondary" className="text-lg px-3 py-1">
-                      {currentGroup.result.letter_grade}
-                    </Badge>
+                    <div className="flex flex-col items-center">
+                      <span className="text-4xl font-bold text-foreground">
+                        {currentGroup.result.score_percent}%
+                      </span>
+                      {currentGroup.result.letter_grade && (
+                        <Badge variant="secondary" className="text-xl px-4 py-1 mt-1 font-bold">
+                          {currentGroup.result.letter_grade}
+                        </Badge>
+                      )}
+                    </div>
                   )}
                 </div>
                 {currentGroup.result.score_derivation && (
