@@ -704,7 +704,7 @@ export default function GradePapers() {
     answer_key: "",
   });
 
-  const [gradingMode, setGradingMode] = useState<GradingMode>("feedback-only");
+  const [gradingMode, setGradingMode] = useState<GradingMode>("scoring");
   const [rubricMode, setRubricMode] = useState<RubricMode>("none");
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
@@ -717,6 +717,16 @@ export default function GradePapers() {
   
   // Answer key detection state
   const [answerKeyDetected, setAnswerKeyDetected] = useState(false);
+  
+  // Rubric detection state (tracks if rubric content exists)
+  const rubricDetected = useMemo(() => {
+    const hasRubricFile = rubricUpload.files.some(f => f.status === 'ready');
+    const hasRubricText = form.rubric.trim().length > 0;
+    const hasRubricFromExtraction = rubricUpload.files.some(f => 
+      f.status === 'ready' && f.extractedText && f.extractedText.trim().length > 0
+    );
+    return hasRubricFile || hasRubricText || hasRubricFromExtraction;
+  }, [rubricUpload.files, form.rubric]);
 
   // Scoring options state (assignment type removed for pilot)
   const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only"); // Default to feedback-only
@@ -833,16 +843,27 @@ export default function GradePapers() {
     return parseRubricForPoints(rubricFinalText, answerKeyTextCombined, studentWorkText);
   }, [rubricFinalText, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
 
-  // Effective total points: manual override > parsed > default
+  // Effective total points: manual override > parsed > default to 20 (never null when rubric detected)
   const effectiveTotalPoints = useMemo(() => {
     if (manualTotalPoints && manualTotalPoints > 0) return manualTotalPoints;
     if (parsedRubricMeta.totalPoints) return parsedRubricMeta.totalPoints;
-    return null; // Will require manual input
-  }, [manualTotalPoints, parsedRubricMeta.totalPoints]);
+    // Default to 20 when rubric is detected but points couldn't be parsed
+    // This prevents blocking the grading flow
+    if (rubricDetected) return 20;
+    return null;
+  }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
+  
+  // Track if total points were inferred vs parsed
+  const totalPointsInferred = useMemo(() => {
+    if (manualTotalPoints && manualTotalPoints > 0) return false;
+    if (parsedRubricMeta.totalPoints) return false;
+    return rubricDetected; // Inferred when rubric exists but no points found
+  }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
 
   // Determine if scoring is valid based on parsed rubric or manual settings
+  // UPDATED: Never block with errors when rubric is detected - default to 20 points
   const scoringValidation = useMemo(() => {
-    // If we have effective total points (parsed or manual), scoring is valid
+    // If rubric is locked with effective total points, scoring is valid
     if (rubricLocked && effectiveTotalPoints) {
       const isManualOverride = manualTotalPoints && manualTotalPoints > 0;
       const isParsedWithHighConfidence = parsedRubricMeta.detectionConfidence === 'high';
@@ -853,35 +874,38 @@ export default function GradePapers() {
         source: isManualOverride ? 'manual' as const : parsedRubricMeta.source,
         confidence: isManualOverride ? 'high' as const : parsedRubricMeta.detectionConfidence,
         message: isManualOverride
-          ? `Total points set manually: ${effectiveTotalPoints} points`
+          ? `Rubric locked — scoring enabled (Total: ${effectiveTotalPoints} points, manually set)`
           : isParsedWithHighConfidence
-            ? `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`
-            : `Points inferred — scoring enabled (Total: ${effectiveTotalPoints} points)`
+            ? `Rubric locked — scoring enabled (Total: ${effectiveTotalPoints} points)`
+            : totalPointsInferred
+              ? `Rubric locked — total points inferred as ${effectiveTotalPoints} (editable below)`
+              : `Rubric locked — scoring enabled (Total: ${effectiveTotalPoints} points)`
       };
     }
 
-    // Rubric is locked but NO total points detected - need manual input
-    if (rubricLocked && !effectiveTotalPoints) {
+    // Rubric detected but not locked - still valid with effective total
+    if (rubricDetected && effectiveTotalPoints) {
       return { 
-        isValid: false, 
-        totalPoints: null,
-        source: 'none' as const,
-        confidence: 'none' as const,
-        message: "We found a rubric, but couldn't confirm total points. Please enter total points to score accurately.",
-        needsManualInput: true
+        isValid: true, 
+        totalPoints: effectiveTotalPoints,
+        source: parsedRubricMeta.source,
+        confidence: parsedRubricMeta.detectionConfidence,
+        message: totalPointsInferred 
+          ? `Rubric detected — total points inferred (${effectiveTotalPoints}). Lock rubric or edit below.`
+          : parsedRubricMeta.hasPointValues 
+            ? `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`
+            : `Points inferred from ${parsedRubricMeta.pointScaleType === 'per-question' ? 'answer key' : 'content'} (Total: ${effectiveTotalPoints} points)`
       };
     }
 
-    // Has grading criteria with valid total
+    // Has grading criteria (answer key) with valid total
     if (hasGradingCriteria && effectiveTotalPoints) {
       return { 
         isValid: true, 
         totalPoints: effectiveTotalPoints,
         source: parsedRubricMeta.source,
         confidence: parsedRubricMeta.detectionConfidence,
-        message: parsedRubricMeta.hasPointValues 
-          ? `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`
-          : `Points inferred from ${parsedRubricMeta.pointScaleType === 'per-question' ? 'answer key' : 'content'} (Total: ${effectiveTotalPoints} points)`
+        message: `Scoring enabled (Total: ${effectiveTotalPoints} points)`
       };
     }
 
@@ -913,15 +937,15 @@ export default function GradePapers() {
       }
     }
 
-    // No valid scoring configuration
+    // No valid scoring configuration - but never block
     return { 
-      isValid: false, 
-      totalPoints: null,
+      isValid: true, // Changed from false to true - we always score
+      totalPoints: 20, // Default fallback
       source: 'none' as const,
       confidence: 'none' as const,
-      message: null
+      message: 'Using default scoring (20 points)'
     };
-  }, [rubricLocked, effectiveTotalPoints, manualTotalPoints, parsedRubricMeta, hasGradingCriteria, scoringMode, autoScoreSettings, quickRubricSettings]);
+  }, [rubricLocked, rubricDetected, effectiveTotalPoints, totalPointsInferred, manualTotalPoints, parsedRubricMeta, hasGradingCriteria, scoringMode, autoScoreSettings, quickRubricSettings]);
 
   const detectRubricInText = (text: string): boolean => {
     if (!text.trim()) return false;
@@ -1024,19 +1048,25 @@ export default function GradePapers() {
   useEffect(() => {
     // Check answer key upload files
     const answerKeyFromFiles = answerKeyUpload.files.some(f => 
-      detectAnswerKey(f.fileName, f.extractedText || '')
+      f.status === 'ready' && detectAnswerKey(f.fileName, f.extractedText || '')
     );
     
     // Check rubric files (might contain answer key combined)
     const answerKeyFromRubric = rubricUpload.files.some(f => 
-      detectAnswerKey(f.fileName, f.extractedText || '')
+      f.status === 'ready' && detectAnswerKey(f.fileName, f.extractedText || '')
     );
     
-    // Check pasted text
+    // Check pasted text for answer key keywords
     const answerKeyFromPaste = form.answer_key.trim().length > 0;
     
-    setAnswerKeyDetected(answerKeyFromFiles || answerKeyFromRubric || answerKeyFromPaste);
-  }, [answerKeyUpload.files, rubricUpload.files, form.answer_key]);
+    // Check rubric text for answer key keywords
+    const answerKeyInRubricText = form.rubric.toLowerCase().includes('answer key') || 
+      form.rubric.toLowerCase().includes('answers') ||
+      form.rubric.toLowerCase().includes('step-by-step') ||
+      /^\s*\d+[\.\)]\s*[A-Za-z]/m.test(form.rubric); // Numbered solutions pattern
+    
+    setAnswerKeyDetected(answerKeyFromFiles || answerKeyFromRubric || answerKeyFromPaste || answerKeyInRubricText);
+  }, [answerKeyUpload.files, rubricUpload.files, form.answer_key, form.rubric]);
 
   // Toggle rubric lock (for teacher control)
   const toggleRubricLock = () => {
@@ -1048,9 +1078,8 @@ export default function GradePapers() {
       // Locking - enforce scoring
       setRubricLocked(true);
       setRubricMode("locked");
-      if (scoringMode === 'feedback-only') {
-        setScoringMode('rubric-based');
-      }
+      setScoringMode('rubric-based');
+      setGradingMode('scoring');
     }
   };
 
@@ -1081,40 +1110,16 @@ export default function GradePapers() {
       return;
     }
 
-    // NEW VALIDATION: Use scoringValidation which checks rubric, answer key, and manual settings
-    // Require total points when rubric is locked
-    if (rubricLocked && !effectiveTotalPoints) {
+    // NEW BEHAVIOR: Never block grading - always proceed with scoring
+    // effectiveTotalPoints will default to 20 if nothing could be detected
+    const finalTotalPoints = effectiveTotalPoints || 20;
+    
+    // Show non-blocking warning if total was inferred
+    if (totalPointsInferred && !manualTotalPoints) {
       toast({ 
-        title: "Total points required", 
-        description: "Please enter the total points for this assignment to enable scoring.", 
-        variant: "destructive" 
+        title: "Total points inferred", 
+        description: `Using ${finalTotalPoints} points. You can edit the score after grading.`,
       });
-      return;
-    }
-
-    // Skip validation errors if rubric is locked (always scores) or if rubric has parsed points
-    if (!rubricLocked && !scoringValidation.isValid) {
-      // Only show error if we're in a scoring mode that requires manual settings
-      if (scoringMode === 'auto-score' && !validateAutoScoreSettings(autoScoreSettings)) {
-        toast({ 
-          title: "Missing scoring settings", 
-          description: "Please enter point values in Scoring Options, or upload a rubric with point values.", 
-          variant: "destructive" 
-        });
-        return;
-      }
-
-      if (scoringMode === 'rubric-based') {
-        const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
-        if (!rubricMax && !quickRubricSettings.totalPoints && !effectiveTotalPoints) {
-          toast({ 
-            title: "Missing scoring settings", 
-            description: "Please set total points, configure Quick Rubric, or upload a rubric with point values.", 
-            variant: "destructive" 
-          });
-          return;
-        }
-      }
     }
 
     setGrading(true);
@@ -1979,27 +1984,26 @@ export default function GradePapers() {
           </Card>
         )}
 
-        {/* Rubric Only: Locked for Scoring - with parsed points info */}
+        {/* Rubric Only: Locked for Scoring - GREEN status card with parsed points info */}
         {rubricLocked && !answerKeyDetected && (
-          <Card className="border border-primary/30 bg-primary/5">
+          <Card className="border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
             <CardContent className="p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Lock className="w-4 h-4 text-primary" />
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                    <Lock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {effectiveTotalPoints 
-                        ? `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`
-                        : "Rubric locked — scoring rules enforced."
-                      }
+                    <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                      Rubric locked — scoring rules enforced (Total: {effectiveTotalPoints || 20} points)
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {effectiveTotalPoints 
-                        ? `${parsedRubricMeta.rubricItems.length > 0 ? `${parsedRubricMeta.rubricItems.length} criteria detected. ` : ''}Add an answer key to improve accuracy.`
-                        : "Numeric scoring will be calculated from your rubric criteria."
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      {parsedRubricMeta.rubricItems.length > 0 
+                        ? `${parsedRubricMeta.rubricItems.length} criteria detected. ` 
+                        : ''
                       }
+                      {totalPointsInferred ? 'Points inferred — editable below. ' : ''}
+                      Add an answer key to improve accuracy.
                     </p>
                   </div>
                 </div>
@@ -2012,11 +2016,11 @@ export default function GradePapers() {
                         onClick={toggleRubricLock}
                         className="flex-shrink-0"
                       >
-                        {rubricLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                        <Lock className="w-4 h-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {rubricLocked ? "Unlock rubric to show scoring options" : "Lock rubric for auto-grading"}
+                      Unlock rubric to show scoring options
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -2025,8 +2029,8 @@ export default function GradePapers() {
           </Card>
         )}
 
-        {/* Manual Total Points Input - when rubric exists but points couldn't be detected */}
-        {rubricLocked && !effectiveTotalPoints && (
+        {/* Total Points Editor - NON-BLOCKING warning when points are inferred (defaulted to 20) */}
+        {rubricLocked && totalPointsInferred && (
           <Card className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
             <CardContent className="p-4 space-y-3">
               <div className="flex items-start gap-3">
@@ -2035,10 +2039,10 @@ export default function GradePapers() {
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                    We found a rubric, but couldn't confirm total points.
+                    Total points inferred — you can edit if needed
                   </p>
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Please enter total points to score accurately.
+                    We detected a rubric but couldn't parse the point total. Using {effectiveTotalPoints || 20} points by default.
                   </p>
                 </div>
               </div>
@@ -2051,21 +2055,11 @@ export default function GradePapers() {
                   type="number"
                   min="1"
                   max="1000"
-                  placeholder={parsedRubricMeta.totalPoints ? String(parsedRubricMeta.totalPoints) : "20"}
-                  value={manualTotalPoints || ''}
+                  placeholder="20"
+                  value={manualTotalPoints || effectiveTotalPoints || 20}
                   onChange={(e) => setManualTotalPoints(e.target.value ? parseInt(e.target.value, 10) : null)}
                   className="w-24 h-9"
                 />
-                {parsedRubricMeta.totalPoints && !manualTotalPoints && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setManualTotalPoints(parsedRubricMeta.totalPoints)}
-                    className="text-xs"
-                  >
-                    Use suggested ({parsedRubricMeta.totalPoints})
-                  </Button>
-                )}
               </div>
             </CardContent>
           </Card>
