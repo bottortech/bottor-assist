@@ -1499,8 +1499,52 @@ export default function GradePapers() {
           </Card>
         </Collapsible>
 
-        {/* ===== SCORING OPTIONS (only shown when grading criteria exists) ===== */}
-        {hasGradingCriteria && (
+        {/* ===== GRADING STATUS BANNERS ===== */}
+        {/* Rubric + Answer Key: Enhanced Scoring */}
+        {rubricLocked && answerKeyTextCombined.trim() && (
+          <Card className="border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                    Rubric + Answer Key detected — enhanced scoring enabled.
+                  </p>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                    Using rubric for scoring structure and answer key for correctness validation.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Rubric Only: Locked for Scoring */}
+        {rubricLocked && !answerKeyTextCombined.trim() && (
+          <Card className="border border-primary/30 bg-primary/5">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Lock className="w-4 h-4 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Rubric locked — scoring rules enforced.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Numeric scoring will be calculated from your rubric criteria. Add an answer key to improve accuracy.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ===== SCORING OPTIONS (HIDDEN when rubric is locked) ===== */}
+        {/* Only show when grading criteria exists BUT rubric is NOT locked */}
+        {hasGradingCriteria && !rubricLocked && (
           <ScoringOptionsSection
             scoringMode={scoringMode}
             onScoringModeChange={setScoringMode}
