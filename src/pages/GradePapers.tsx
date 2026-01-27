@@ -465,12 +465,15 @@ export default function GradePapers() {
   const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
   const [quickRubricSettings, setQuickRubricSettings] = useState<QuickRubricSettings>(DEFAULT_QUICK_RUBRIC_SETTINGS);
   
-  // Check if rubric or answer key is provided (to show scoring options)
+  // Check if rubric or answer key is provided (file with Ready status OR text entered)
+  // This determines button label and grading intent - reacts immediately to file status changes
   const hasGradingCriteria = useMemo(() => {
-    const hasRubric = rubricUpload.files.length > 0 || form.rubric.trim().length > 0;
-    const hasAnswerKey = answerKeyUpload.files.length > 0 || form.answer_key.trim().length > 0;
-    return hasRubric || hasAnswerKey;
-  }, [rubricUpload.files.length, form.rubric, answerKeyUpload.files.length, form.answer_key]);
+    const hasRubricFile = rubricUpload.files.some(f => f.status === 'ready');
+    const hasRubricText = form.rubric.trim().length > 0;
+    const hasAnswerKeyFile = answerKeyUpload.files.some(f => f.status === 'ready');
+    const hasAnswerKeyText = form.answer_key.trim().length > 0;
+    return hasRubricFile || hasRubricText || hasAnswerKeyFile || hasAnswerKeyText;
+  }, [rubricUpload.files, form.rubric, answerKeyUpload.files, form.answer_key]);
   
   // Determine if scoring is enabled (rubric/answer key present OR manual scoring rules configured)
   const hasScoringEnabled = useMemo(() => {
@@ -1442,12 +1445,12 @@ export default function GradePapers() {
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
                     {studentGroups.length > 1
-                      ? hasScoringEnabled 
+                      ? hasGradingCriteria 
                         ? `Grade All Students (${studentGroups.length})`
                         : `Generate Feedback for All (${studentGroups.length})`
                       : hasFailedFiles && studentUpload.hasReadyFiles
                         ? "Proceed with Ready Files"
-                        : hasScoringEnabled 
+                        : hasGradingCriteria 
                           ? "Generate Draft Grade + Feedback"
                           : "Generate Feedback Summary"}
                   </Button>
