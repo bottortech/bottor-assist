@@ -117,8 +117,8 @@ export function ScoringOptionsSection({
           Scoring Options
           <span className="text-xs font-normal">(Optional)</span>
         </CardTitle>
-        <CardDescription className="text-xs">
-          Enable scoring to generate numeric grades. Leave off for feedback only.
+        <CardDescription className="text-xs text-muted-foreground">
+          Enable scoring to generate numeric grades. Leave off for feedback-only.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
