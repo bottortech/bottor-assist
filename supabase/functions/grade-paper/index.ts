@@ -42,6 +42,14 @@ interface GradeRequest {
   prompt_text?: string;
   assignment_doc_text?: string;  // Text from assignment/rubric documents
   grading_mode: 'scoring' | 'feedback-only';
+  scoring_mode?: 'feedback-only' | 'auto-score' | 'rubric-based';  // New flexible scoring
+  auto_score_settings?: {
+    totalPoints: number | null;
+    pointsPerQuestion: number | null;
+    questionCount: number | null;
+    partialCreditAllowed: boolean;
+    usePointsPerQuestion: boolean;
+  };
   content_type?: 'objective' | 'open-ended' | 'mixed';  // Smart fallback hint
 }
 
@@ -63,6 +71,8 @@ serve(async (req) => {
       prompt_text,
       assignment_doc_text,
       grading_mode = 'feedback-only',
+      scoring_mode = 'feedback-only',
+      auto_score_settings,
       content_type = 'mixed'
     } = body;
 
@@ -78,11 +88,14 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`[grade-paper] Grading in ${grading_mode} mode for ${grade_level} ${subject}, content_type: ${content_type}`);
+    console.log(`[grade-paper] Grading in ${scoring_mode} mode for ${grade_level} ${subject}, content_type: ${content_type}`);
+    if (auto_score_settings) {
+      console.log(`[grade-paper] Auto-score settings:`, JSON.stringify(auto_score_settings));
+    }
 
     // Build the grading prompt based on mode and content type
     const prompt = buildGradingPrompt(body);
-    const systemPrompt = buildSystemPrompt(grading_mode, rubric, answer_key, content_type);
+    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, content_type, auto_score_settings);
 
     const response = await fetch(LOVABLE_AI_URL, {
       method: "POST",
@@ -198,23 +211,31 @@ serve(async (req) => {
 });
 
 /**
- * Build system prompt based on grading mode with smart fallback behavior
+ * Build system prompt based on scoring mode with smart fallback behavior
  */
 function buildSystemPrompt(
-  gradingMode: 'scoring' | 'feedback-only', 
+  scoringMode: 'feedback-only' | 'auto-score' | 'rubric-based', 
   rubric: string,
   answerKey?: string,
-  contentType: 'objective' | 'open-ended' | 'mixed' = 'mixed'
+  contentType: 'objective' | 'open-ended' | 'mixed' = 'mixed',
+  autoScoreSettings?: {
+    totalPoints: number | null;
+    pointsPerQuestion: number | null;
+    questionCount: number | null;
+    partialCreditAllowed: boolean;
+    usePointsPerQuestion: boolean;
+  }
 ): string {
   const basePrompt = `You are Bottor Assist, an AI grading assistant for teachers.
 
-CRITICAL RULES - RUBRIC-FIRST GRADING:
-1. Grade ONLY using the provided rubric/criteria - NEVER invent your own grading system
+CRITICAL RULES - TEACHER-CONTROLLED GRADING:
+1. Grade ONLY using the provided rubric/criteria or scoring rules - NEVER invent your own grading system
 2. Grade ONLY what is present in the student work - do NOT invent or assume missing information
 3. If handwriting is unclear or illegible, state "illegible/unclear" and do NOT guess
 4. Match content to rubric requirements by substance, not by form labels
 5. Do NOT penalize for "Source 1 missing" unless rubric explicitly requires labeled Source 1/2/3
 6. If rubric says "3 sources," check if THREE sources appear in content (by titles/authors/etc) regardless of numbering
+7. NEVER guess point values - only use values explicitly provided by the teacher
 
 MULTI-DOCUMENT AWARENESS:
 - Student work may come from multiple pages or documents
@@ -230,83 +251,83 @@ SUBJECT-AGNOSTIC LOGIC:
 GUARDRAILS:
 - Never hallucinate content that isn't in the student work
 - Keep educators in control - phrase all suggestions as recommendations
-- Be specific and actionable in feedback`;
+- Be specific and actionable in feedback
+- Always explain HOW the score was derived`;
 
-  // Smart fallback for feedback-only mode with answer key
-  if (gradingMode === 'feedback-only') {
-    // Check if we have an answer key that can help with objective content
-    const hasAnswerKey = answerKey && answerKey.trim().length > 0;
-    const isObjectiveContent = contentType === 'objective';
+  // Handle auto-score mode
+  if (scoringMode === 'auto-score' && autoScoreSettings) {
+    const hasPointSettings = autoScoreSettings.usePointsPerQuestion 
+      ? (autoScoreSettings.pointsPerQuestion !== null && autoScoreSettings.questionCount !== null)
+      : (autoScoreSettings.totalPoints !== null);
     
-    if (hasAnswerKey && isObjectiveContent) {
+    if (hasPointSettings) {
+      const partialCreditNote = autoScoreSettings.partialCreditAllowed 
+        ? '\n- Award partial credit when student shows correct reasoning or work, even if final answer is incorrect'
+        : '\n- Do NOT award partial credit - answers are either fully correct or incorrect';
+      
+      const pointsExplanation = autoScoreSettings.usePointsPerQuestion
+        ? `- Total points: ${(autoScoreSettings.pointsPerQuestion || 0) * (autoScoreSettings.questionCount || 0)} (${autoScoreSettings.pointsPerQuestion} points × ${autoScoreSettings.questionCount} questions)
+- Award ${autoScoreSettings.pointsPerQuestion} points for each fully correct answer`
+        : `- Total points possible: ${autoScoreSettings.totalPoints}
+- Distribute points proportionally based on number of questions detected`;
+      
       return `${basePrompt}
 
-SMART FALLBACK MODE (Objective Content with Answer Key):
-No rubric was detected, but an answer key is provided for objective-style content (math, short answer, fill-in).
-- Use the answer key to evaluate correctness of objective responses
-- Compare student answers to expected answers
-- Do NOT assign a formal rubric-based score (no rubric provided)
-- Provide accuracy-based feedback: which answers are correct, which need work
-- Be specific about what the correct answer should be for incorrect items
+AUTO-SCORE MODE (Teacher-defined point rules):
+Calculate a numeric score using ONLY these teacher-provided settings:
+${pointsExplanation}${partialCreditNote}
+
+SCORING PROCESS:
+1. Identify each question/item in the student work
+2. Compare to answer key (if provided) or evaluate correctness
+3. Award points according to the rules above
+4. Calculate total earned vs total possible
+5. EXPLAIN how you arrived at the score
 
 OUTPUT FORMAT (JSON only):
 {
-  "score_suggestion": "N/A",
-  "qualitative_rating": "<summary: e.g., '7 of 10 correct' or 'Mostly accurate'>",
-  "strengths_list": [
-    "<bullet 1: what the student answered correctly>",
-    "<bullet 2: another strength>"
-  ],
-  "improvements_list": [
-    "<bullet 1: specific item that was incorrect and what the right answer is>",
-    "<bullet 2: another area for improvement>"
-  ],
-  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student. Acknowledge what they got right, address errors constructively, encourage continued practice.>",
-  "grading_notes": "<note for teacher about answer key comparison results>"
-}`;
+  "total_score": <number earned>,
+  "max_score": ${autoScoreSettings.usePointsPerQuestion 
+    ? (autoScoreSettings.pointsPerQuestion || 0) * (autoScoreSettings.questionCount || 0)
+    : autoScoreSettings.totalPoints || 0},
+  "score_suggestion": "<earned>/<max>",
+  "score_derivation": "<brief explanation of how score was calculated, e.g., '8 of 10 correct at 2 pts each = 16/20'>",
+  "per_question": [
+    {
+      "question": "<question number or identifier>",
+      "correct": <true/false/partial>,
+      "points_earned": <number>,
+      "points_possible": <number>,
+      "notes": "<what was correct/incorrect>"
     }
-    
-    return `${basePrompt}
-
-FEEDBACK-ONLY MODE:
-Since no rubric/grading criteria was detected, provide qualitative feedback only.
-- Do NOT assign any numeric score
-- Focus on identifying what the student did well
-- Provide constructive suggestions for improvement
-- Do NOT guess what the rubric might be
-${contentType === 'open-ended' ? '- For open-ended responses, focus on clarity, organization, evidence use, and argument strength' : ''}
-
-OUTPUT FORMAT (JSON only):
-{
-  "score_suggestion": "N/A",
-  "qualitative_rating": null,
+  ],
   "strengths_list": [
-    "<bullet 1: what the student did well>",
+    "<bullet 1: what the student got right>",
     "<bullet 2: another strength>"
   ],
   "improvements_list": [
-    "<bullet 1: specific actionable improvement>",
+    "<bullet 1: specific item that was incorrect and correct answer>",
     "<bullet 2: another improvement>"
   ],
-  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
-  "grading_notes": "<note for teacher about why scoring wasn't possible>"
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student. Acknowledge what they got right, address errors constructively, encourage continued practice.>"
 }`;
+    }
   }
 
-  // Check if rubric contains point values
-  const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric);
-  
-  // Smart context-aware scoring guidance
-  const contentGuidance = contentType === 'objective' 
-    ? '\n- For objective questions (math, fill-in), verify correctness against any provided answer key'
-    : contentType === 'open-ended'
-    ? '\n- For open-ended responses (essays, analysis), evaluate depth, evidence, and reasoning per rubric criteria'
-    : '\n- Handle mixed content by applying appropriate evaluation approach to each section';
+  // Handle rubric-based scoring
+  if (scoringMode === 'rubric-based' && rubric?.trim()) {
+    const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric);
+    
+    const contentGuidance = contentType === 'objective' 
+      ? '\n- For objective questions (math, fill-in), verify correctness against any provided answer key'
+      : contentType === 'open-ended'
+      ? '\n- For open-ended responses (essays, analysis), evaluate depth, evidence, and reasoning per rubric criteria'
+      : '\n- Handle mixed content by applying appropriate evaluation approach to each section';
 
-  if (hasPointValues) {
-    return `${basePrompt}
+    if (hasPointValues) {
+      return `${basePrompt}
 
-SCORING MODE (Numeric):
+RUBRIC-BASED SCORING MODE (Numeric):
 The rubric contains point values. Calculate a numeric score based strictly on the rubric.
 - Award points ONLY for criteria that are met in the student work
 - Use the exact point values from the rubric
@@ -318,6 +339,7 @@ OUTPUT FORMAT (JSON only):
   "total_score": <number>,
   "max_score": <number from rubric>,
   "score_suggestion": "<total>/<max>",
+  "score_derivation": "<brief explanation of how score was calculated from rubric categories>",
   "per_category": [
     {
       "category": "<rubric category name>",
@@ -337,12 +359,12 @@ OUTPUT FORMAT (JSON only):
   "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
   "grading_notes": "<any notes about illegible text, missing sections, or grading considerations>"
 }`;
-  }
+    }
 
-  // Rubric exists but no point values - qualitative assessment
-  return `${basePrompt}
+    // Rubric exists but no point values - qualitative assessment
+    return `${basePrompt}
 
-SCORING MODE (Qualitative):
+RUBRIC-BASED SCORING MODE (Qualitative):
 The rubric has criteria but no specific point values. Provide qualitative rubric-aligned ratings.
 - Evaluate each rubric criterion
 - Use qualitative ratings like "Exceeds", "Meets", "Approaching", "Not Yet" for each
@@ -370,6 +392,66 @@ OUTPUT FORMAT (JSON only):
   "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
   "grading_notes": "<any notes about illegible text, missing sections, or grading considerations>"
 }`;
+  }
+
+  // Feedback-only mode (default)
+  // Check if we have an answer key that can help with objective content
+  const hasAnswerKey = answerKey && answerKey.trim().length > 0;
+  const isObjectiveContent = contentType === 'objective';
+  
+  if (hasAnswerKey && isObjectiveContent) {
+    return `${basePrompt}
+
+FEEDBACK-ONLY MODE (with Answer Key for Reference):
+No scoring rules were provided, but an answer key is available for objective-style content.
+- Use the answer key to evaluate correctness of responses
+- Compare student answers to expected answers
+- Do NOT assign a numeric score (no scoring rules provided)
+- Provide accuracy-based feedback: which answers are correct, which need work
+- Be specific about what the correct answer should be for incorrect items
+
+OUTPUT FORMAT (JSON only):
+{
+  "score_suggestion": "N/A",
+  "qualitative_rating": "<summary: e.g., '7 of 10 correct' or 'Mostly accurate'>",
+  "strengths_list": [
+    "<bullet 1: what the student answered correctly>",
+    "<bullet 2: another strength>"
+  ],
+  "improvements_list": [
+    "<bullet 1: specific item that was incorrect and what the right answer is>",
+    "<bullet 2: another area for improvement>"
+  ],
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student. Acknowledge what they got right, address errors constructively, encourage continued practice.>",
+  "grading_notes": "<note explaining that no numeric score was calculated because no scoring rules were provided>"
+}`;
+  }
+  
+  return `${basePrompt}
+
+FEEDBACK-ONLY MODE:
+No rubric or scoring rules were provided. Provide qualitative feedback only.
+- Do NOT assign any numeric score
+- Focus on identifying what the student did well
+- Provide constructive suggestions for improvement
+- Do NOT guess what the rubric or point values might be
+${contentType === 'open-ended' ? '- For open-ended responses, focus on clarity, organization, evidence use, and argument strength' : ''}
+
+OUTPUT FORMAT (JSON only):
+{
+  "score_suggestion": "N/A",
+  "qualitative_rating": null,
+  "strengths_list": [
+    "<bullet 1: what the student did well>",
+    "<bullet 2: another strength>"
+  ],
+  "improvements_list": [
+    "<bullet 1: specific actionable improvement>",
+    "<bullet 2: another improvement>"
+  ],
+  "feedback_paragraph": "<A 3-5 sentence paragraph written directly to the student in warm, supportive teacher tone. Start with what they did well, address areas for growth, end with encouragement.>",
+  "grading_notes": "<note explaining that no numeric score was calculated because no scoring rules were provided>"
+}`;
 }
 
 /**
@@ -385,15 +467,28 @@ function buildGradingPrompt(request: GradeRequest): string {
     answer_key, 
     prompt_text,
     assignment_doc_text,
-    grading_mode
+    scoring_mode = 'feedback-only',
+    auto_score_settings
   } = request;
+
+  // Build scoring mode description
+  let scoringModeDesc = 'Feedback-only (no numeric score)';
+  if (scoring_mode === 'auto-score' && auto_score_settings) {
+    if (auto_score_settings.usePointsPerQuestion) {
+      scoringModeDesc = `Auto-score (${auto_score_settings.pointsPerQuestion} pts × ${auto_score_settings.questionCount} questions${auto_score_settings.partialCreditAllowed ? ', partial credit allowed' : ''})`;
+    } else {
+      scoringModeDesc = `Auto-score (${auto_score_settings.totalPoints} total points${auto_score_settings.partialCreditAllowed ? ', partial credit allowed' : ''})`;
+    }
+  } else if (scoring_mode === 'rubric-based') {
+    scoringModeDesc = 'Rubric-based scoring';
+  }
 
   const sections = [
     `## Assignment Context`,
     `- Grade Level: ${grade_level || "Not specified"}`,
     `- Subject: ${subject || "Not specified"}`,
     `- Assignment Type: ${assignment_type || "Not specified"}`,
-    `- Grading Mode: ${grading_mode === 'scoring' ? 'Scoring (rubric detected)' : 'Feedback-only (no rubric)'}`,
+    `- Scoring Mode: ${scoringModeDesc}`,
     "",
   ];
 
