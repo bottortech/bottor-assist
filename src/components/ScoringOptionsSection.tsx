@@ -274,13 +274,18 @@ export function ScoringOptionsSection({
               </div>
             )}
 
-            {/* Feedback-only note */}
+            {/* Feedback-only mode info (no auto-score) */}
             {scoringMode === 'feedback-only' && (
               <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/30 border border-muted">
                 <MessageSquare className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-muted-foreground">
-                  No numeric score will be generated. Best when no point values are established.
-                </p>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    No rubric or scoring rules detected — feedback-only mode.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Enable scoring above to generate numeric grades. Feedback (Strengths, Areas for Improvement, Draft Feedback) will still be generated.
+                  </p>
+                </div>
               </div>
             )}
           </>
