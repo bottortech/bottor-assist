@@ -245,21 +245,35 @@ function buildRubric(params: {
     if (parsed) return parsed;
   }
 
-  // Try to use auto-score settings
-  if (autoScoreSettings) {
-    const parsed = parseAutoScoreSettings(autoScoreSettings);
-    if (parsed) return parsed;
-  }
-
-  // Try to extract points from rubric text
+  // Try to extract points from rubric text BEFORE using auto-score settings
+  // This prioritizes explicit "Total Points: X" patterns in the rubric
   if (rubricText?.trim()) {
     const parsed = parseRubricText(rubricText);
-    if (parsed) return parsed;
+    if (parsed) {
+      console.log(`[grade-paper] Using parsed rubric: ${parsed.totalPoints} total points`);
+      return parsed;
+    }
+    // Rubric exists but couldn't parse points - check if frontend sent totalPoints
+    console.log(`[grade-paper] Rubric text exists but couldn't parse points, checking auto-score settings`);
+  }
+
+  // Use auto-score settings (includes frontend-provided totalPoints)
+  if (autoScoreSettings) {
+    const parsed = parseAutoScoreSettings(autoScoreSettings);
+    if (parsed) {
+      // If we have rubric text, mark as teacher-provided even if using frontend totalPoints
+      if (rubricText?.trim()) {
+        console.log(`[grade-paper] Using frontend totalPoints (${parsed.totalPoints}) with teacher rubric text`);
+        return { ...parsed, source: 'teacher' };
+      }
+      return parsed;
+    }
   }
 
   // If we have an answer key but no rubric, use default rubric
   // The answer key will be used for correctness evaluation
   if (answerKey?.trim()) {
+    console.log(`[grade-paper] Using default rubric with answer key`);
     return {
       ...DEFAULT_RUBRIC,
       source: 'auto-generated'
@@ -267,6 +281,7 @@ function buildRubric(params: {
   }
 
   // Fallback to default rubric
+  console.log(`[grade-paper] Using default fallback rubric`);
   return {
     ...DEFAULT_RUBRIC,
     source: 'auto-generated'
@@ -340,13 +355,42 @@ function parseAutoScoreSettings(settings: {
 
 /**
  * Attempt to parse point values from rubric text
+ * Uses STRICT priority: explicit total > sum of criteria > fallback
  * Returns null if no clear point structure is found
  */
 function parseRubricText(text: string): ParsedRubric | null {
-  // Look for patterns like "Total: 20 points" or "out of 100"
-  const totalMatch = text.match(/(?:total|out of|\/)\s*(\d+)\s*(?:pts?|points?)?/i);
-  
-  // Look for category patterns: "Category Name: X points" or "Category Name (X pts)"
+  let explicitTotal: number | null = null;
+
+  // (A) PRIORITY: Look for EXPLICIT total patterns FIRST
+  // These are the most authoritative and should NEVER be guessed
+  const explicitTotalPatterns = [
+    // "Total Points: 20" or "Total Points = 20" - HIGHEST priority
+    /total\s*points?\s*[:=]\s*(\d+)/i,
+    // "Total: 20 points" or "Total: 20 pts"
+    /total\s*[:=]\s*(\d+)\s*(?:pts?|points?)/i,
+    // "(20 points total)" or "20 points total"
+    /(\d+)\s*(?:pts?|points?)\s*total/i,
+    // "out of 20" at end of line or "/20 points"
+    /(?:out of|\/)\s*(\d+)\s*(?:pts?|points?)?(?:\s|$|\.)/i,
+    // "Maximum: 20 points" or "Max Score: 20"
+    /max(?:imum)?\s*(?:score|points?)?\s*[:=]?\s*(\d+)/i,
+    // "__/20" scoring format often in rubrics
+    /__\/(\d+)/,
+  ];
+
+  for (const pattern of explicitTotalPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const val = parseInt(match[1], 10);
+      if (val > 0 && val <= 1000) {
+        explicitTotal = val;
+        console.log(`[grade-paper] Detected explicit total: ${val} from pattern: ${pattern}`);
+        break;
+      }
+    }
+  }
+
+  // (B) Parse individual criteria/items with points
   const categoryPattern = /([A-Za-z][A-Za-z\s\/]+?)(?::|[\(\[])\s*(\d+)\s*(?:pts?|points?)?(?:[\)\]])?/g;
   const criteria: RubricCriterion[] = [];
   let match;
@@ -354,8 +398,14 @@ function parseRubricText(text: string): ParsedRubric | null {
   while ((match = categoryPattern.exec(text)) !== null) {
     const name = match[1].trim();
     const points = parseInt(match[2], 10);
+    
     // Filter out obvious non-criteria matches
-    if (name.length > 2 && name.length < 50 && points > 0 && points <= 100) {
+    const lowerName = name.toLowerCase();
+    const isExcluded = ['total', 'maximum', 'max', 'out of', 'score'].some(
+      ex => lowerName === ex || lowerName.startsWith(ex + ' ')
+    );
+    
+    if (!isExcluded && name.length > 2 && name.length < 50 && points > 0 && points <= 100) {
       criteria.push({
         name,
         points,
@@ -364,39 +414,31 @@ function parseRubricText(text: string): ParsedRubric | null {
     }
   }
 
-  // If we found criteria, use them
+  // If we found an explicit total, use it (highest priority)
+  if (explicitTotal) {
+    return {
+      totalPoints: explicitTotal,
+      criteria: criteria.length > 0 ? criteria : [{
+        name: "Overall Assessment",
+        points: explicitTotal,
+        guidance: "Evaluate based on teacher's rubric criteria in the text"
+      }],
+      source: 'teacher'
+    };
+  }
+
+  // If we found criteria, sum them for total
   if (criteria.length > 0) {
     const total = criteria.reduce((sum, c) => sum + c.points, 0);
     return { totalPoints: total, criteria, source: 'teacher' };
   }
 
-  // If we found a total but no criteria, create a single criterion
-  if (totalMatch) {
-    const total = parseInt(totalMatch[1], 10);
-    if (total > 0 && total <= 1000) {
-      return {
-        totalPoints: total,
-        criteria: [{
-          name: "Overall Assessment",
-          points: total,
-          guidance: "Evaluate based on teacher's rubric criteria in the text"
-        }],
-        source: 'teacher'
-      };
-    }
-  }
-
   // Check for presence of rubric keywords without parseable points
   const hasRubricKeywords = /rubric|criteria|grading|scoring|points/i.test(text);
   if (hasRubricKeywords) {
-    // Rubric text exists but couldn't parse points - use text as guidance with default structure
-    return {
-      totalPoints: 20,
-      criteria: [
-        { name: "Rubric Criterion Alignment", points: 20, guidance: `Use teacher's rubric text for evaluation: ${text.substring(0, 500)}` }
-      ],
-      source: 'teacher' // Still teacher-provided, just couldn't parse points
-    };
+    // Rubric text exists but couldn't parse points - return null to force manual input
+    console.log(`[grade-paper] Rubric keywords found but no points could be parsed`);
+    return null;
   }
 
   return null;
