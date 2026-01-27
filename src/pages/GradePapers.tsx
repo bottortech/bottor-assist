@@ -48,7 +48,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
-import { GuestFeedbackModal } from "@/components/GuestFeedbackModal";
+import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -483,7 +483,12 @@ export default function GradePapers() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+
+  // Track if grading has completed for any student (for feedback timing)
+  const hasGradingResults = studentGroups.some(g => g.result !== null);
+  
+  // Pilot feedback panel with smart timing (scroll or timeout)
+  const { showFeedback, dismissFeedback, skipFeedback } = usePilotFeedback(isGuest, hasGradingResults);
 
   // Combined text from files + manual textarea
   const rubricTextCombined = useMemo(() => {
@@ -675,10 +680,7 @@ export default function GradePapers() {
     setGrading(false);
     toast({ title: `Graded ${updatedGroups.length} student(s)!` });
 
-    // Show feedback modal for guests after grading completes
-    if (isGuest) {
-      setTimeout(() => setShowFeedbackModal(true), 1000);
-    }
+    // Feedback is now handled by usePilotFeedback hook with smart timing
   };
 
   const updateGroupResult = (groupIndex: number, field: keyof GradingResult, value: string) => {
@@ -1600,10 +1602,11 @@ export default function GradePapers() {
         )}
       </main>
 
-      {/* Guest Feedback Modal */}
-      <GuestFeedbackModal
-        open={showFeedbackModal}
-        onClose={() => setShowFeedbackModal(false)}
+      {/* Pilot Feedback Panel - slides in from bottom-right */}
+      <PilotFeedbackPanel
+        show={showFeedback}
+        onDismiss={dismissFeedback}
+        onSkip={skipFeedback}
       />
     </div>
   );
