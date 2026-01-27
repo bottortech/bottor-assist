@@ -109,6 +109,10 @@ interface GradePapersForm {
 interface GradingResult {
   score_suggestion: string;
   score_derivation?: string;
+  score_percent?: number;
+  letter_grade?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  rubric_source?: 'teacher' | 'auto-generated';
   strengths: string;
   areas_for_improvement: string;
   feedback_paragraph: string;
@@ -762,8 +766,12 @@ export default function GradePapers() {
           ...group,
           grading: false,
           result: {
-            score_suggestion: data.score_suggestion || "N/A",
+            score_suggestion: data.score_suggestion || "0/20",
             score_derivation: data.score_derivation || undefined,
+            score_percent: data.score_percent || 0,
+            letter_grade: data.letter_grade || undefined,
+            confidence: data.confidence || 'medium',
+            rubric_source: data.rubric_source || 'auto-generated',
             strengths: data.strengths || "Not provided",
             areas_for_improvement: data.areas_for_improvement || "Not provided",
             feedback_paragraph: data.feedback_paragraph || "Not provided",
@@ -1267,8 +1275,8 @@ export default function GradePapers() {
                       </CardTitle>
                       <CardDescription className="text-xs mt-0.5">
                         {hasGradingCriteria 
-                          ? "Criteria provided — scoring enabled"
-                          : "Add rubric or answer key to enable scoring"}
+                          ? "Using your rubric for precise scoring"
+                          : "Numeric scoring always generated. Add rubric for criteria-aligned grading."}
                       </CardDescription>
                     </div>
                   </div>
@@ -1523,14 +1531,10 @@ export default function GradePapers() {
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
                     {studentGroups.length > 1
-                      ? hasGradingCriteria 
-                        ? `Grade All Students (${studentGroups.length})`
-                        : `Generate Feedback for All (${studentGroups.length})`
+                      ? `Grade All Students (${studentGroups.length})`
                       : hasFailedFiles && studentUpload.hasReadyFiles
                         ? "Proceed with Ready Files"
-                        : hasGradingCriteria 
-                          ? "Generate Draft Grade + Feedback"
-                          : "Generate Feedback Summary"}
+                        : "Generate Draft Grade + Feedback"}
                   </Button>
                 </div>
               </TooltipTrigger>
@@ -1572,46 +1576,84 @@ export default function GradePapers() {
               </Card>
             )}
 
-            {/* Suggested Score - only show when scoring is enabled AND score is not N/A */}
-            {hasScoringEnabled && currentGroup.result.score_suggestion !== "N/A" && (
-              <Card className="border-0 shadow-md bg-primary/5">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg flex justify-between">
+            {/* Suggested Score - ALWAYS shown (numeric scoring is mandatory) */}
+            <Card className="border-0 shadow-md bg-primary/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex justify-between items-center">
+                  <div className="flex items-center gap-2">
                     <span>{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Suggested Score</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleCopy(currentGroup.result!.score_suggestion, "Score")}
-                    >
-                      {copied === "Score" ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    </Button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
+                    {/* Scoring source badge */}
+                    {currentGroup.result.rubric_source === 'auto-generated' ? (
+                      <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300">
+                        Auto-generated scoring
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                        Rubric-based scoring
+                      </Badge>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCopy(currentGroup.result!.score_suggestion, "Score")}
+                  >
+                    {copied === "Score" ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-4">
                   <Input
                     value={currentGroup.result.score_suggestion}
                     onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
-                    className="text-xl font-bold text-primary"
+                    className="text-xl font-bold text-primary max-w-32"
                   />
-                  {currentGroup.result.score_derivation && (
-                    <p className="text-sm text-muted-foreground flex items-start gap-2">
-                      <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      {currentGroup.result.score_derivation}
-                    </p>
+                  {currentGroup.result.score_percent !== undefined && (
+                    <span className="text-2xl font-bold text-muted-foreground">
+                      {currentGroup.result.score_percent}%
+                    </span>
                   )}
-                </CardContent>
-              </Card>
-            )}
+                  {currentGroup.result.letter_grade && (
+                    <Badge variant="secondary" className="text-lg px-3 py-1">
+                      {currentGroup.result.letter_grade}
+                    </Badge>
+                  )}
+                </div>
+                {currentGroup.result.score_derivation && (
+                  <p className="text-sm text-muted-foreground flex items-start gap-2">
+                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    {currentGroup.result.score_derivation}
+                  </p>
+                )}
+                {/* Confidence indicator */}
+                {currentGroup.result.confidence && currentGroup.result.confidence !== 'high' && (
+                  <div className={`flex items-center gap-2 text-xs p-2 rounded-md ${
+                    currentGroup.result.confidence === 'low' 
+                      ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                      : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                  }`}>
+                    <Info className="w-3 h-3" />
+                    Confidence: {currentGroup.result.confidence} — teacher review recommended
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-            {/* Feedback-only mode info message */}
-            {!hasScoringEnabled && (
-              <Card className="border border-muted bg-muted/10">
+            {/* Auto-generated scoring info banner */}
+            {currentGroup.result.rubric_source === 'auto-generated' && (
+              <Card className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
                 <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <Info className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                    <p className="text-sm text-muted-foreground">
-                      No rubric or scoring rules detected — feedback-only mode.
-                    </p>
+                  <div className="flex items-start gap-3">
+                    <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        Auto-Generated Scoring (No rubric detected)
+                      </p>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Numeric scoring is always generated. Bottor used a default 20-point scoring template: Accuracy (10pts), Work Shown (5pts), Completeness (5pts). Upload a rubric for more precise, criteria-aligned grading.
+                      </p>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
