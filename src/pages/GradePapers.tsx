@@ -98,6 +98,190 @@ const RUBRIC_KEYWORDS = [
   "/100",
 ];
 
+/**
+ * Parse rubric text to extract scoring metadata
+ * Priority: (A) explicit total → (B) sum of item points → (C) infer from structure
+ */
+interface RubricMeta {
+  totalPoints: number | null;
+  hasPointValues: boolean;
+  pointScaleType: 'total' | 'per-question' | 'by-category' | 'inferred' | 'none';
+  rubricItems: Array<{ label: string; pointsPossible: number }>;
+  source: 'parsed' | 'inferred' | 'none';
+}
+
+function parseRubricForPoints(rubricText: string, answerKeyText?: string, studentWorkText?: string): RubricMeta {
+  if (!rubricText?.trim()) {
+    // No rubric - try to infer from answer key or student work
+    return inferPointsFromContext(answerKeyText, studentWorkText);
+  }
+
+  const items: Array<{ label: string; pointsPossible: number }> = [];
+  let explicitTotal: number | null = null;
+
+  // (A) Look for explicit total: "Total: 20 points", "out of 100", "/50 points"
+  const totalPatterns = [
+    /total\s*[:=]?\s*(\d+)\s*(?:pts?|points?)?/i,
+    /(?:out of|\/)\s*(\d+)\s*(?:pts?|points?)?/i,
+    /(\d+)\s*(?:pts?|points?)\s*total/i,
+    /maximum\s*(?:score|points?)?\s*[:=]?\s*(\d+)/i,
+  ];
+
+  for (const pattern of totalPatterns) {
+    const match = rubricText.match(pattern);
+    if (match) {
+      const val = parseInt(match[1], 10);
+      if (val > 0 && val <= 1000) {
+        explicitTotal = val;
+        break;
+      }
+    }
+  }
+
+  // (B) Parse individual criteria/items with points
+  // Patterns: "Category: 10 pts", "Category (10 points)", "Category - 10", "10 pts: Category"
+  const itemPatterns = [
+    /([A-Za-z][A-Za-z\s\/\-]+?)(?::|[\(\[])\s*(\d+)\s*(?:pts?|points?)?(?:[\)\]])?/g,
+    /(\d+)\s*(?:pts?|points?)\s*[-:]\s*([A-Za-z][A-Za-z\s\/\-]+)/g,
+    /([A-Za-z][A-Za-z\s\/\-]+?)\s*[-–]\s*(\d+)\s*(?:pts?|points?)?/g,
+  ];
+
+  for (const pattern of itemPatterns) {
+    let match;
+    while ((match = pattern.exec(rubricText)) !== null) {
+      let label: string;
+      let points: number;
+      
+      // Check if points come first or label comes first
+      if (/^\d+$/.test(match[1])) {
+        points = parseInt(match[1], 10);
+        label = match[2]?.trim() || '';
+      } else {
+        label = match[1]?.trim() || '';
+        points = parseInt(match[2], 10);
+      }
+      
+      // Validate
+      if (label.length > 2 && label.length < 60 && points > 0 && points <= 100) {
+        // Avoid duplicates
+        if (!items.some(i => i.label.toLowerCase() === label.toLowerCase())) {
+          items.push({ label, pointsPossible: points });
+        }
+      }
+    }
+  }
+
+  // Calculate sum of items
+  const sumOfItems = items.reduce((sum, item) => sum + item.pointsPossible, 0);
+
+  // Determine final total and type
+  let totalPoints: number | null = null;
+  let pointScaleType: RubricMeta['pointScaleType'] = 'none';
+  let hasPointValues = false;
+
+  if (explicitTotal && explicitTotal > 0) {
+    totalPoints = explicitTotal;
+    hasPointValues = true;
+    pointScaleType = 'total';
+  } else if (sumOfItems > 0) {
+    totalPoints = sumOfItems;
+    hasPointValues = true;
+    pointScaleType = items.length > 1 ? 'by-category' : 'per-question';
+  } else {
+    // Rubric exists but no points found - try to infer
+    const inferred = inferPointsFromContext(answerKeyText, studentWorkText);
+    if (inferred.totalPoints) {
+      return {
+        ...inferred,
+        source: 'inferred'
+      };
+    }
+    // Final fallback: default 20 points
+    return {
+      totalPoints: 20,
+      hasPointValues: false,
+      pointScaleType: 'inferred',
+      rubricItems: [],
+      source: 'inferred'
+    };
+  }
+
+  return {
+    totalPoints,
+    hasPointValues,
+    pointScaleType,
+    rubricItems: items,
+    source: 'parsed'
+  };
+}
+
+/**
+ * Infer points from answer key or student work when no rubric
+ */
+function inferPointsFromContext(answerKeyText?: string, studentWorkText?: string): RubricMeta {
+  // (C) Count questions in answer key
+  if (answerKeyText?.trim()) {
+    const questionPatterns = [
+      /^\s*\d+[\.\)]/gm,  // "1." or "1)"
+      /^[A-Z][\.\)]/gm,   // "A." or "A)"
+      /question\s*\d+/gi,
+    ];
+    
+    let maxCount = 0;
+    for (const pattern of questionPatterns) {
+      const matches = answerKeyText.match(pattern);
+      if (matches && matches.length > maxCount) {
+        maxCount = matches.length;
+      }
+    }
+    
+    if (maxCount > 0) {
+      return {
+        totalPoints: maxCount, // 1 point per question default
+        hasPointValues: false,
+        pointScaleType: 'per-question',
+        rubricItems: [],
+        source: 'inferred'
+      };
+    }
+  }
+
+  // (D) Count questions in student work
+  if (studentWorkText?.trim()) {
+    const questionPatterns = [
+      /^\s*\d+[\.\)]/gm,
+      /^[A-Z][\.\)]/gm,
+    ];
+    
+    let maxCount = 0;
+    for (const pattern of questionPatterns) {
+      const matches = studentWorkText.match(pattern);
+      if (matches && matches.length > maxCount) {
+        maxCount = matches.length;
+      }
+    }
+    
+    if (maxCount > 0) {
+      return {
+        totalPoints: maxCount,
+        hasPointValues: false,
+        pointScaleType: 'inferred',
+        rubricItems: [],
+        source: 'inferred'
+      };
+    }
+  }
+
+  // No points could be determined
+  return {
+    totalPoints: null,
+    hasPointValues: false,
+    pointScaleType: 'none',
+    rubricItems: [],
+    source: 'none'
+  };
+}
+
 interface GradePapersForm {
   grade_level: string;
   subject: string;
@@ -568,6 +752,86 @@ export default function GradePapers() {
     return hasRubricFiles && !hasExtractedText;
   }, [rubricUpload.files, rubricExtractedText]);
 
+  // Parse rubric to extract scoring metadata (points, categories, etc.)
+  // Uses priority: (A) parsed total → (B) sum of items → (C) answer key → (D) student work
+  const parsedRubricMeta = useMemo((): RubricMeta => {
+    // Get student work text for inference fallback
+    const studentWorkText = studentGroups.length > 0 
+      ? studentGroups.map(g => g.extractedText).join('\n\n')
+      : studentUpload.combinedText;
+    
+    return parseRubricForPoints(rubricFinalText, answerKeyTextCombined, studentWorkText);
+  }, [rubricFinalText, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
+
+  // Determine if scoring is valid based on parsed rubric or manual settings
+  const scoringValidation = useMemo(() => {
+    // If rubric is locked and has detected points, scoring is always valid
+    if (rubricLocked && parsedRubricMeta.totalPoints) {
+      return { 
+        isValid: true, 
+        totalPoints: parsedRubricMeta.totalPoints,
+        source: parsedRubricMeta.source,
+        message: `Rubric detected — scoring enabled (Total: ${parsedRubricMeta.totalPoints} points)`
+      };
+    }
+
+    // If rubric is locked but no points parsed, still valid with default
+    if (rubricLocked) {
+      return { 
+        isValid: true, 
+        totalPoints: 20,
+        source: 'inferred' as const,
+        message: "Rubric detected — points not found, using default 20-point scale."
+      };
+    }
+
+    // If has grading criteria with parsed points, valid
+    if (hasGradingCriteria && parsedRubricMeta.totalPoints) {
+      return { 
+        isValid: true, 
+        totalPoints: parsedRubricMeta.totalPoints,
+        source: parsedRubricMeta.source,
+        message: parsedRubricMeta.hasPointValues 
+          ? `Rubric detected — scoring enabled (Total: ${parsedRubricMeta.totalPoints} points)`
+          : `Points inferred from ${parsedRubricMeta.pointScaleType === 'per-question' ? 'answer key' : 'content'} (Total: ${parsedRubricMeta.totalPoints} points)`
+      };
+    }
+
+    // Check manual scoring settings
+    if (scoringMode === 'auto-score' && validateAutoScoreSettings(autoScoreSettings)) {
+      const total = autoScoreSettings.usePointsPerQuestion 
+        ? (autoScoreSettings.pointsPerQuestion || 0) * (autoScoreSettings.questionCount || 0)
+        : autoScoreSettings.totalPoints || 0;
+      return { 
+        isValid: true, 
+        totalPoints: total,
+        source: 'manual' as const,
+        message: `Manual scoring configured (Total: ${total} points)`
+      };
+    }
+
+    if (scoringMode === 'rubric-based') {
+      const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+      const total = rubricMax || quickRubricSettings.totalPoints;
+      if (total) {
+        return { 
+          isValid: true, 
+          totalPoints: total,
+          source: 'manual' as const,
+          message: `Quick rubric configured (Total: ${total} points)`
+        };
+      }
+    }
+
+    // No valid scoring configuration
+    return { 
+      isValid: false, 
+      totalPoints: null,
+      source: 'none' as const,
+      message: null
+    };
+  }, [rubricLocked, parsedRubricMeta, hasGradingCriteria, scoringMode, autoScoreSettings, quickRubricSettings]);
+
   const detectRubricInText = (text: string): boolean => {
     if (!text.trim()) return false;
     const lowerText = text.toLowerCase();
@@ -691,26 +955,29 @@ export default function GradePapers() {
       return;
     }
 
-    // Validate auto-score settings if that mode is selected
-    if (scoringMode === 'auto-score' && !validateAutoScoreSettings(autoScoreSettings)) {
-      toast({ 
-        title: "Missing scoring settings", 
-        description: "Please enter point values in Scoring Options to enable auto-scoring.", 
-        variant: "destructive" 
-      });
-      return;
-    }
-
-    // For rubric-based, validate quick rubric or total points
-    if (scoringMode === 'rubric-based') {
-      const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
-      if (!rubricMax && !quickRubricSettings.totalPoints) {
+    // NEW VALIDATION: Use scoringValidation which checks rubric, answer key, and manual settings
+    // Skip validation errors if rubric is locked (always scores) or if rubric has parsed points
+    if (!rubricLocked && !scoringValidation.isValid) {
+      // Only show error if we're in a scoring mode that requires manual settings
+      if (scoringMode === 'auto-score' && !validateAutoScoreSettings(autoScoreSettings)) {
         toast({ 
           title: "Missing scoring settings", 
-          description: "Please set total points or configure Quick Rubric to enable scoring.", 
+          description: "Please enter point values in Scoring Options, or upload a rubric with point values.", 
           variant: "destructive" 
         });
         return;
+      }
+
+      if (scoringMode === 'rubric-based') {
+        const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+        if (!rubricMax && !quickRubricSettings.totalPoints && !parsedRubricMeta.totalPoints) {
+          toast({ 
+            title: "Missing scoring settings", 
+            description: "Please set total points, configure Quick Rubric, or upload a rubric with point values.", 
+            variant: "destructive" 
+          });
+          return;
+        }
       }
     }
 
@@ -726,11 +993,21 @@ export default function GradePapers() {
       effectiveRubricLength: effectiveRubric.length,
       hasRubricFromFiles: rubricExtractedText.length > 0,
       hasRubricFromPaste: form.rubric.trim().length > 0,
+      parsedRubricMeta,
+      scoringValidation,
     });
 
-    // Build auto-score settings based on scoring mode
+    // Build auto-score settings based on scoring mode OR parsed rubric
     let effectiveAutoScoreSettings = undefined;
-    if (scoringMode === 'auto-score') {
+    
+    // If rubric is locked or has parsed points, use those
+    if (rubricLocked || parsedRubricMeta.totalPoints) {
+      effectiveAutoScoreSettings = {
+        ...autoScoreSettings,
+        totalPoints: parsedRubricMeta.totalPoints || 20,
+        usePointsPerQuestion: false,
+      };
+    } else if (scoringMode === 'auto-score') {
       effectiveAutoScoreSettings = autoScoreSettings;
     } else if (scoringMode === 'rubric-based') {
       // Rubric-based: convert to total points mode
@@ -1513,7 +1790,10 @@ export default function GradePapers() {
                     Rubric + Answer Key detected — enhanced scoring enabled.
                   </p>
                   <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                    Using rubric for scoring structure and answer key for correctness validation.
+                    {parsedRubricMeta.hasPointValues 
+                      ? `Total: ${parsedRubricMeta.totalPoints} points detected. Using rubric for scoring structure and answer key for correctness validation.`
+                      : `Points inferred (${parsedRubricMeta.totalPoints || 20} total). Using rubric criteria and answer key for validation.`
+                    }
                   </p>
                 </div>
               </div>
@@ -1521,7 +1801,7 @@ export default function GradePapers() {
           </Card>
         )}
 
-        {/* Rubric Only: Locked for Scoring */}
+        {/* Rubric Only: Locked for Scoring - with parsed points info */}
         {rubricLocked && !answerKeyTextCombined.trim() && (
           <Card className="border border-primary/30 bg-primary/5">
             <CardContent className="p-4">
@@ -1531,12 +1811,34 @@ export default function GradePapers() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-foreground">
-                    Rubric locked — scoring rules enforced.
+                    {parsedRubricMeta.hasPointValues 
+                      ? `Rubric detected — scoring enabled (Total: ${parsedRubricMeta.totalPoints} points)`
+                      : parsedRubricMeta.totalPoints
+                        ? `Rubric detected — points not found, inferring total (${parsedRubricMeta.totalPoints} points)`
+                        : "Rubric locked — scoring rules enforced."
+                    }
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Numeric scoring will be calculated from your rubric criteria. Add an answer key to improve accuracy.
+                    {parsedRubricMeta.hasPointValues 
+                      ? `${parsedRubricMeta.rubricItems.length} criteria detected. Add an answer key to improve accuracy.`
+                      : "Numeric scoring will be calculated from your rubric criteria. Add an answer key to improve accuracy."
+                    }
                   </p>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Scoring validation message when not locked but has criteria */}
+        {!rubricLocked && hasGradingCriteria && scoringValidation.message && (
+          <Card className={`border ${scoringValidation.isValid ? 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20' : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'}`}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Info className={`w-4 h-4 ${scoringValidation.isValid ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`} />
+                <p className={`text-sm ${scoringValidation.isValid ? 'text-blue-700 dark:text-blue-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                  {scoringValidation.message}
+                </p>
               </div>
             </CardContent>
           </Card>
