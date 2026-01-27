@@ -491,9 +491,24 @@ export default function GradePapers() {
   // Assignment type and scoring options state
   const [assignmentType, setAssignmentType] = useState<AssignmentType>("math-worksheet");
   const [scoringCategory, setScoringCategory] = useState<ScoringCategory>("question-based");
-  const [scoringMode, setScoringMode] = useState<ScoringMode>("auto-score"); // Default ON for question-based
+  const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only"); // Default to feedback-only
   const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
   const [quickRubricSettings, setQuickRubricSettings] = useState<QuickRubricSettings>(DEFAULT_QUICK_RUBRIC_SETTINGS);
+  
+  // Determine if scoring is enabled (rubric present OR manual scoring rules configured)
+  const hasScoringEnabled = useMemo(() => {
+    if (scoringMode === 'feedback-only') return false;
+    if (rubricMode !== 'none') return true; // Has rubric
+    if (scoringMode === 'auto-score') {
+      return validateAutoScoreSettings(autoScoreSettings);
+    }
+    if (scoringMode === 'rubric-based') {
+      return quickRubricSettings.enabled 
+        ? quickRubricSettings.categories.length > 0 
+        : quickRubricSettings.totalPoints !== null;
+    }
+    return false;
+  }, [scoringMode, rubricMode, autoScoreSettings, quickRubricSettings]);
 
   // Student groups for batch grading
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
@@ -889,7 +904,7 @@ export default function GradePapers() {
           ${form.grade_level ? `<div class="meta-item"><div class="meta-label">Grade Level</div><div class="meta-value">${form.grade_level}</div></div>` : ""}
         </div>
         ${
-          gradingMode === "scoring" && currentGroup.result.score_suggestion !== "N/A"
+          hasScoringEnabled && currentGroup.result.score_suggestion !== "N/A"
             ? `
           <div class="score-box">
             <div class="score-label">Suggested Score</div>
@@ -1568,10 +1583,14 @@ export default function GradePapers() {
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
                     {studentGroups.length > 1
-                      ? `Grade All Students (${studentGroups.length})`
+                      ? hasScoringEnabled 
+                        ? `Grade All Students (${studentGroups.length})`
+                        : `Generate Feedback for All (${studentGroups.length})`
                       : hasFailedFiles && studentUpload.hasReadyFiles
                         ? "Proceed with Ready Files"
-                        : "Generate Draft Grade + Feedback"}
+                        : hasScoringEnabled 
+                          ? "Generate Draft Grade + Feedback"
+                          : "Generate Feedback Summary"}
                   </Button>
                 </div>
               </TooltipTrigger>
@@ -1613,43 +1632,50 @@ export default function GradePapers() {
               </Card>
             )}
 
-            <Card className="border-0 shadow-md bg-primary/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg flex justify-between">
-                  <span>{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Suggested Score</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleCopy(currentGroup.result!.score_suggestion, "Score")}
-                  >
-                    {copied === "Score" ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Input
-                  value={currentGroup.result.score_suggestion}
-                  onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
-                  className="text-xl font-bold text-primary"
-                />
-                {currentGroup.result.score_derivation && (
-                  <p className="text-sm text-muted-foreground flex items-start gap-2">
-                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                    {currentGroup.result.score_derivation}
-                  </p>
-                )}
-                {currentGroup.result.score_suggestion === "N/A" && (
-                  <p className="text-sm text-muted-foreground flex items-start gap-2">
-                    <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                    {scoringMode === "feedback-only" 
-                      ? "No numeric score calculated. Select a scoring option above to enable scoring."
-                      : scoringMode === "auto-score"
-                        ? "Unable to compute score from student work. Verify point settings and try again."
-                        : "No scoring rules found in rubric. Add point values or use auto-score."}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+            {/* Suggested Score - only show when scoring is enabled AND score is not N/A */}
+            {hasScoringEnabled && currentGroup.result.score_suggestion !== "N/A" && (
+              <Card className="border-0 shadow-md bg-primary/5">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg flex justify-between">
+                    <span>{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Suggested Score</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleCopy(currentGroup.result!.score_suggestion, "Score")}
+                    >
+                      {copied === "Score" ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Input
+                    value={currentGroup.result.score_suggestion}
+                    onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
+                    className="text-xl font-bold text-primary"
+                  />
+                  {currentGroup.result.score_derivation && (
+                    <p className="text-sm text-muted-foreground flex items-start gap-2">
+                      <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      {currentGroup.result.score_derivation}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Feedback-only mode info message */}
+            {!hasScoringEnabled && (
+              <Card className="border border-muted bg-muted/10">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <Info className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                    <p className="text-sm text-muted-foreground">
+                      No rubric or scoring rules detected — feedback-only mode.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="border-0 shadow-md">
               <CardHeader className="pb-2">
