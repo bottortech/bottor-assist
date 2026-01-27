@@ -45,7 +45,14 @@ import {
   X,
   Users,
   FileText,
+  ChevronDown,
+  BookOpen,
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
@@ -450,15 +457,26 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
+  // Grading Criteria accordion state (collapsed by default)
+  const [gradingCriteriaOpen, setGradingCriteriaOpen] = useState(false);
+
   // Scoring options state (assignment type removed for pilot)
   const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only"); // Default to feedback-only
   const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
   const [quickRubricSettings, setQuickRubricSettings] = useState<QuickRubricSettings>(DEFAULT_QUICK_RUBRIC_SETTINGS);
   
-  // Determine if scoring is enabled (rubric present OR manual scoring rules configured)
+  // Check if rubric or answer key is provided (to show scoring options)
+  const hasGradingCriteria = useMemo(() => {
+    const hasRubric = rubricUpload.files.length > 0 || form.rubric.trim().length > 0;
+    const hasAnswerKey = answerKeyUpload.files.length > 0 || form.answer_key.trim().length > 0;
+    return hasRubric || hasAnswerKey;
+  }, [rubricUpload.files.length, form.rubric, answerKeyUpload.files.length, form.answer_key]);
+  
+  // Determine if scoring is enabled (rubric/answer key present OR manual scoring rules configured)
   const hasScoringEnabled = useMemo(() => {
     if (scoringMode === 'feedback-only') return false;
     if (rubricMode !== 'none') return true; // Has rubric
+    if (hasGradingCriteria) return true; // Has answer key or rubric content
     if (scoringMode === 'auto-score') {
       return validateAutoScoreSettings(autoScoreSettings);
     }
@@ -468,7 +486,7 @@ export default function GradePapers() {
         : quickRubricSettings.totalPoints !== null;
     }
     return false;
-  }, [scoringMode, rubricMode, autoScoreSettings, quickRubricSettings]);
+  }, [scoringMode, rubricMode, hasGradingCriteria, autoScoreSettings, quickRubricSettings]);
 
   // Student groups for batch grading
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
@@ -1188,261 +1206,207 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* ===== RUBRIC / GRADING CRITERIA (OPTIONAL) ===== */}
-        <Card
-          className={`border-2 shadow-lg ${
-            rubricMode === "locked"
-              ? "border-green-500/50 bg-green-500/5"
-              : rubricMode === "draft"
-                ? "border-primary/30 bg-primary/5"
-                : "border-muted bg-muted/10"
-          }`}
-        >
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">
-                Rubric / Grading Criteria
-                <span className="text-xs font-normal text-muted-foreground ml-2">Optional</span>
-              </CardTitle>
-              {rubricMode !== "none" && (
-                <Badge
-                  variant={rubricMode === "locked" ? "default" : "secondary"}
-                  className={rubricMode === "locked" ? "bg-green-600 hover:bg-green-600" : ""}
-                >
-                  {rubricMode === "locked" ? (
-                    <>
-                      <Lock className="w-3 h-3 mr-1" />
-                      Locked
-                    </>
-                  ) : (
-                    <>
-                      <Unlock className="w-3 h-3 mr-1" />
-                      Draft
-                    </>
-                  )}
-                </Badge>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Rubric File Upload */}
-            <div className="space-y-2">
-              <Label className="text-sm">Upload Rubric Files</Label>
-              <div className="relative">
-                <input
-                  ref={rubricFileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                  onChange={handleRubricFileSelect}
-                  className="hidden"
-                  id="rubric-file-upload"
-                  disabled={rubricMode === "locked"}
-                />
-                <label
-                  htmlFor="rubric-file-upload"
-                  className={`flex items-center justify-center w-full h-16 border-2 border-dashed rounded-lg transition-colors ${
-                    rubricMode === "locked"
-                      ? "border-muted/50 bg-muted/10 cursor-not-allowed opacity-50"
-                      : "border-muted-foreground/25 cursor-pointer hover:border-primary/50 bg-muted/20"
-                  }`}
-                >
-                  <Upload className="w-4 h-4 text-muted-foreground mr-2" />
-                  <span className="text-sm text-muted-foreground">Upload rubric PDFs or images</span>
-                </label>
-              </div>
-
-              {/* Uploaded Rubric Files List */}
-              {rubricUpload.files.length > 0 && (
-                <div className="space-y-1">
-                  {rubricUpload.files.map((file) => (
-                    <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <span className="text-sm truncate">{file.fileName}</span>
-                        <Badge variant="outline" className="text-xs flex-shrink-0">
-                          {file.status === "ready" ? "Ready" : file.status}
-                        </Badge>
-                      </div>
-                      {rubricMode !== "locked" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => rubricUpload.removeFile(file.id)}
-                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                        >
-                          <X className="w-3 h-3" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Rubric Textarea */}
-            <div className="space-y-2">
-              <Label className="text-sm">Or Paste Rubric Text</Label>
-              <Textarea
-                placeholder="Paste your rubric or grading criteria here..."
-                value={form.rubric}
-                onChange={(e) => updateForm("rubric", e.target.value)}
-                rows={5}
-                disabled={rubricMode === "locked"}
-                className={rubricMode === "locked" ? "opacity-75 bg-muted/20" : ""}
-              />
-            </div>
-
-            {/* Rubric Mode Status */}
-            {rubricMode === "none" && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-muted">
-                <Info className="w-4 h-4 text-muted-foreground" />
-                <div className="flex-1">
-                  <span className="text-sm text-muted-foreground">No rubric detected — Feedback-only mode</span>
-                </div>
-              </div>
-            )}
-
-            {rubricMode === "draft" && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30">
-                  <CheckCircle2 className="w-4 h-4 text-primary" />
-                  <div className="flex-1">
-                    <span className="text-sm text-primary">Rubric detected — Scoring enabled</span>
-                    {detectedRubricSource && (
-                      <p className="text-xs text-primary/70 mt-0.5">Source: {detectedRubricSource}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between p-3 rounded-lg border border-muted bg-background">
-                  <div className="flex items-center gap-2">
-                    <Unlock className="w-4 h-4 text-muted-foreground" />
+        {/* ===== GRADING CRITERIA (OPTIONAL) - COLLAPSED ACCORDION ===== */}
+        <Collapsible open={gradingCriteriaOpen} onOpenChange={setGradingCriteriaOpen}>
+          <Card className={`border shadow-sm transition-colors ${
+            hasGradingCriteria 
+              ? "border-primary/30 bg-primary/5" 
+              : "border-muted bg-muted/5"
+          }`}>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <BookOpen className="w-5 h-5 text-muted-foreground" />
                     <div>
-                      <Label htmlFor="lock-rubric" className="text-sm font-medium cursor-pointer">
-                        Lock rubric for auto-grading
-                      </Label>
-                      <p className="text-xs text-muted-foreground">Hides manual options</p>
+                      <CardTitle className="text-base font-medium">
+                        Grading Criteria
+                        <span className="text-xs font-normal text-muted-foreground ml-2">Optional</span>
+                      </CardTitle>
+                      <CardDescription className="text-xs mt-0.5">
+                        {hasGradingCriteria 
+                          ? "Criteria provided — scoring enabled"
+                          : "Add rubric or answer key to enable scoring"}
+                      </CardDescription>
                     </div>
                   </div>
-                  <Switch id="lock-rubric" checked={rubricLocked} onCheckedChange={setRubricLocked} />
+                  <div className="flex items-center gap-2">
+                    {hasGradingCriteria && (
+                      <Badge variant="secondary" className="text-xs bg-primary/10 text-primary border-primary/20">
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Ready
+                      </Badge>
+                    )}
+                    <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${
+                      gradingCriteriaOpen ? "rotate-180" : ""
+                    }`} />
+                  </div>
                 </div>
-              </div>
-            )}
+              </CardHeader>
+            </CollapsibleTrigger>
+            
+            <CollapsibleContent>
+              <CardContent className="space-y-6 pt-0">
+                {/* ===== ANSWER KEY SECTION ===== */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileSearch className="w-4 h-4 text-muted-foreground" />
+                    <Label className="text-sm font-medium">Answer Key</Label>
+                    <span className="text-xs text-muted-foreground">(Optional)</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Used to improve accuracy and enable scoring. Not required for feedback.
+                  </p>
+                  
+                  {/* Answer Key File Upload */}
+                  <div className="space-y-2">
+                    <input
+                      ref={answerKeyFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      onChange={handleAnswerKeyFileSelect}
+                      className="hidden"
+                      id="answerkey-file-upload"
+                    />
+                    <label
+                      htmlFor="answerkey-file-upload"
+                      className="flex items-center justify-center w-full h-12 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                    >
+                      <Upload className="w-4 h-4 text-muted-foreground mr-2" />
+                      <span className="text-sm text-muted-foreground">Upload answer key files</span>
+                    </label>
 
-            {rubricMode === "locked" && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/30">
-                  <Lock className="w-4 h-4 text-green-600" />
-                  <div className="flex-1">
-                    <span className="text-sm text-green-700 dark:text-green-400 font-medium">
-                      Rubric locked — Auto-grading enabled
-                    </span>
-                    {detectedRubricSource && (
-                      <p className="text-xs text-green-600/70 mt-0.5">Source: {detectedRubricSource}</p>
+                    {/* Uploaded Answer Key Files List */}
+                    {answerKeyUpload.files.length > 0 && (
+                      <div className="space-y-1">
+                        {answerKeyUpload.files.map((file) => (
+                          <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-sm truncate">{file.fileName}</span>
+                              <Badge variant="outline" className="text-xs flex-shrink-0">
+                                {file.status === "ready" ? "Ready" : file.status}
+                              </Badge>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => answerKeyUpload.removeFile(file.id)}
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
+
+                  {/* Answer Key Textarea */}
+                  <Textarea
+                    placeholder="Or paste answer key text here..."
+                    value={form.answer_key}
+                    onChange={(e) => updateForm("answer_key", e.target.value)}
+                    rows={3}
+                    className="text-sm"
+                  />
                 </div>
 
-                <div className="flex items-center justify-between p-3 rounded-lg border border-green-500/30 bg-background">
+                {/* Divider */}
+                <div className="border-t border-muted" />
+
+                {/* ===== RUBRIC SECTION ===== */}
+                <div className="space-y-3">
                   <div className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-green-600" />
-                    <Label htmlFor="lock-rubric" className="text-sm font-medium cursor-pointer">
-                      Rubric locked
-                    </Label>
+                    <FileText className="w-4 h-4 text-muted-foreground" />
+                    <Label className="text-sm font-medium">Rubric</Label>
+                    <span className="text-xs text-muted-foreground">(Optional)</span>
                   </div>
-                  <Switch id="lock-rubric" checked={rubricLocked} onCheckedChange={setRubricLocked} />
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Used for category-based or standards-based grading.
+                  </p>
+                  
+                  {/* Rubric File Upload */}
+                  <div className="space-y-2">
+                    <input
+                      ref={rubricFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      onChange={handleRubricFileSelect}
+                      className="hidden"
+                      id="rubric-file-upload"
+                      disabled={rubricMode === "locked"}
+                    />
+                    <label
+                      htmlFor="rubric-file-upload"
+                      className={`flex items-center justify-center w-full h-12 border-2 border-dashed rounded-lg transition-colors ${
+                        rubricMode === "locked"
+                          ? "border-muted/50 bg-muted/10 cursor-not-allowed opacity-50"
+                          : "border-muted-foreground/25 cursor-pointer hover:border-primary/50 bg-muted/20"
+                      }`}
+                    >
+                      <Upload className="w-4 h-4 text-muted-foreground mr-2" />
+                      <span className="text-sm text-muted-foreground">Upload rubric files</span>
+                    </label>
 
-        {/* ===== SCORING OPTIONS ===== */}
-        <ScoringOptionsSection
-          scoringMode={scoringMode}
-          onScoringModeChange={setScoringMode}
-          autoScoreSettings={autoScoreSettings}
-          onAutoScoreSettingsChange={setAutoScoreSettings}
-          quickRubricSettings={quickRubricSettings}
-          onQuickRubricSettingsChange={setQuickRubricSettings}
-          hasRubric={rubricMode !== "none"}
-          disabled={rubricMode === "locked"}
-        />
-
-        {/* ===== ANSWER KEY (OPTIONAL) ===== */}
-        <Card className="border border-muted bg-muted/5">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <FileSearch className="w-5 h-5 text-muted-foreground" />
-              Answer Key
-              <span className="text-xs font-normal text-muted-foreground">Optional</span>
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Upload or paste an answer key for accuracy-based feedback on worksheets and tests.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {/* Answer Key File Upload */}
-            <div className="space-y-2">
-              <div className="relative">
-                <input
-                  ref={answerKeyFileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-                  onChange={handleAnswerKeyFileSelect}
-                  className="hidden"
-                  id="answerkey-file-upload"
-                />
-                <label
-                  htmlFor="answerkey-file-upload"
-                  className="flex items-center justify-center w-full h-14 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
-                >
-                  <Upload className="w-4 h-4 text-muted-foreground mr-2" />
-                  <span className="text-sm text-muted-foreground">Upload answer key PDFs or images</span>
-                </label>
-              </div>
-
-              {/* Uploaded Answer Key Files List */}
-              {answerKeyUpload.files.length > 0 && (
-                <div className="space-y-1">
-                  {answerKeyUpload.files.map((file) => (
-                    <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <span className="text-sm truncate">{file.fileName}</span>
-                        <Badge variant="outline" className="text-xs flex-shrink-0">
-                          {file.status === "ready" ? "Ready" : file.status}
-                        </Badge>
+                    {/* Uploaded Rubric Files List */}
+                    {rubricUpload.files.length > 0 && (
+                      <div className="space-y-1">
+                        {rubricUpload.files.map((file) => (
+                          <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-sm truncate">{file.fileName}</span>
+                              <Badge variant="outline" className="text-xs flex-shrink-0">
+                                {file.status === "ready" ? "Ready" : file.status}
+                              </Badge>
+                            </div>
+                            {rubricMode !== "locked" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => rubricUpload.removeFile(file.id)}
+                                className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                              >
+                                <X className="w-3 h-3" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => answerKeyUpload.removeFile(file.id)}
-                        className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                    )}
+                  </div>
 
-            {/* Answer Key Textarea */}
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Or paste answer key text</Label>
-              <Textarea
-                placeholder="Paste answer key here..."
-                value={form.answer_key}
-                onChange={(e) => updateForm("answer_key", e.target.value)}
-                rows={3}
-                className="text-sm"
-              />
-            </div>
-          </CardContent>
-        </Card>
+                  {/* Rubric Textarea */}
+                  <Textarea
+                    placeholder="Or paste rubric / grading criteria here..."
+                    value={form.rubric}
+                    onChange={(e) => updateForm("rubric", e.target.value)}
+                    rows={4}
+                    disabled={rubricMode === "locked"}
+                    className={rubricMode === "locked" ? "opacity-75 bg-muted/20" : ""}
+                  />
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
+        {/* ===== SCORING OPTIONS (only shown when grading criteria exists) ===== */}
+        {hasGradingCriteria && (
+          <ScoringOptionsSection
+            scoringMode={scoringMode}
+            onScoringModeChange={setScoringMode}
+            autoScoreSettings={autoScoreSettings}
+            onAutoScoreSettingsChange={setAutoScoreSettings}
+            quickRubricSettings={quickRubricSettings}
+            onQuickRubricSettingsChange={setQuickRubricSettings}
+            hasRubric={rubricMode !== "none"}
+            disabled={rubricMode === "locked"}
+          />
+        )}
 
         {/* ===== GENERATE BUTTON ===== */}
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border space-y-2">
