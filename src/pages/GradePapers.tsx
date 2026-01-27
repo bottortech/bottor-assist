@@ -511,28 +511,58 @@ export default function GradePapers() {
   // Pilot feedback panel with smart timing (scroll or timeout)
   const { showFeedback, dismissFeedback, skipFeedback } = usePilotFeedback(isGuest, hasGradingResults);
 
+  // Extract just the text content from uploaded rubric files (excluding status placeholders)
+  const rubricExtractedText = useMemo(() => {
+    const readyFiles = rubricUpload.files.filter(f => f.status === 'ready');
+    const textParts = readyFiles
+      .map(f => f.extractedText?.trim())
+      .filter(Boolean);
+    return textParts.join('\n\n');
+  }, [rubricUpload.files]);
+
   // Combined text from files + manual textarea
+  const rubricFinalText = useMemo(() => {
+    return [rubricExtractedText, form.rubric.trim()].filter(Boolean).join('\n\n');
+  }, [rubricExtractedText, form.rubric]);
+
+  // Legacy alias for backward compatibility
   const rubricTextCombined = useMemo(() => {
     const parts: string[] = [];
-    if (rubricUpload.combinedText.trim()) {
-      parts.push("--- From Uploaded Files ---\n" + rubricUpload.combinedText);
+    if (rubricExtractedText) {
+      parts.push("--- From Uploaded Files ---\n" + rubricExtractedText);
     }
     if (form.rubric.trim()) {
       parts.push("--- From Manual Entry ---\n" + form.rubric);
     }
     return parts.join("\n\n");
-  }, [rubricUpload.combinedText, form.rubric]);
+  }, [rubricExtractedText, form.rubric]);
+
+  // Extract just the text content from uploaded answer key files
+  const answerKeyExtractedText = useMemo(() => {
+    const readyFiles = answerKeyUpload.files.filter(f => f.status === 'ready');
+    const textParts = readyFiles
+      .map(f => f.extractedText?.trim())
+      .filter(Boolean);
+    return textParts.join('\n\n');
+  }, [answerKeyUpload.files]);
 
   const answerKeyTextCombined = useMemo(() => {
     const parts: string[] = [];
-    if (answerKeyUpload.combinedText.trim()) {
-      parts.push("--- From Uploaded Files ---\n" + answerKeyUpload.combinedText);
+    if (answerKeyExtractedText) {
+      parts.push("--- From Uploaded Files ---\n" + answerKeyExtractedText);
     }
     if (form.answer_key.trim()) {
       parts.push("--- From Manual Entry ---\n" + form.answer_key);
     }
     return parts.join("\n\n");
-  }, [answerKeyUpload.combinedText, form.answer_key]);
+  }, [answerKeyExtractedText, form.answer_key]);
+
+  // Warning: Rubric file uploaded but no text extracted
+  const rubricExtractionWarning = useMemo(() => {
+    const hasRubricFiles = rubricUpload.files.some(f => f.status === 'ready');
+    const hasExtractedText = rubricExtractedText.trim().length > 0;
+    return hasRubricFiles && !hasExtractedText;
+  }, [rubricUpload.files, rubricExtractedText]);
 
   const detectRubricInText = (text: string): boolean => {
     if (!text.trim()) return false;
@@ -672,8 +702,17 @@ export default function GradePapers() {
 
     setGrading(true);
 
+    // Build effective rubric: prioritize explicitly provided rubric text
+    // Use rubricFinalText which combines extracted file text + pasted text
     const effectiveRubric =
-      rubricTextCombined || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : "");
+      rubricFinalText || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : "");
+    
+    console.log('[GradePapers] Grading with rubric:', {
+      rubricFinalTextLength: rubricFinalText.length,
+      effectiveRubricLength: effectiveRubric.length,
+      hasRubricFromFiles: rubricExtractedText.length > 0,
+      hasRubricFromPaste: form.rubric.trim().length > 0,
+    });
 
     // Build auto-score settings based on scoring mode
     let effectiveAutoScoreSettings = undefined;
@@ -1391,6 +1430,45 @@ export default function GradePapers() {
                     disabled={rubricMode === "locked"}
                     className={rubricMode === "locked" ? "opacity-75 bg-muted/20" : ""}
                   />
+
+                  {/* Warning: Rubric file uploaded but could not be read */}
+                  {rubricExtractionWarning && (
+                    <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-400">
+                      <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs">
+                        Rubric uploaded but could not be read. Paste rubric text or upload a clearer rubric.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* DEV DEBUG: Rubric Detection Panel */}
+                  {process.env.NODE_ENV === 'development' && (rubricUpload.files.length > 0 || rubricFinalText.length > 0) && (
+                    <Collapsible>
+                      <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors py-1">
+                        <ChevronDown className="w-3 h-3" />
+                        <span>🔍 Debug: Rubric Detected</span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="mt-2 p-3 bg-muted/30 rounded-md border border-muted text-xs font-mono space-y-2">
+                        <div>
+                          <strong>Files:</strong> {rubricUpload.files.length} ({rubricUpload.files.filter(f => f.status === 'ready').length} ready)
+                        </div>
+                        <div>
+                          <strong>Extracted Text Length:</strong> {rubricExtractedText.length} chars
+                        </div>
+                        <div>
+                          <strong>Final Text Length:</strong> {rubricFinalText.length} chars
+                        </div>
+                        {rubricFinalText && (
+                          <div className="border-t border-muted pt-2 mt-2">
+                            <strong>Preview (first 300 chars):</strong>
+                            <pre className="whitespace-pre-wrap text-muted-foreground mt-1 max-h-32 overflow-auto">
+                              {rubricFinalText.slice(0, 300)}{rubricFinalText.length > 300 ? '...' : ''}
+                            </pre>
+                          </div>
+                        )}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
                 </div>
               </CardContent>
             </CollapsibleContent>
