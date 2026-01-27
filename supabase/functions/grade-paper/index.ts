@@ -153,16 +153,39 @@ serve(async (req) => {
         throw new Error("No JSON found in response");
       }
 
-      // Handle scoring vs feedback-only mode
-      if (grading_mode === 'feedback-only') {
+      // Compute numeric score based on scoring mode
+      if (scoring_mode === 'feedback-only') {
+        // Feedback-only mode: no numeric score
         gradingResult.score_suggestion = "N/A";
         gradingResult.total_score = null;
-      } else {
-        // Map to legacy format for UI compatibility
+        gradingResult.max_score = null;
+      } else if (scoring_mode === 'auto-score' && auto_score_settings) {
+        // Auto-score mode: compute score from AI response or per-question data
+        const computedScore = computeAutoScore(gradingResult, auto_score_settings);
+        gradingResult.total_score = computedScore.earned;
+        gradingResult.max_score = computedScore.possible;
+        gradingResult.score_suggestion = `${computedScore.earned}/${computedScore.possible}`;
+        
+        // Use AI's derivation or generate one
+        if (!gradingResult.score_derivation && computedScore.derivation) {
+          gradingResult.score_derivation = computedScore.derivation;
+        }
+      } else if (scoring_mode === 'rubric-based') {
+        // Rubric-based: use AI's score directly
         if (typeof gradingResult.total_score === 'number' && gradingResult.max_score) {
           gradingResult.score_suggestion = `${gradingResult.total_score}/${gradingResult.max_score}`;
-        } else if (typeof gradingResult.total_score === 'number') {
-          gradingResult.score_suggestion = `${gradingResult.total_score}`;
+        } else if (gradingResult.qualitative_rating) {
+          gradingResult.score_suggestion = gradingResult.qualitative_rating;
+        } else {
+          gradingResult.score_suggestion = "N/A";
+        }
+      } else {
+        // Legacy grading_mode fallback
+        if (grading_mode === 'feedback-only') {
+          gradingResult.score_suggestion = "N/A";
+          gradingResult.total_score = null;
+        } else if (typeof gradingResult.total_score === 'number' && gradingResult.max_score) {
+          gradingResult.score_suggestion = `${gradingResult.total_score}/${gradingResult.max_score}`;
         } else if (gradingResult.qualitative_rating) {
           gradingResult.score_suggestion = gradingResult.qualitative_rating;
         } else {
@@ -188,14 +211,14 @@ serve(async (req) => {
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
       gradingResult = {
-        score_suggestion: grading_mode === 'feedback-only' ? "N/A" : "Unable to determine - please review manually",
+        score_suggestion: scoring_mode === 'feedback-only' ? "N/A" : "Unable to determine - please review manually",
         strengths: "Unable to parse AI response",
         areas_for_improvement: "Manual review required - AI parsing failed",
         feedback_paragraph: "Please review this work and provide personalized feedback.",
       };
     }
 
-    console.log("[grade-paper] Grading complete, mode:", grading_mode, "score:", gradingResult.score_suggestion);
+    console.log("[grade-paper] Grading complete, mode:", scoring_mode, "score:", gradingResult.score_suggestion);
 
     return new Response(
       JSON.stringify(gradingResult),
@@ -209,6 +232,160 @@ serve(async (req) => {
     );
   }
 });
+
+/**
+ * Compute auto-score from AI response data
+ * Ensures numeric score is always calculated when auto-score settings are provided
+ */
+function computeAutoScore(
+  aiResponse: Record<string, unknown>,
+  settings: {
+    totalPoints: number | null;
+    pointsPerQuestion: number | null;
+    questionCount: number | null;
+    partialCreditAllowed: boolean;
+    usePointsPerQuestion: boolean;
+  }
+): { earned: number; possible: number; derivation: string } {
+  
+  // If AI already provided valid total_score and max_score, use them
+  if (typeof aiResponse.total_score === 'number' && typeof aiResponse.max_score === 'number') {
+    return {
+      earned: aiResponse.total_score as number,
+      possible: aiResponse.max_score as number,
+      derivation: (aiResponse.score_derivation as string) || `Score: ${aiResponse.total_score}/${aiResponse.max_score}`,
+    };
+  }
+
+  // Calculate from per-question data if available
+  const perQuestion = aiResponse.per_question as Array<{
+    correct?: boolean | 'partial';
+    points_earned?: number;
+    points_possible?: number;
+  }> | undefined;
+
+  if (perQuestion && Array.isArray(perQuestion) && perQuestion.length > 0) {
+    let totalEarned = 0;
+    let totalPossible = 0;
+    let numCorrect = 0;
+    let numPartial = 0;
+    let numIncorrect = 0;
+
+    for (const q of perQuestion) {
+      if (typeof q.points_earned === 'number') {
+        totalEarned += q.points_earned;
+      }
+      if (typeof q.points_possible === 'number') {
+        totalPossible += q.points_possible;
+      }
+      
+      // Count correct/partial/incorrect
+      if (q.correct === true) numCorrect++;
+      else if (q.correct === 'partial') numPartial++;
+      else numIncorrect++;
+    }
+
+    // If AI provided points, use those
+    if (totalPossible > 0) {
+      const derivation = buildScoreDerivation(numCorrect, numPartial, numIncorrect, totalEarned, totalPossible, settings);
+      return { earned: totalEarned, possible: totalPossible, derivation };
+    }
+  }
+
+  // Fallback: compute from settings + any correctness counts AI provided
+  const numCorrect = typeof aiResponse.num_correct === 'number' ? aiResponse.num_correct : 0;
+  const numPartial = typeof aiResponse.num_partial === 'number' ? aiResponse.num_partial : 0;
+  const numIncorrect = typeof aiResponse.num_incorrect === 'number' ? aiResponse.num_incorrect : 0;
+  const totalQuestions = numCorrect + numPartial + numIncorrect;
+
+  if (settings.usePointsPerQuestion && settings.pointsPerQuestion !== null && settings.questionCount !== null) {
+    // Points per question mode
+    const ppq = settings.pointsPerQuestion;
+    const qCount = settings.questionCount;
+    const possible = ppq * qCount;
+    
+    // Calculate earned: full points for correct, half for partial (if allowed), 0 for incorrect
+    const partialValue = settings.partialCreditAllowed ? Math.round(ppq * 0.5 * 10) / 10 : 0;
+    const earned = (numCorrect * ppq) + (numPartial * partialValue);
+    
+    const derivation = buildScoreDerivation(numCorrect, numPartial, numIncorrect, earned, possible, settings);
+    return { earned: Math.round(earned * 10) / 10, possible, derivation };
+    
+  } else if (settings.totalPoints !== null) {
+    // Total points mode - distribute proportionally
+    const possible = settings.totalPoints;
+    
+    if (totalQuestions > 0) {
+      const correctWeight = numCorrect / totalQuestions;
+      const partialWeight = settings.partialCreditAllowed ? (numPartial * 0.5) / totalQuestions : 0;
+      const earned = Math.round(possible * (correctWeight + partialWeight) * 10) / 10;
+      
+      const derivation = buildScoreDerivation(numCorrect, numPartial, numIncorrect, earned, possible, settings);
+      return { earned, possible, derivation };
+    }
+    
+    // No question data - return what AI gave or N/A
+    if (typeof aiResponse.total_score === 'number') {
+      return {
+        earned: aiResponse.total_score as number,
+        possible,
+        derivation: `Score: ${aiResponse.total_score}/${possible}`,
+      };
+    }
+    
+    return { earned: 0, possible, derivation: "Unable to determine score from student work" };
+  }
+
+  // No valid settings - shouldn't happen but handle gracefully
+  return { earned: 0, possible: 0, derivation: "No scoring rules configured" };
+}
+
+/**
+ * Build a human-readable score derivation string
+ */
+function buildScoreDerivation(
+  numCorrect: number,
+  numPartial: number,
+  numIncorrect: number,
+  earned: number,
+  possible: number,
+  settings: {
+    pointsPerQuestion?: number | null;
+    partialCreditAllowed: boolean;
+    usePointsPerQuestion: boolean;
+  }
+): string {
+  const parts: string[] = [];
+  
+  if (settings.usePointsPerQuestion && settings.pointsPerQuestion) {
+    const ppq = settings.pointsPerQuestion;
+    
+    if (numCorrect > 0) {
+      parts.push(`${numCorrect} fully correct (${numCorrect * ppq} pts)`);
+    }
+    if (numPartial > 0 && settings.partialCreditAllowed) {
+      const partialPts = Math.round(numPartial * ppq * 0.5 * 10) / 10;
+      parts.push(`${numPartial} partial (${partialPts} pts)`);
+    }
+    if (numIncorrect > 0) {
+      parts.push(`${numIncorrect} incorrect (0 pts)`);
+    }
+  } else {
+    // Total points mode
+    const total = numCorrect + numPartial + numIncorrect;
+    if (total > 0) {
+      if (numCorrect > 0) parts.push(`${numCorrect} correct`);
+      if (numPartial > 0) parts.push(`${numPartial} partial`);
+      if (numIncorrect > 0) parts.push(`${numIncorrect} incorrect`);
+    }
+  }
+  
+  if (parts.length === 0) {
+    return `Score: ${earned}/${possible}`;
+  }
+  
+  return `${parts.join(', ')} = ${earned}/${possible}`;
+}
 
 /**
  * Build system prompt based on scoring mode with smart fallback behavior

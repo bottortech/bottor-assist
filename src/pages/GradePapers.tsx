@@ -49,7 +49,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
-import { ScoringOptionsSection, ScoringMode, AutoScoreSettings, DEFAULT_AUTO_SCORE_SETTINGS } from "@/components/ScoringOptionsSection";
+import { ScoringOptionsSection, ScoringMode, AutoScoreSettings, DEFAULT_AUTO_SCORE_SETTINGS, validateAutoScoreSettings } from "@/components/ScoringOptionsSection";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -630,6 +630,16 @@ export default function GradePapers() {
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
       toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
+      return;
+    }
+
+    // Validate auto-score settings if that mode is selected
+    if (scoringMode === 'auto-score' && !validateAutoScoreSettings(autoScoreSettings)) {
+      toast({ 
+        title: "Missing scoring settings", 
+        description: "Please enter point values in Scoring Options to enable auto-scoring.", 
+        variant: "destructive" 
+      });
       return;
     }
 
@@ -1563,10 +1573,14 @@ export default function GradePapers() {
                     {currentGroup.result.score_derivation}
                   </p>
                 )}
-                {currentGroup.result.score_suggestion === "N/A" && scoringMode === "feedback-only" && (
+                {currentGroup.result.score_suggestion === "N/A" && (
                   <p className="text-sm text-muted-foreground flex items-start gap-2">
                     <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                    No numeric score calculated. Select a scoring option above to enable scoring.
+                    {scoringMode === "feedback-only" 
+                      ? "No numeric score calculated. Select a scoring option above to enable scoring."
+                      : scoringMode === "auto-score"
+                        ? "Unable to compute score from student work. Verify point settings and try again."
+                        : "No scoring rules found in rubric. Add point values or use auto-score."}
                   </p>
                 )}
               </CardContent>

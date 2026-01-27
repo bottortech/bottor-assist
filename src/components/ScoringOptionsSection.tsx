@@ -132,7 +132,7 @@ export function ScoringOptionsSection({
                   {autoScoreSettings.usePointsPerQuestion ? (
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <Label className="text-xs">Points per question</Label>
+                        <Label className="text-xs">Points per question <span className="text-destructive">*</span></Label>
                         <Input
                           type="number"
                           min="0"
@@ -142,11 +142,11 @@ export function ScoringOptionsSection({
                           onChange={(e) => updateAutoScore({ 
                             pointsPerQuestion: e.target.value ? parseFloat(e.target.value) : null 
                           })}
-                          className="h-8"
+                          className={`h-8 ${autoScoreSettings.pointsPerQuestion === null ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs">Number of questions</Label>
+                        <Label className="text-xs">Number of questions <span className="text-destructive">*</span></Label>
                         <Input
                           type="number"
                           min="1"
@@ -155,13 +155,13 @@ export function ScoringOptionsSection({
                           onChange={(e) => updateAutoScore({ 
                             questionCount: e.target.value ? parseInt(e.target.value) : null 
                           })}
-                          className="h-8"
+                          className={`h-8 ${autoScoreSettings.questionCount === null ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
                         />
                       </div>
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      <Label className="text-xs">Total points possible</Label>
+                      <Label className="text-xs">Total points possible <span className="text-destructive">*</span></Label>
                       <Input
                         type="number"
                         min="0"
@@ -170,9 +170,20 @@ export function ScoringOptionsSection({
                         onChange={(e) => updateAutoScore({ 
                           totalPoints: e.target.value ? parseFloat(e.target.value) : null 
                         })}
-                        className="h-8 w-32"
+                        className={`h-8 w-32 ${autoScoreSettings.totalPoints === null ? 'border-amber-400 focus-visible:ring-amber-400' : ''}`}
                       />
                     </div>
+                  )}
+
+                  {/* Validation warning */}
+                  {(autoScoreSettings.usePointsPerQuestion 
+                    ? (autoScoreSettings.pointsPerQuestion === null || autoScoreSettings.questionCount === null)
+                    : autoScoreSettings.totalPoints === null
+                  ) && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <Info className="w-3 h-3" />
+                      Enter point values above to enable numeric scoring
+                    </p>
                   )}
 
                   {/* Partial credit toggle */}
@@ -235,3 +246,28 @@ export const DEFAULT_AUTO_SCORE_SETTINGS: AutoScoreSettings = {
   partialCreditAllowed: true,
   usePointsPerQuestion: false,
 };
+
+/**
+ * Validate that auto-score settings have required values
+ * Returns true if valid, false if missing required fields
+ */
+export function validateAutoScoreSettings(settings: AutoScoreSettings): boolean {
+  if (settings.usePointsPerQuestion) {
+    return settings.pointsPerQuestion !== null && settings.questionCount !== null;
+  }
+  return settings.totalPoints !== null;
+}
+
+/**
+ * Get the computed max score from auto-score settings
+ */
+export function getMaxScoreFromSettings(settings: AutoScoreSettings): number | null {
+  if (settings.usePointsPerQuestion) {
+    if (settings.pointsPerQuestion !== null && settings.questionCount !== null) {
+      return settings.pointsPerQuestion * settings.questionCount;
+    }
+  } else if (settings.totalPoints !== null) {
+    return settings.totalPoints;
+  }
+  return null;
+}
