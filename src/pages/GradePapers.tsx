@@ -49,7 +49,22 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
-import { ScoringOptionsSection, ScoringMode, AutoScoreSettings, DEFAULT_AUTO_SCORE_SETTINGS, validateAutoScoreSettings } from "@/components/ScoringOptionsSection";
+import { 
+  ScoringOptionsSection, 
+  ScoringMode, 
+  AutoScoreSettings, 
+  QuickRubricSettings,
+  DEFAULT_AUTO_SCORE_SETTINGS, 
+  DEFAULT_QUICK_RUBRIC_SETTINGS,
+  validateAutoScoreSettings,
+  getMaxScoreFromQuickRubric
+} from "@/components/ScoringOptionsSection";
+import { 
+  AssignmentTypeSection, 
+  AssignmentType, 
+  ScoringCategory,
+  getScoringCategory 
+} from "@/components/AssignmentTypeSection";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -473,9 +488,12 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
-  // Scoring options state (new flexible scoring)
-  const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only");
+  // Assignment type and scoring options state
+  const [assignmentType, setAssignmentType] = useState<AssignmentType>("math-worksheet");
+  const [scoringCategory, setScoringCategory] = useState<ScoringCategory>("question-based");
+  const [scoringMode, setScoringMode] = useState<ScoringMode>("auto-score"); // Default ON for question-based
   const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
+  const [quickRubricSettings, setQuickRubricSettings] = useState<QuickRubricSettings>(DEFAULT_QUICK_RUBRIC_SETTINGS);
 
   // Student groups for batch grading
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
@@ -634,7 +652,7 @@ export default function GradePapers() {
     }
 
     // Validate auto-score settings if that mode is selected
-    if (scoringMode === 'auto-score' && !validateAutoScoreSettings(autoScoreSettings)) {
+    if (scoringMode === 'auto-score' && scoringCategory === 'question-based' && !validateAutoScoreSettings(autoScoreSettings)) {
       toast({ 
         title: "Missing scoring settings", 
         description: "Please enter point values in Scoring Options to enable auto-scoring.", 
@@ -643,10 +661,44 @@ export default function GradePapers() {
       return;
     }
 
+    // For rubric-based, validate quick rubric or total points
+    if (scoringCategory === 'rubric-based' && scoringMode !== 'feedback-only') {
+      const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+      if (!rubricMax && !quickRubricSettings.totalPoints) {
+        toast({ 
+          title: "Missing scoring settings", 
+          description: "Please set total points or configure Quick Rubric to enable scoring.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+    }
+
     setGrading(true);
 
     const effectiveRubric =
       rubricTextCombined || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : "");
+
+    // Build auto-score settings based on scoring category
+    let effectiveAutoScoreSettings = undefined;
+    if (scoringMode === 'auto-score' || (scoringCategory === 'rubric-based' && scoringMode !== 'feedback-only')) {
+      if (scoringCategory === 'question-based') {
+        effectiveAutoScoreSettings = autoScoreSettings;
+      } else {
+        // Rubric-based: convert to total points mode
+        const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+        effectiveAutoScoreSettings = {
+          ...autoScoreSettings,
+          totalPoints: rubricMax || quickRubricSettings.totalPoints,
+          usePointsPerQuestion: false,
+        };
+      }
+    }
+
+    // Build quick rubric categories for AI prompt
+    const quickRubricCategories = quickRubricSettings.enabled 
+      ? quickRubricSettings.categories.map(c => `${c.name}: ${c.points} pts`).join(', ')
+      : '';
 
     // Grade each student group independently
     const updatedGroups = [...studentGroups];
@@ -662,12 +714,14 @@ export default function GradePapers() {
             student_work: group.extractedText,
             grade_level: form.grade_level,
             subject: form.subject,
-            assignment_type: form.assignment_type,
+            assignment_type: assignmentType,
             rubric: effectiveRubric,
             answer_key: answerKeyTextCombined || null,
             grading_mode: gradingMode,
             scoring_mode: scoringMode,
-            auto_score_settings: scoringMode === 'auto-score' ? autoScoreSettings : undefined,
+            scoring_category: scoringCategory,
+            auto_score_settings: effectiveAutoScoreSettings,
+            quick_rubric_categories: quickRubricCategories,
           },
         });
 
@@ -952,6 +1006,14 @@ export default function GradePapers() {
       )}
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        {/* ===== ASSIGNMENT TYPE (REQUIRED) ===== */}
+        <AssignmentTypeSection
+          assignmentType={assignmentType}
+          onAssignmentTypeChange={setAssignmentType}
+          scoringCategory={scoringCategory}
+          onScoringCategoryChange={setScoringCategory}
+        />
+
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -1335,10 +1397,13 @@ export default function GradePapers() {
 
         {/* ===== SCORING OPTIONS ===== */}
         <ScoringOptionsSection
+          scoringCategory={scoringCategory}
           scoringMode={scoringMode}
           onScoringModeChange={setScoringMode}
           autoScoreSettings={autoScoreSettings}
           onAutoScoreSettingsChange={setAutoScoreSettings}
+          quickRubricSettings={quickRubricSettings}
+          onQuickRubricSettingsChange={setQuickRubricSettings}
           hasRubric={rubricMode !== "none"}
           disabled={rubricMode === "locked"}
         />

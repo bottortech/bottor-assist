@@ -43,6 +43,7 @@ interface GradeRequest {
   assignment_doc_text?: string;  // Text from assignment/rubric documents
   grading_mode: 'scoring' | 'feedback-only';
   scoring_mode?: 'feedback-only' | 'auto-score' | 'rubric-based';  // New flexible scoring
+  scoring_category?: 'question-based' | 'rubric-based';  // Assignment type category
   auto_score_settings?: {
     totalPoints: number | null;
     pointsPerQuestion: number | null;
@@ -50,6 +51,7 @@ interface GradeRequest {
     partialCreditAllowed: boolean;
     usePointsPerQuestion: boolean;
   };
+  quick_rubric_categories?: string;  // Comma-separated rubric categories with points
   content_type?: 'objective' | 'open-ended' | 'mixed';  // Smart fallback hint
 }
 
@@ -72,7 +74,9 @@ serve(async (req) => {
       assignment_doc_text,
       grading_mode = 'feedback-only',
       scoring_mode = 'feedback-only',
+      scoring_category = 'question-based',
       auto_score_settings,
+      quick_rubric_categories,
       content_type = 'mixed'
     } = body;
 
@@ -88,14 +92,17 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`[grade-paper] Grading in ${scoring_mode} mode for ${grade_level} ${subject}, content_type: ${content_type}`);
+    console.log(`[grade-paper] Grading in ${scoring_mode} mode (${scoring_category}) for ${grade_level} ${subject}, content_type: ${content_type}`);
     if (auto_score_settings) {
       console.log(`[grade-paper] Auto-score settings:`, JSON.stringify(auto_score_settings));
+    }
+    if (quick_rubric_categories) {
+      console.log(`[grade-paper] Quick rubric categories:`, quick_rubric_categories);
     }
 
     // Build the grading prompt based on mode and content type
     const prompt = buildGradingPrompt(body);
-    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, content_type, auto_score_settings);
+    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, content_type, auto_score_settings, quick_rubric_categories);
 
     const response = await fetch(LOVABLE_AI_URL, {
       method: "POST",
@@ -401,7 +408,8 @@ function buildSystemPrompt(
     questionCount: number | null;
     partialCreditAllowed: boolean;
     usePointsPerQuestion: boolean;
-  }
+  },
+  quickRubricCategories?: string
 ): string {
   const basePrompt = `You are Bottor Assist, an AI grading assistant for teachers.
 
@@ -491,9 +499,9 @@ OUTPUT FORMAT (JSON only):
     }
   }
 
-  // Handle rubric-based scoring
-  if (scoringMode === 'rubric-based' && rubric?.trim()) {
-    const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric);
+  // Handle rubric-based scoring with Quick Rubric categories
+  if (scoringMode === 'rubric-based' && (rubric?.trim() || quickRubricCategories)) {
+    const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric) || !!quickRubricCategories;
     
     const contentGuidance = contentType === 'objective' 
       ? '\n- For objective questions (math, fill-in), verify correctness against any provided answer key'
@@ -501,13 +509,20 @@ OUTPUT FORMAT (JSON only):
       ? '\n- For open-ended responses (essays, analysis), evaluate depth, evidence, and reasoning per rubric criteria'
       : '\n- Handle mixed content by applying appropriate evaluation approach to each section';
 
+    // Quick rubric categories take precedence
+    const rubricInfo = quickRubricCategories 
+      ? `Teacher-defined rubric categories: ${quickRubricCategories}`
+      : `Rubric: ${rubric}`;
+
     if (hasPointValues) {
       return `${basePrompt}
 
 RUBRIC-BASED SCORING MODE (Numeric):
-The rubric contains point values. Calculate a numeric score based strictly on the rubric.
+${rubricInfo}
+
+Calculate a numeric score based strictly on the rubric categories.
 - Award points ONLY for criteria that are met in the student work
-- Use the exact point values from the rubric
+- Use the exact point values from the rubric categories
 - If rubric uses 0/0.5/1 scoring, follow that exactly
 - Calculate total score as sum of all category scores${contentGuidance}
 
