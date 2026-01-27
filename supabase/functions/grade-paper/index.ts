@@ -34,16 +34,14 @@ const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 interface GradeRequest {
   student_work: string;
-  grade_level: string;
-  subject: string;
-  assignment_type: string;
+  grade_level?: string;
+  subject?: string;
   rubric: string;
   answer_key?: string;
   prompt_text?: string;
   assignment_doc_text?: string;  // Text from assignment/rubric documents
   grading_mode: 'scoring' | 'feedback-only';
-  scoring_mode?: 'feedback-only' | 'auto-score' | 'rubric-based';  // New flexible scoring
-  scoring_category?: 'question-based' | 'rubric-based';  // Assignment type category
+  scoring_mode?: 'feedback-only' | 'auto-score' | 'rubric-based';  // Flexible scoring mode
   auto_score_settings?: {
     totalPoints: number | null;
     pointsPerQuestion: number | null;
@@ -52,7 +50,6 @@ interface GradeRequest {
     usePointsPerQuestion: boolean;
   };
   quick_rubric_categories?: string;  // Comma-separated rubric categories with points
-  content_type?: 'objective' | 'open-ended' | 'mixed';  // Smart fallback hint
 }
 
 serve(async (req) => {
@@ -67,17 +64,14 @@ serve(async (req) => {
       student_work, 
       grade_level, 
       subject, 
-      assignment_type, 
       rubric, 
       answer_key, 
       prompt_text,
       assignment_doc_text,
       grading_mode = 'feedback-only',
       scoring_mode = 'feedback-only',
-      scoring_category = 'question-based',
       auto_score_settings,
-      quick_rubric_categories,
-      content_type = 'mixed'
+      quick_rubric_categories
     } = body;
 
     if (!student_work?.trim()) {
@@ -92,7 +86,7 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    console.log(`[grade-paper] Grading in ${scoring_mode} mode (${scoring_category}) for ${grade_level} ${subject}, content_type: ${content_type}`);
+    console.log(`[grade-paper] Grading in ${scoring_mode} mode for ${grade_level || 'unspecified'} ${subject || 'unspecified'}`);
     if (auto_score_settings) {
       console.log(`[grade-paper] Auto-score settings:`, JSON.stringify(auto_score_settings));
     }
@@ -100,9 +94,9 @@ serve(async (req) => {
       console.log(`[grade-paper] Quick rubric categories:`, quick_rubric_categories);
     }
 
-    // Build the grading prompt based on mode and content type
+    // Build the grading prompt based on mode
     const prompt = buildGradingPrompt(body);
-    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, content_type, auto_score_settings, quick_rubric_categories);
+    const systemPrompt = buildSystemPrompt(scoring_mode, rubric, answer_key, auto_score_settings, quick_rubric_categories);
 
     const response = await fetch(LOVABLE_AI_URL, {
       method: "POST",
@@ -401,7 +395,6 @@ function buildSystemPrompt(
   scoringMode: 'feedback-only' | 'auto-score' | 'rubric-based', 
   rubric: string,
   answerKey?: string,
-  contentType: 'objective' | 'open-ended' | 'mixed' = 'mixed',
   autoScoreSettings?: {
     totalPoints: number | null;
     pointsPerQuestion: number | null;
@@ -502,12 +495,6 @@ OUTPUT FORMAT (JSON only):
   // Handle rubric-based scoring with Quick Rubric categories
   if (scoringMode === 'rubric-based' && (rubric?.trim() || quickRubricCategories)) {
     const hasPointValues = /\d+\s*(pts?|points?|\/\d+)/i.test(rubric) || !!quickRubricCategories;
-    
-    const contentGuidance = contentType === 'objective' 
-      ? '\n- For objective questions (math, fill-in), verify correctness against any provided answer key'
-      : contentType === 'open-ended'
-      ? '\n- For open-ended responses (essays, analysis), evaluate depth, evidence, and reasoning per rubric criteria'
-      : '\n- Handle mixed content by applying appropriate evaluation approach to each section';
 
     // Quick rubric categories take precedence
     const rubricInfo = quickRubricCategories 
@@ -524,7 +511,8 @@ Calculate a numeric score based strictly on the rubric categories.
 - Award points ONLY for criteria that are met in the student work
 - Use the exact point values from the rubric categories
 - If rubric uses 0/0.5/1 scoring, follow that exactly
-- Calculate total score as sum of all category scores${contentGuidance}
+- Calculate total score as sum of all category scores
+- Infer content type from student work and apply appropriate evaluation
 
 OUTPUT FORMAT (JSON only):
 {
@@ -560,7 +548,8 @@ RUBRIC-BASED SCORING MODE (Qualitative):
 The rubric has criteria but no specific point values. Provide qualitative rubric-aligned ratings.
 - Evaluate each rubric criterion
 - Use qualitative ratings like "Exceeds", "Meets", "Approaching", "Not Yet" for each
-- Do NOT assign numeric scores since rubric doesn't specify points${contentGuidance}
+- Do NOT assign numeric scores since rubric doesn't specify points
+- Infer content type from student work and apply appropriate evaluation
 
 OUTPUT FORMAT (JSON only):
 {
@@ -587,20 +576,20 @@ OUTPUT FORMAT (JSON only):
   }
 
   // Feedback-only mode (default)
-  // Check if we have an answer key that can help with objective content
+  // Check if we have an answer key that can help
   const hasAnswerKey = answerKey && answerKey.trim().length > 0;
-  const isObjectiveContent = contentType === 'objective';
   
-  if (hasAnswerKey && isObjectiveContent) {
+  if (hasAnswerKey) {
     return `${basePrompt}
 
 FEEDBACK-ONLY MODE (with Answer Key for Reference):
-No scoring rules were provided, but an answer key is available for objective-style content.
+No scoring rules were provided, but an answer key is available.
 - Use the answer key to evaluate correctness of responses
 - Compare student answers to expected answers
 - Do NOT assign a numeric score (no scoring rules provided)
 - Provide accuracy-based feedback: which answers are correct, which need work
 - Be specific about what the correct answer should be for incorrect items
+- Infer content type from student work (objective questions, open-ended, etc.)
 
 OUTPUT FORMAT (JSON only):
 {
@@ -627,7 +616,7 @@ No rubric or scoring rules were provided. Provide qualitative feedback only.
 - Focus on identifying what the student did well
 - Provide constructive suggestions for improvement
 - Do NOT guess what the rubric or point values might be
-${contentType === 'open-ended' ? '- For open-ended responses, focus on clarity, organization, evidence use, and argument strength' : ''}
+- Infer content type from student work and provide appropriate feedback
 
 OUTPUT FORMAT (JSON only):
 {
@@ -654,7 +643,6 @@ function buildGradingPrompt(request: GradeRequest): string {
     student_work, 
     grade_level, 
     subject, 
-    assignment_type, 
     rubric, 
     answer_key, 
     prompt_text,
@@ -679,7 +667,6 @@ function buildGradingPrompt(request: GradeRequest): string {
     `## Assignment Context`,
     `- Grade Level: ${grade_level || "Not specified"}`,
     `- Subject: ${subject || "Not specified"}`,
-    `- Assignment Type: ${assignment_type || "Not specified"}`,
     `- Scoring Mode: ${scoringModeDesc}`,
     "",
   ];

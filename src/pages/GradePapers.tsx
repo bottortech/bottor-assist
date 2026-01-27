@@ -59,12 +59,7 @@ import {
   validateAutoScoreSettings,
   getMaxScoreFromQuickRubric
 } from "@/components/ScoringOptionsSection";
-import { 
-  AssignmentTypeSection, 
-  AssignmentType, 
-  ScoringCategory,
-  getScoringCategory 
-} from "@/components/AssignmentTypeSection";
+// AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -99,11 +94,7 @@ const GRADES = [
   "Grade 12",
 ];
 
-const ASSIGNMENT_TYPES = [
-  { value: "multiple_choice", label: "Multiple Choice" },
-  { value: "constructed_response", label: "Constructed Response" },
-  { value: "essay", label: "Essay" },
-];
+// Assignment types moved to optional advanced settings (not shown in pilot)
 
 const RUBRIC_KEYWORDS = [
   "rubric",
@@ -488,9 +479,7 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
-  // Assignment type and scoring options state
-  const [assignmentType, setAssignmentType] = useState<AssignmentType>("math-worksheet");
-  const [scoringCategory, setScoringCategory] = useState<ScoringCategory>("question-based");
+  // Scoring options state (assignment type removed for pilot)
   const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only"); // Default to feedback-only
   const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
   const [quickRubricSettings, setQuickRubricSettings] = useState<QuickRubricSettings>(DEFAULT_QUICK_RUBRIC_SETTINGS);
@@ -667,7 +656,7 @@ export default function GradePapers() {
     }
 
     // Validate auto-score settings if that mode is selected
-    if (scoringMode === 'auto-score' && scoringCategory === 'question-based' && !validateAutoScoreSettings(autoScoreSettings)) {
+    if (scoringMode === 'auto-score' && !validateAutoScoreSettings(autoScoreSettings)) {
       toast({ 
         title: "Missing scoring settings", 
         description: "Please enter point values in Scoring Options to enable auto-scoring.", 
@@ -677,7 +666,7 @@ export default function GradePapers() {
     }
 
     // For rubric-based, validate quick rubric or total points
-    if (scoringCategory === 'rubric-based' && scoringMode !== 'feedback-only') {
+    if (scoringMode === 'rubric-based') {
       const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
       if (!rubricMax && !quickRubricSettings.totalPoints) {
         toast({ 
@@ -694,20 +683,18 @@ export default function GradePapers() {
     const effectiveRubric =
       rubricTextCombined || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : "");
 
-    // Build auto-score settings based on scoring category
+    // Build auto-score settings based on scoring mode
     let effectiveAutoScoreSettings = undefined;
-    if (scoringMode === 'auto-score' || (scoringCategory === 'rubric-based' && scoringMode !== 'feedback-only')) {
-      if (scoringCategory === 'question-based') {
-        effectiveAutoScoreSettings = autoScoreSettings;
-      } else {
-        // Rubric-based: convert to total points mode
-        const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
-        effectiveAutoScoreSettings = {
-          ...autoScoreSettings,
-          totalPoints: rubricMax || quickRubricSettings.totalPoints,
-          usePointsPerQuestion: false,
-        };
-      }
+    if (scoringMode === 'auto-score') {
+      effectiveAutoScoreSettings = autoScoreSettings;
+    } else if (scoringMode === 'rubric-based') {
+      // Rubric-based: convert to total points mode
+      const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+      effectiveAutoScoreSettings = {
+        ...autoScoreSettings,
+        totalPoints: rubricMax || quickRubricSettings.totalPoints,
+        usePointsPerQuestion: false,
+      };
     }
 
     // Build quick rubric categories for AI prompt
@@ -729,12 +716,10 @@ export default function GradePapers() {
             student_work: group.extractedText,
             grade_level: form.grade_level,
             subject: form.subject,
-            assignment_type: assignmentType,
             rubric: effectiveRubric,
             answer_key: answerKeyTextCombined || null,
             grading_mode: gradingMode,
             scoring_mode: scoringMode,
-            scoring_category: scoringCategory,
             auto_score_settings: effectiveAutoScoreSettings,
             quick_rubric_categories: quickRubricCategories,
           },
@@ -1021,14 +1006,6 @@ export default function GradePapers() {
       )}
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* ===== ASSIGNMENT TYPE (REQUIRED) ===== */}
-        <AssignmentTypeSection
-          assignmentType={assignmentType}
-          onAssignmentTypeChange={setAssignmentType}
-          scoringCategory={scoringCategory}
-          onScoringCategoryChange={setScoringCategory}
-        />
-
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -1412,7 +1389,6 @@ export default function GradePapers() {
 
         {/* ===== SCORING OPTIONS ===== */}
         <ScoringOptionsSection
-          scoringCategory={scoringCategory}
           scoringMode={scoringMode}
           onScoringModeChange={setScoringMode}
           autoScoreSettings={autoScoreSettings}
@@ -1464,21 +1440,6 @@ export default function GradePapers() {
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Assignment Type</Label>
-                <Select value={form.assignment_type} onValueChange={(v) => updateForm("assignment_type", v)}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background border shadow-lg z-50">
-                    {ASSIGNMENT_TYPES.map((t) => (
-                      <SelectItem key={t.value} value={t.value}>
-                        {t.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
 
               {/* Answer Key (Optional) - inside Manual Grading Options */}
