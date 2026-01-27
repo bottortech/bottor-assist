@@ -907,6 +907,8 @@ function buildGradingPrompt(request: GradeRequest, allowedErrorTypes?: string[])
     sections.push(
       `## Grading Rubric / Criteria`,
       `IMPORTANT: Grade STRICTLY using these criteria. Do not invent additional criteria.`,
+      `CITATION REQUIREMENT: When citing rubric criteria in feedback, name the specific category/criterion used.`,
+      `SCORING REQUIREMENT: If the rubric contains point values, compute a total score. If the rubric has levels (e.g., Exceeds/Meets/Approaching) but no points, return a level per category and set Suggested Score to 'N/A'.`,
       "",
       rubric,
       ""
