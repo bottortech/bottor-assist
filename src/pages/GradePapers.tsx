@@ -1718,7 +1718,7 @@ export default function GradePapers() {
                       <CardDescription className="text-xs mt-0.5">
                         {rubricDetected 
                           ? "Rubric detected and locked. Numeric score will be calculated from your criteria."
-                          : "Feedback-only mode active. Add a rubric to enable numeric scoring."}
+                          : "Feedback only mode is on, upload a rubric to unlock scoring."}
                       </CardDescription>
                     </div>
                   </div>
@@ -2107,7 +2107,7 @@ export default function GradePapers() {
               <div className="flex items-center gap-2">
                 <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 <p className="text-sm text-blue-700 dark:text-blue-300">
-                  <span className="font-medium">Feedback-only mode</span> — Add a rubric above to enable numeric scoring.
+                  <span className="font-medium">Feedback only mode is on</span>, upload a rubric to unlock scoring.
                 </p>
               </div>
             </CardContent>
@@ -2149,12 +2149,12 @@ export default function GradePapers() {
                     )}
                     {studentGroups.length > 1
                       ? rubricDetected 
-                        ? `Grade All Students (${studentGroups.length})`
+                        ? `Generate Grade + Feedback (${studentGroups.length})`
                         : `Generate Feedback (${studentGroups.length})`
                       : hasFailedFiles && studentUpload.hasReadyFiles
                         ? "Proceed with Ready Files"
                         : rubricDetected
-                          ? "Generate Draft Grade + Feedback"
+                          ? "Generate Grade + Feedback"
                           : "Generate Feedback"}
                   </Button>
                 </div>
