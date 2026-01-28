@@ -13,7 +13,7 @@
  * =============================================================================
  */
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useGuestMode } from "@/hooks/useGuestMode";
@@ -53,6 +53,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { BulkUploadModal } from "@/components/BulkUploadModal";
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
@@ -775,6 +776,9 @@ export default function GradePapers() {
   
   // Feedback expansion state - collapsed by default for calm UX
   const [feedbackExpanded, setFeedbackExpanded] = useState(false);
+  
+  // Bulk upload modal state
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 
   // Track if grading has completed for any student (for feedback timing)
   const hasGradingResults = studentGroups.some(g => g.result !== null);
@@ -1097,6 +1101,17 @@ export default function GradePapers() {
     if (e.target.files) answerKeyUpload.addFiles(e.target.files);
     if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = "";
   };
+
+  // Handle bulk upload completion from modal
+  const handleBulkUploadComplete = useCallback((files: File[]) => {
+    if (files.length > 0) {
+      studentUpload.addFiles(files);
+      toast({ 
+        title: `${files.length} file${files.length !== 1 ? 's' : ''} uploaded`,
+        description: "Processing student work...",
+      });
+    }
+  }, [studentUpload, toast]);
 
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
@@ -1479,16 +1494,27 @@ export default function GradePapers() {
                 Bottor automatically detects student names inside each document. No special file naming required.
               </CardDescription>
             </div>
-            {studentUpload.files.length > 0 && (
+            <div className="flex items-center gap-2">
+              {studentUpload.files.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={studentUpload.clearAllFiles}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  Clear all
+                </Button>
+              )}
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                onClick={studentUpload.clearAllFiles}
-                className="text-muted-foreground hover:text-destructive"
+                onClick={() => setBulkUploadOpen(true)}
+                className="gap-2"
               >
-                Clear all
+                <Upload className="w-4 h-4" />
+                Bulk Upload
               </Button>
-            )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="relative">
@@ -2402,6 +2428,13 @@ export default function GradePapers() {
         show={showFeedback}
         onDismiss={dismissFeedback}
         onSkip={skipFeedback}
+      />
+
+      {/* Bulk Upload Modal */}
+      <BulkUploadModal
+        open={bulkUploadOpen}
+        onOpenChange={setBulkUploadOpen}
+        onUploadComplete={handleBulkUploadComplete}
       />
     </div>
   );
