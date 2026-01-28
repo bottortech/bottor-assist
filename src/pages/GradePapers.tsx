@@ -53,7 +53,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { BulkUploadModal } from "@/components/BulkUploadModal";
+
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
@@ -776,9 +776,6 @@ export default function GradePapers() {
   
   // Feedback expansion state - collapsed by default for calm UX
   const [feedbackExpanded, setFeedbackExpanded] = useState(false);
-  
-  // Bulk upload modal state
-  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 
   // Track if grading has completed for any student (for feedback timing)
   const hasGradingResults = studentGroups.some(g => g.result !== null);
@@ -1102,16 +1099,6 @@ export default function GradePapers() {
     if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = "";
   };
 
-  // Handle bulk upload completion from modal
-  const handleBulkUploadComplete = useCallback((files: File[]) => {
-    if (files.length > 0) {
-      studentUpload.addFiles(files);
-      toast({ 
-        title: `${files.length} file${files.length !== 1 ? 's' : ''} uploaded`,
-        description: "Processing student work...",
-      });
-    }
-  }, [studentUpload, toast]);
 
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
@@ -1505,15 +1492,6 @@ export default function GradePapers() {
                   Clear all
                 </Button>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkUploadOpen(true)}
-                className="gap-2"
-              >
-                <Upload className="w-4 h-4" />
-                Bulk Upload
-              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1529,12 +1507,19 @@ export default function GradePapers() {
               />
               <label
                 htmlFor="student-file-upload"
-                className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
               >
-                <Upload className="w-6 h-6 text-muted-foreground mb-2" />
-                <span className="text-sm text-muted-foreground">Click to upload PDFs or images</span>
+                {/* Stacked document icons to indicate multiple files */}
+                <div className="relative mb-2">
+                  <FileText className="w-5 h-5 text-muted-foreground/40 absolute -left-1 -top-1" />
+                  <FileText className="w-6 h-6 text-muted-foreground relative z-10" />
+                </div>
+                <span className="text-sm font-medium text-foreground">Upload Student Work</span>
+                <span className="text-sm text-muted-foreground mt-1">
+                  📄 Upload single or multiple student submissions at once
+                </span>
                 <span className="text-xs text-muted-foreground/70 mt-1">
-                  Any filename works — names detected from document content
+                  Any filename works — student names detected from document content
                 </span>
               </label>
             </div>
@@ -2430,12 +2415,6 @@ export default function GradePapers() {
         onSkip={skipFeedback}
       />
 
-      {/* Bulk Upload Modal */}
-      <BulkUploadModal
-        open={bulkUploadOpen}
-        onOpenChange={setBulkUploadOpen}
-        onUploadComplete={handleBulkUploadComplete}
-      />
     </div>
   );
 }
