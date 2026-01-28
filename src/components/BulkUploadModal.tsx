@@ -4,9 +4,9 @@
  * Provides a drag-and-drop interface for bulk uploading student submissions.
  * Features:
  * - Drag & drop zone with file validation
- * - Student name detection from filenames
- * - File list with status indicators
- * - Manual student name mapping
+ * - Document content extraction for student name detection
+ * - File list with processing status indicators
+ * - Manual student name assignment for undetected names
  * - Upload progress tracking
  */
 
@@ -16,7 +16,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -43,8 +42,12 @@ import {
   User,
   Edit2,
   FileType,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/integrations/supabase/client';
 
 // Supported file types
 const ACCEPTED_FILE_TYPES = {
@@ -58,14 +61,17 @@ const ACCEPTED_FILE_TYPES = {
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
+type ProcessingStatus = 'pending' | 'extracting' | 'detected' | 'manual_needed' | 'error' | 'uploading' | 'success';
+
 interface ParsedFile {
   id: string;
   file: File;
+  extractedText: string;
   detectedName: string;
   editedName: string;
   isEditing: boolean;
-  namingValid: boolean;
-  status: 'pending' | 'uploading' | 'success' | 'error';
+  status: ProcessingStatus;
+  statusMessage: string;
   errorMessage?: string;
 }
 
@@ -76,45 +82,72 @@ interface BulkUploadModalProps {
 }
 
 /**
- * Parse student name from filename
- * Supports formats:
- * - StudentName_Assignment.pdf → "StudentName"
- * - FirstLast_Assignment.pdf → "First Last"
- * - First_Last_Assignment.pdf → "First Last"
- * - Last_First_Assignment.pdf → "Last First" (less common)
+ * Detect student name from extracted document text (OCR)
+ * Same logic as the main grading page
  */
-function parseStudentNameFromFilename(filename: string): { name: string; isValid: boolean } {
-  const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
-  
-  // Pattern 1: CamelCase (JohnDoe, AliceJohnson)
-  const camelCaseMatch = nameWithoutExt.match(/^([A-Z][a-z]+[A-Z][a-z]+)/);
-  if (camelCaseMatch) {
-    // Split camelCase into words
-    const formatted = camelCaseMatch[1].replace(/([a-z])([A-Z])/g, '$1 $2');
-    return { name: formatted, isValid: true };
+function detectStudentNameFromText(text: string): { 
+  name: string; 
+  confidence: 'high' | 'low';
+} {
+  if (!text || !text.trim()) {
+    return { name: '', confidence: 'low' };
   }
+
+  // Look at first ~25 lines for name patterns
+  const lines = text.split('\n').slice(0, 25);
   
-  // Pattern 2: Underscore separated (John_Doe, John_Doe_Assignment)
-  const parts = nameWithoutExt.split(/[_\s]+/);
-  if (parts.length >= 2) {
-    // Check if first two parts look like names (start with capital)
-    const firstName = parts[0];
-    const secondPart = parts[1];
-    
-    if (/^[A-Za-z'-]+$/.test(firstName) && /^[A-Za-z'-]+$/.test(secondPart)) {
-      // Capitalize first letters
-      const formatPart = (p: string) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
-      return { name: `${formatPart(firstName)} ${formatPart(secondPart)}`, isValid: true };
+  // Priority 1: Look for explicit "Name:" or "Student Name:" labels
+  for (const line of lines) {
+    const labelMatch = line.match(/(?:student\s*)?name\s*[:=]\s*(.+)/i);
+    if (labelMatch) {
+      const nameValue = labelMatch[1].trim();
+      // Clean the name - stop at common metadata labels
+      const stopWords = ['date', 'class', 'period', 'teacher', 'grade', 'subject'];
+      let cleanedName = nameValue;
+      for (const stopWord of stopWords) {
+        const stopPattern = new RegExp(`\\b${stopWord}\\s*[:=]`, 'i');
+        const stopMatch = cleanedName.match(stopPattern);
+        if (stopMatch && stopMatch.index !== undefined) {
+          cleanedName = cleanedName.substring(0, stopMatch.index).trim();
+        }
+      }
+      
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
+        return { name: cleanedName, confidence: 'high' };
+      }
     }
   }
-  
-  // Pattern 3: Just the first part if it looks like a name
-  if (parts[0] && /^[A-Za-z'-]+$/.test(parts[0]) && parts[0].length >= 2) {
-    const formatted = parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
-    return { name: formatted, isValid: false }; // Not ideal but usable
+
+  // Priority 2: Look for name at start of first content line
+  const firstContentLine = lines.find(l => l.trim().length > 0);
+  if (firstContentLine) {
+    const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
+    if (startMatch && startMatch[1]) {
+      const words = startMatch[1].split(/\s+/);
+      if (words.length >= 2 && words.length <= 4) {
+        return { name: startMatch[1].trim(), confidence: 'high' };
+      }
+    }
   }
+
+  // Priority 3: Look for "By: Name" or "Student: Name" patterns
+  const byPatterns = [
+    /student\s*[:=]\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
+    /by\s*[:=]?\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
+  ];
   
-  return { name: '', isValid: false };
+  for (const pattern of byPatterns) {
+    const match = text.slice(0, 1000).match(pattern);
+    if (match && match[1]) {
+      const words = match[1].trim().split(/\s+/);
+      if (words.length >= 2 && words.length <= 4) {
+        return { name: match[1].trim(), confidence: 'low' };
+      }
+    }
+  }
+
+  return { name: '', confidence: 'low' };
 }
 
 /**
@@ -131,12 +164,52 @@ function getFileIcon(mimeType: string) {
 }
 
 /**
+ * Get status icon and color
+ */
+function getStatusDisplay(status: ProcessingStatus): { icon: React.ReactNode; className: string } {
+  switch (status) {
+    case 'pending':
+      return { icon: <Clock className="w-3 h-3" />, className: 'text-muted-foreground border-muted' };
+    case 'extracting':
+      return { icon: <Loader2 className="w-3 h-3 animate-spin" />, className: 'text-primary border-primary/30 bg-primary/5' };
+    case 'detected':
+      return { icon: <CheckCircle2 className="w-3 h-3" />, className: 'text-emerald-600 border-emerald-300 bg-emerald-50' };
+    case 'manual_needed':
+      return { icon: <AlertTriangle className="w-3 h-3" />, className: 'text-amber-600 border-amber-300 bg-amber-50' };
+    case 'error':
+      return { icon: <AlertCircle className="w-3 h-3" />, className: 'text-destructive border-destructive/30 bg-destructive/5' };
+    case 'uploading':
+      return { icon: <Loader2 className="w-3 h-3 animate-spin" />, className: 'text-primary border-primary/30 bg-primary/5' };
+    case 'success':
+      return { icon: <Check className="w-3 h-3" />, className: 'text-emerald-600 border-emerald-300 bg-emerald-50' };
+    default:
+      return { icon: <Clock className="w-3 h-3" />, className: 'text-muted-foreground border-muted' };
+  }
+}
+
+/**
  * Format file size
  */
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Convert file to base64
+ */
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export function BulkUploadModal({
@@ -148,21 +221,100 @@ export function BulkUploadModal({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
+  // Extract text from a file using the extract-text edge function
+  const extractTextFromFile = useCallback(async (file: File): Promise<string> => {
+    try {
+      const base64 = await fileToBase64(file);
+      const { data, error } = await supabase.functions.invoke('extract-text', {
+        body: {
+          file_data: base64,
+          file_type: file.type,
+          file_name: file.name,
+        },
+      });
+      
+      if (error) throw error;
+      return data?.text || '';
+    } catch (err) {
+      console.error('Text extraction failed:', err);
+      throw err;
+    }
+  }, []);
+
+  // Process a single file - extract text and detect name
+  const processFile = useCallback(async (fileId: string) => {
+    const fileItem = parsedFiles.find(f => f.id === fileId);
+    if (!fileItem) return;
+
+    // Update status to extracting
+    setParsedFiles(prev => prev.map(f => 
+      f.id === fileId ? { ...f, status: 'extracting' as ProcessingStatus, statusMessage: 'Analyzing document...' } : f
+    ));
+
+    try {
+      // Extract text from document
+      const extractedText = await extractTextFromFile(fileItem.file);
+      
+      // Detect student name from content
+      const { name, confidence } = detectStudentNameFromText(extractedText);
+      
+      if (name && confidence === 'high') {
+        setParsedFiles(prev => prev.map(f => 
+          f.id === fileId ? { 
+            ...f, 
+            extractedText,
+            detectedName: name,
+            editedName: name,
+            status: 'detected' as ProcessingStatus, 
+            statusMessage: `Matched: ${name}` 
+          } : f
+        ));
+      } else if (name) {
+        setParsedFiles(prev => prev.map(f => 
+          f.id === fileId ? { 
+            ...f, 
+            extractedText,
+            detectedName: name,
+            editedName: name,
+            status: 'manual_needed' as ProcessingStatus, 
+            statusMessage: `Detected: ${name} (verify)` 
+          } : f
+        ));
+      } else {
+        setParsedFiles(prev => prev.map(f => 
+          f.id === fileId ? { 
+            ...f, 
+            extractedText,
+            status: 'manual_needed' as ProcessingStatus, 
+            statusMessage: 'Name not detected' 
+          } : f
+        ));
+      }
+    } catch (err) {
+      setParsedFiles(prev => prev.map(f => 
+        f.id === fileId ? { 
+          ...f, 
+          status: 'error' as ProcessingStatus, 
+          statusMessage: 'Extraction failed',
+          errorMessage: err instanceof Error ? err.message : 'Unknown error'
+        } : f
+      ));
+    }
+  }, [parsedFiles, extractTextFromFile]);
+
   // Handle file drop
   const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
     // Process accepted files
-    const newFiles: ParsedFile[] = acceptedFiles.map((file) => {
-      const { name, isValid } = parseStudentNameFromFilename(file.name);
-      return {
-        id: `${file.name}_${file.lastModified}_${Math.random().toString(36).substr(2, 9)}`,
-        file,
-        detectedName: name,
-        editedName: name,
-        isEditing: false,
-        namingValid: isValid,
-        status: 'pending' as const,
-      };
-    });
+    const newFiles: ParsedFile[] = acceptedFiles.map((file) => ({
+      id: `${file.name}_${file.lastModified}_${Math.random().toString(36).substr(2, 9)}`,
+      file,
+      extractedText: '',
+      detectedName: '',
+      editedName: '',
+      isEditing: false,
+      status: 'pending' as ProcessingStatus,
+      statusMessage: 'Waiting to process...',
+    }));
 
     // Add to existing files (avoid duplicates by filename)
     setParsedFiles((prev) => {
@@ -171,11 +323,17 @@ export function BulkUploadModal({
       return [...prev, ...uniqueNew];
     });
 
-    // Show errors for rejected files
+    // Start processing new files
+    setTimeout(() => {
+      newFiles.forEach(nf => {
+        processFile(nf.id);
+      });
+    }, 100);
+
     if (rejectedFiles.length > 0) {
       console.warn('Rejected files:', rejectedFiles);
     }
-  }, []);
+  }, [processFile]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -202,13 +360,7 @@ export function BulkUploadModal({
   const updateName = useCallback((fileId: string, newName: string) => {
     setParsedFiles((prev) =>
       prev.map((f) =>
-        f.id === fileId
-          ? {
-              ...f,
-              editedName: newName,
-              namingValid: newName.trim().length >= 2,
-            }
-          : f
+        f.id === fileId ? { ...f, editedName: newName } : f
       )
     );
   }, []);
@@ -216,9 +368,18 @@ export function BulkUploadModal({
   // Confirm name edit
   const confirmEdit = useCallback((fileId: string) => {
     setParsedFiles((prev) =>
-      prev.map((f) =>
-        f.id === fileId ? { ...f, isEditing: false, namingValid: f.editedName.trim().length >= 2 } : f
-      )
+      prev.map((f) => {
+        if (f.id === fileId) {
+          const hasValidName = f.editedName.trim().length >= 2;
+          return { 
+            ...f, 
+            isEditing: false, 
+            status: hasValidName ? 'detected' as ProcessingStatus : 'manual_needed' as ProcessingStatus,
+            statusMessage: hasValidName ? `Assigned: ${f.editedName}` : 'Name not assigned'
+          };
+        }
+        return f;
+      })
     );
   }, []);
 
@@ -229,29 +390,28 @@ export function BulkUploadModal({
     setIsUploading(true);
     setUploadProgress(0);
 
-    // Simulate upload progress (actual upload happens in parent)
     const totalFiles = parsedFiles.length;
     let completed = 0;
 
     // Mark all as uploading
     setParsedFiles((prev) =>
-      prev.map((f) => ({ ...f, status: 'uploading' as const }))
+      prev.map((f) => ({ ...f, status: 'uploading' as ProcessingStatus, statusMessage: 'Uploading...' }))
     );
 
     // Process files with progress
     for (let i = 0; i < parsedFiles.length; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay for visual feedback
+      await new Promise((resolve) => setTimeout(resolve, 100));
       completed++;
       setUploadProgress(Math.round((completed / totalFiles) * 100));
       
       setParsedFiles((prev) =>
         prev.map((f, idx) =>
-          idx === i ? { ...f, status: 'success' as const } : f
+          idx === i ? { ...f, status: 'success' as ProcessingStatus, statusMessage: 'Uploaded' } : f
         )
       );
     }
 
-    // Complete upload
+    // Complete upload - pass files to parent
     const filesToUpload = parsedFiles.map((pf) => pf.file);
     onUploadComplete(filesToUpload);
 
@@ -276,9 +436,11 @@ export function BulkUploadModal({
   // Stats
   const stats = useMemo(() => {
     const total = parsedFiles.length;
-    const valid = parsedFiles.filter((f) => f.namingValid).length;
-    const needsReview = total - valid;
-    return { total, valid, needsReview };
+    const processing = parsedFiles.filter((f) => f.status === 'pending' || f.status === 'extracting').length;
+    const detected = parsedFiles.filter((f) => f.status === 'detected').length;
+    const needsReview = parsedFiles.filter((f) => f.status === 'manual_needed').length;
+    const errors = parsedFiles.filter((f) => f.status === 'error').length;
+    return { total, processing, detected, needsReview, errors };
   }, [parsedFiles]);
 
   return (
@@ -290,7 +452,7 @@ export function BulkUploadModal({
             Upload Student Submissions
           </DialogTitle>
           <DialogDescription>
-            Upload multiple student documents at once. Drag and drop or click to browse.
+            Upload multiple student documents at once. Student names will be automatically detected from document content.
           </DialogDescription>
         </DialogHeader>
 
@@ -331,15 +493,13 @@ export function BulkUploadModal({
             </div>
           </div>
 
-          {/* Naming Convention Help */}
+          {/* Info Box */}
           <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 border border-muted">
             <Info className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
             <div className="text-sm">
-              <p className="font-medium text-foreground">File Naming Convention</p>
+              <p className="font-medium text-foreground">Automatic Name Detection</p>
               <p className="text-muted-foreground">
-                Name files as <code className="bg-background px-1 rounded">StudentName_Assignment.pdf</code>
-                <br />
-                Examples: <code className="bg-background px-1 rounded">JohnDoe_Homework1.pdf</code>, <code className="bg-background px-1 rounded">Alice_Johnson_Essay.docx</code>
+                Any filename works — Bottor analyzes document content to find student names (same as regular uploads).
               </p>
             </div>
           </div>
@@ -349,12 +509,20 @@ export function BulkUploadModal({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-foreground">
-                  Files Selected ({stats.total})
+                  Files ({stats.total})
                 </span>
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="text-muted-foreground">
-                    {stats.valid} valid naming
-                  </span>
+                  {stats.processing > 0 && (
+                    <Badge variant="outline" className="text-primary border-primary/30">
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      {stats.processing} processing
+                    </Badge>
+                  )}
+                  {stats.detected > 0 && (
+                    <Badge variant="outline" className="text-emerald-600 border-emerald-300 bg-emerald-50">
+                      {stats.detected} matched
+                    </Badge>
+                  )}
                   {stats.needsReview > 0 && (
                     <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">
                       {stats.needsReview} needs review
@@ -365,98 +533,98 @@ export function BulkUploadModal({
 
               <ScrollArea className="h-[240px] rounded-lg border">
                 <div className="p-2 space-y-2">
-                  {parsedFiles.map((pf) => (
-                    <div
-                      key={pf.id}
-                      className={cn(
-                        'flex items-center gap-3 p-3 rounded-lg border transition-colors',
-                        pf.status === 'success'
-                          ? 'bg-primary/5 border-primary/20'
-                          : pf.namingValid
-                          ? 'bg-background border-border'
-                          : 'bg-amber-50/50 border-amber-200'
-                      )}
-                    >
-                      {/* File Icon */}
-                      <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
-                        {pf.status === 'uploading' ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                        ) : pf.status === 'success' ? (
-                          <Check className="w-4 h-4 text-primary" />
-                        ) : (
-                          getFileIcon(pf.file.type)
+                  {parsedFiles.map((pf) => {
+                    const statusDisplay = getStatusDisplay(pf.status);
+                    
+                    return (
+                      <div
+                        key={pf.id}
+                        className={cn(
+                          'flex items-center gap-3 p-3 rounded-lg border transition-colors',
+                          pf.status === 'success' || pf.status === 'detected'
+                            ? 'bg-primary/5 border-primary/20'
+                            : pf.status === 'error'
+                            ? 'bg-destructive/5 border-destructive/20'
+                            : pf.status === 'manual_needed'
+                            ? 'bg-amber-50/50 border-amber-200'
+                            : 'bg-background border-border'
                         )}
-                      </div>
-
-                      {/* File Info */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate" title={pf.file.name}>
-                          {pf.file.name}
-                        </p>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <span>{formatFileSize(pf.file.size)}</span>
-                          <span>•</span>
-                          {pf.isEditing ? (
-                            <div className="flex items-center gap-1">
-                              <User className="w-3 h-3" />
-                              <Input
-                                value={pf.editedName}
-                                onChange={(e) => updateName(pf.id, e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && confirmEdit(pf.id)}
-                                onBlur={() => confirmEdit(pf.id)}
-                                className="h-5 text-xs px-1 w-32"
-                                autoFocus
-                              />
-                            </div>
+                      >
+                        {/* File Icon */}
+                        <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          {pf.status === 'extracting' || pf.status === 'uploading' ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                          ) : pf.status === 'success' ? (
+                            <Check className="w-4 h-4 text-primary" />
                           ) : (
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    onClick={() => toggleEdit(pf.id)}
-                                    className="flex items-center gap-1 hover:text-foreground transition-colors"
-                                  >
-                                    <User className="w-3 h-3" />
-                                    <span className={pf.namingValid ? '' : 'text-amber-600'}>
-                                      {pf.editedName || 'Unknown'}
-                                    </span>
-                                    <Edit2 className="w-3 h-3" />
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent>Click to edit student name</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
+                            getFileIcon(pf.file.type)
                           )}
                         </div>
-                      </div>
 
-                      {/* Status/Actions */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {!pf.namingValid && pf.status === 'pending' && (
-                          <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">
-                            <AlertTriangle className="w-3 h-3 mr-1" />
-                            Review
-                          </Badge>
-                        )}
-                        {pf.namingValid && pf.status === 'pending' && (
-                          <Badge variant="outline" className="text-primary border-primary/30 text-xs">
-                            <Check className="w-3 h-3 mr-1" />
-                            Valid
-                          </Badge>
-                        )}
-                        {pf.status !== 'uploading' && (
+                        {/* File Info */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" title={pf.file.name}>
+                            {pf.file.name}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>{formatFileSize(pf.file.size)}</span>
+                            <span>•</span>
+                            {pf.isEditing ? (
+                              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                <User className="w-3 h-3" />
+                                <Input
+                                  value={pf.editedName}
+                                  onChange={(e) => updateName(pf.id, e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && confirmEdit(pf.id)}
+                                  onBlur={() => confirmEdit(pf.id)}
+                                  placeholder="Enter student name..."
+                                  className="h-5 text-xs px-1 w-32"
+                                  autoFocus
+                                />
+                              </div>
+                            ) : (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      onClick={() => toggleEdit(pf.id)}
+                                      className="flex items-center gap-1 hover:text-foreground transition-colors"
+                                      disabled={pf.status === 'pending' || pf.status === 'extracting'}
+                                    >
+                                      <User className="w-3 h-3" />
+                                      <span className={pf.editedName ? '' : 'italic'}>
+                                        {pf.editedName || (pf.status === 'extracting' ? 'Analyzing...' : 'Click to assign')}
+                                      </span>
+                                      {pf.editedName && <Edit2 className="w-3 h-3" />}
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Click to edit student name</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Status Badge */}
+                        <Badge variant="outline" className={cn('text-xs gap-1', statusDisplay.className)}>
+                          {statusDisplay.icon}
+                          <span className="truncate max-w-[100px]">{pf.statusMessage}</span>
+                        </Badge>
+
+                        {/* Remove Button */}
+                        {pf.status !== 'uploading' && pf.status !== 'success' && (
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => removeFile(pf.id)}
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive flex-shrink-0"
                           >
                             <X className="w-4 h-4" />
                           </Button>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </ScrollArea>
             </div>
@@ -473,19 +641,25 @@ export function BulkUploadModal({
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        {/* Footer */}
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 gap-2 sm:gap-0 pt-4 border-t">
           <Button variant="outline" onClick={handleCancel} disabled={isUploading}>
             Cancel
           </Button>
           <Button
             onClick={handleUploadAll}
-            disabled={parsedFiles.length === 0 || isUploading}
+            disabled={parsedFiles.length === 0 || isUploading || stats.processing > 0}
             className="gap-2"
           >
             {isUploading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Uploading...
+              </>
+            ) : stats.processing > 0 ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Processing... ({stats.total - stats.processing}/{stats.total})
               </>
             ) : (
               <>
@@ -494,7 +668,7 @@ export function BulkUploadModal({
               </>
             )}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
