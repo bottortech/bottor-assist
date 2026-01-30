@@ -198,6 +198,11 @@ serve(async (req) => {
 
       // Normalize and validate the response
       gradingResult = normalizeGradingResult(gradingResult, parsedRubric);
+
+      // FORCE CORRECT PERFORMANCE LEVEL MAPPING (defensive fix)
+      // If we detect a weighted 100-point rubric with 4-level performance descriptors,
+      // enforce: 4=100%, 3=75%, 2=50%, 1=25% for each category weight.
+      gradingResult = forceCorrectPerformanceLevelMapping(gradingResult, parsedRubric, rubric);
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
       // Fallback result with default scoring
@@ -784,6 +789,119 @@ function normalizeGradingResult(result: Record<string, unknown>, rubric: ParsedR
       );
     }
   }
+
+  return result;
+}
+
+function forceCorrectPerformanceLevelMapping(
+  result: Record<string, unknown>,
+  parsedRubric: ParsedRubric,
+  rubricText?: string,
+): Record<string, unknown> {
+  const LEVEL_TO_PERCENT: Record<number, number> = { 4: 1.0, 3: 0.75, 2: 0.5, 1: 0.25 };
+
+  // Only apply this forced mapping when we have explicit weighted categories summing to 100
+  // AND the provided rubric text contains 4-level performance descriptors.
+  const criteriaSum = parsedRubric.criteria.reduce((acc, c) => acc + (Number(c.points) || 0), 0);
+  const hasExplicitCategoryWeights =
+    parsedRubric.criteria.length >= 2 && criteriaSum >= 10 && criteriaSum === parsedRubric.totalPoints;
+
+  const looksLikeFourLevelDescriptors = (() => {
+    const t = (rubricText || "").toLowerCase();
+    // Numeric level patterns
+    const hasNumericLevels =
+      /\b4\s*[=:]\s*\w+/.test(t) && /\b3\s*[=:]\s*\w+/.test(t) && /\b2\s*[=:]\s*\w+/.test(t) &&
+      /\b1\s*[=:]\s*\w+/.test(t);
+    // Common labels
+    const hasCommonLabels = t.includes("proficient") && (t.includes("excellent") || t.includes("exemplary"));
+    return hasNumericLevels || hasCommonLabels;
+  })();
+
+  const isWeighted100Rubric = hasExplicitCategoryWeights && parsedRubric.totalPoints === 100 && criteriaSum === 100;
+  if (!isWeighted100Rubric || !looksLikeFourLevelDescriptors) return result;
+
+  const breakdown = result.rubric_breakdown as
+    | Array<{
+        criterion?: string;
+        earned_points?: number;
+        possible_points?: number;
+        evidence?: string;
+      }>
+    | undefined;
+
+  if (!breakdown || !Array.isArray(breakdown) || breakdown.length === 0) return result;
+
+  let correctedTotal = 0;
+  const correctedBreakdown = breakdown.map((item) => {
+    const possiblePoints = Number(item.possible_points) || 0;
+    const earnedPoints = Number(item.earned_points) || 0;
+    if (possiblePoints <= 0) return item;
+
+    const evidenceText = (item.evidence || "").toLowerCase();
+    const rawRatio = earnedPoints / possiblePoints;
+
+    // Prefer explicit level/label mentions in evidence; otherwise, coerce common AI drift ranges.
+    let detectedLevel: 1 | 2 | 3 | 4 = 4;
+    if (/(\blevel\s*4\b|\bexcellent\b|\bexemplary\b)/.test(evidenceText)) detectedLevel = 4;
+    else if (/(\blevel\s*3\b|\bproficient\b|\bcompetent\b)/.test(evidenceText)) detectedLevel = 3;
+    else if (/(\blevel\s*2\b|\bdeveloping\b|\bbasic\b)/.test(evidenceText)) detectedLevel = 2;
+    else if (/(\blevel\s*1\b|\bbeginning\b|\bneeds\s*work\b)/.test(evidenceText)) detectedLevel = 1;
+    else {
+      // Heuristic coercion to fix observed mis-mapping:
+      // - Treat anything ~55%-85% as Level 3 (Proficient) so 60%/80% drift becomes 75%.
+      if (rawRatio >= 0.875) detectedLevel = 4;
+      else if (rawRatio >= 0.55) detectedLevel = 3;
+      else if (rawRatio >= 0.35) detectedLevel = 2;
+      else detectedLevel = 1;
+    }
+
+    const correctPercent = LEVEL_TO_PERCENT[detectedLevel];
+    const correctedEarned = Math.round(possiblePoints * correctPercent);
+    correctedTotal += correctedEarned;
+
+    return {
+      ...item,
+      earned_points: correctedEarned,
+    };
+  });
+
+  // Update totals + display fields to match corrected breakdown.
+  const totalPossible = parsedRubric.totalPoints;
+  const correctedPercent = totalPossible > 0 ? Math.round((correctedTotal / totalPossible) * 100) : 0;
+  (result as any).rubric_breakdown = correctedBreakdown;
+  (result as any).total_score = correctedTotal;
+  (result as any).max_score = totalPossible;
+  (result as any).score_suggestion = `${correctedTotal}/${totalPossible}`;
+  (result as any).score_percent = correctedPercent;
+  (result as any).letter_grade = getLetterGrade(correctedPercent);
+
+  const suggestedScore = (result as any).suggested_score;
+  if (suggestedScore && typeof suggestedScore === "object") {
+    (suggestedScore as any).earned_points = correctedTotal;
+    (suggestedScore as any).possible_points = totalPossible;
+    (suggestedScore as any).display = `${correctedTotal}/${totalPossible}`;
+    (suggestedScore as any).percent = correctedPercent;
+    (suggestedScore as any).letter_grade = getLetterGrade(correctedPercent);
+  }
+
+  // Keep derivation consistent with corrected breakdown.
+  (result as any).score_derivation = correctedBreakdown
+    .map((b) => `${b.criterion ?? "(criterion)"}: ${Number(b.earned_points) || 0}/${Number(b.possible_points) || 0}`)
+    .join(" | ");
+
+  // Add a transparent note for teachers.
+  if (!Array.isArray((result as any).teacher_notes)) (result as any).teacher_notes = [];
+  const notes = (result as any).teacher_notes as string[];
+  const alreadyNoted = notes.some((n) => n.toLowerCase().includes("forced performance-level mapping"));
+  if (!alreadyNoted) {
+    notes.unshift(
+      "Applied forced performance-level mapping for weighted 100-point rubric (Level 4=100%, Level 3=75%, Level 2=50%, Level 1=25%) to prevent incorrect 60%/80% scaling.",
+    );
+  }
+
+  console.log(
+    `[grade-paper] Forced performance-level mapping applied. Corrected total: ${correctedTotal}/${totalPossible} (${correctedPercent}%)`,
+  );
 
   return result;
 }
