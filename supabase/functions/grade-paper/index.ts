@@ -604,22 +604,29 @@ ${
 
 CRITICAL: PERFORMANCE LEVELS vs CATEGORY WEIGHTS
 - If a rubric has explicit CATEGORY POINT VALUES (e.g., "Accuracy – 40 points", "Work Shown – 30 points"), these are the actual point allocations. Do NOT normalize to a 5-point scale.
-- If a rubric has PERFORMANCE LEVELS (e.g., "4 = Excellent, 3 = Proficient, 2 = Developing, 1 = Beginning"), these are DESCRIPTORS, not points.
-- When both exist: Use performance levels to determine quality within each category, then apply proportional scaling to that category's point weight.
+- If a rubric has PERFORMANCE LEVELS (e.g., "4 = Excellent, 3 = Proficient, 2 = Developing, 1 = Beginning"), these are DESCRIPTORS, not raw point values.
 
-MANDATORY PERFORMANCE LEVEL MAPPING (4-level rubrics):
+MANDATORY PERFORMANCE LEVEL TO PERCENTAGE MAPPING:
+When a rubric uses 4-level performance descriptors with weighted categories, you MUST use this exact mapping:
 - Level 4 (Excellent/Exemplary) = 100% of category weight
 - Level 3 (Proficient/Competent) = 75% of category weight
 - Level 2 (Developing/Basic) = 50% of category weight
 - Level 1 (Beginning/Needs Work) = 25% of category weight
 
-SCORING FORMULA: earned_points = ROUND(category_weight × level_percentage)
-- Example 1: Accuracy worth 40 pts, student earns Proficient (Level 3) → 40 × 0.75 = 30 points
-- Example 2: Problem Solving worth 20 pts, student earns Proficient (Level 3) → 20 × 0.75 = 15 points
-- Example 3: Work Shown worth 30 pts, student earns Excellent (Level 4) → 30 × 1.00 = 30 points
-- Example 4: Completion worth 10 pts, student earns Developing (Level 2) → 10 × 0.50 = 5 points
+SCORING FORMULA: earned_points = ROUND(category_weight × percentage)
 
-CRITICAL: Apply this mapping consistently. Never use 60% for Proficient or 80% for Excellent.
+EXAMPLES (you must follow these exactly):
+- Accuracy 40 pts + Proficient (Level 3) → 40 × 0.75 = 30 points
+- Problem Solving 20 pts + Proficient (Level 3) → 20 × 0.75 = 15 points
+- Work Shown 30 pts + Excellent (Level 4) → 30 × 1.00 = 30 points
+- Completion 10 pts + Developing (Level 2) → 10 × 0.50 = 5 points
+
+CRITICAL: Never use 60% for Proficient (Level 3). Never use 80% for Proficient. Always use exactly 75% for Proficient.
+
+TEST CASE TO VERIFY:
+For a 100-point rubric with Accuracy=40pts, Work Shown=30pts, Problem Solving=20pts, Completion=10pts:
+If student gets: Proficient, Excellent, Proficient, Excellent
+Expected output: 30/40, 30/30, 15/20, 10/10 = 85/100 total
 ${is100PointScale ? `- This rubric uses a 100-point scale. Output the final score out of 100 points.` : ""}
 
 6. If something is unclear or illegible, award 0 points for that criterion and note it.
