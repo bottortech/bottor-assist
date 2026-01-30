@@ -1,21 +1,23 @@
 /**
  * =============================================================================
- * GRADE PAPERS PAGE (/grade) - Multi-Step Workflow v3
+ * GRADE PAPERS PAGE (/grade) - DEPLOY v2
  * =============================================================================
  *
- * A streamlined multi-step grading workflow:
- * Step 1: Upload Student Work (required)
- * Step 2: Rubric Input (optional - collapsed accordion)
- * Step 3: Subject Selection (conditional - when auto-detection fails)
- * Step 4: Packet Review (conditional - when grouping confidence is low)
- * Step 5: Results Display
+ * PURPOSE: Upload student work (PDF/image), provide rubric, and generate
+ * AI-powered draft grades with feedback.
+ *
+ * FEATURES:
+ * - Rubric: file upload + textarea, combined into rubricTextCombined
+ * - Answer Key: file upload + textarea, combined into answerKeyTextCombined
+ * - Student Work: auto-groups by filename pattern for batch grading
  * =============================================================================
  */
 
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useGuestMode } from "@/hooks/useGuestMode";
+import { useSavedRubrics } from "@/hooks/useSavedRubrics";
 import { useFileUpload, UploadedFileItem } from "@/hooks/useFileUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,219 +25,715 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+import {
+  ArrowLeft,
+  Sparkles,
+  Copy,
+  Download,
+  Save,
+  Check,
+  Loader2,
+  Upload,
+  FileSearch,
+  Info,
+  CheckCircle2,
+  Printer,
+  Lock,
+  Unlock,
+  X,
+  Users,
+  FileText,
+  ChevronDown,
+  BookOpen,
+} from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  ArrowLeft,
-  Upload,
-  File,
-  Check,
-  AlertCircle,
-  Info,
-  ChevronDown,
-  X,
-  Download,
-  Loader2,
-  FileText,
-  Image,
-  Sparkles,
-  Copy,
-  RefreshCw,
-  User,
-  CheckCircle2,
-  AlertTriangle,
-} from "lucide-react";
+
+import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
+import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
+import { GroupingReviewModal, analyzeAndGroupFiles, GroupingResult } from "@/components/GroupingReviewModal";
+import type { StudentGroupPreview } from "@/components/GroupingReviewModal";
+import { 
+  ScoringOptionsSection, 
+  ScoringMode, 
+  AutoScoreSettings, 
+  QuickRubricSettings,
+  DEFAULT_AUTO_SCORE_SETTINGS, 
+  DEFAULT_QUICK_RUBRIC_SETTINGS,
+  validateAutoScoreSettings,
+  getMaxScoreFromQuickRubric
+} from "@/components/ScoringOptionsSection";
+// AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-// =============================================================================
-// TYPES
-// =============================================================================
+// Subject and Grade level lists removed for pilot - Bottor infers from content
 
-type WorkflowStep = 
-  | "upload" 
-  | "rubric" 
-  | "subject-select" 
-  | "packet-review" 
-  | "processing" 
-  | "results";
+// Assignment types moved to optional advanced settings (not shown in pilot)
 
-type Subject = "ela" | "math" | "unknown";
-type GradingMode = "full" | "feedback-only";
+const RUBRIC_KEYWORDS = [
+  "rubric",
+  "criteria",
+  "points",
+  "total",
+  "score",
+  "each",
+  "x3",
+  "x2",
+  "requirements",
+  "grading",
+  "evaluation",
+  "pts",
+  "point value",
+  "scoring",
+  "/5",
+  "/10",
+  "/15",
+  "/20",
+  "/25",
+  "/50",
+  "/100",
+];
 
-interface SubjectDetectionResult {
-  subject: Subject;
-  confidence: number;
-  reasoning: string;
+/**
+ * Parse rubric text to extract scoring metadata
+ * Priority: (A) explicit total → (B) sum of item points → (C) infer from structure
+ */
+interface RubricMeta {
+  totalPoints: number | null;
+  hasPointValues: boolean;
+  pointScaleType: 'total' | 'per-question' | 'by-category' | 'weighted-100' | 'inferred' | 'none';
+  rubricItems: Array<{ label: string; pointsPossible: number }>;
+  source: 'parsed' | 'inferred' | 'none';
+  detectionConfidence: 'high' | 'low' | 'none';
+  rawTotalMatch?: string; // For debugging/display
+  hasPerformanceLevels?: boolean; // Detected "4 = Excellent" style descriptors
+  isWeightedRubric?: boolean; // Category weights sum to 100
 }
 
-interface PacketMapResult {
-  studentName: string;
-  imageCount: number;
-  confidence: number;
-  thumbnailUrl?: string;
-  flagged?: boolean;
-  issue?: string;
-  possibleNames?: string[];
-}
+/**
+ * Parse rubric for points using STRICT priority:
+ * (A) Look for explicit "Total Points: X" or "Total: X points" patterns FIRST
+ * (B) Sum of individual criteria points
+ * (C) Infer from answer key question count
+ * (D) Infer from student work structure
+ * (E) Return null if nothing found - let UI handle fallback
+ */
+function parseRubricForPoints(rubricText: string, answerKeyText?: string, studentWorkText?: string): RubricMeta {
+  if (!rubricText?.trim()) {
+    // No rubric - try to infer from answer key or student work
+    return inferPointsFromContext(answerKeyText, studentWorkText);
+  }
 
-interface RubricCriterion {
-  name: string;
-  earnedPoints: number;
-  possiblePoints: number;
-}
+  const items: Array<{ label: string; pointsPossible: number }> = [];
+  let explicitTotal: number | null = null;
+  let rawTotalMatch: string | undefined;
+  let hasPerformanceLevels = false;
 
-interface StudentFeedback {
-  studentName: string;
-  score?: {
-    earned: number;
-    total: number;
-    percent: number;
-    letterGrade: string;
+  // DETECT PERFORMANCE LEVELS - these are QUALITATIVE DESCRIPTORS, not points
+  // Common patterns: "4 = Excellent", "4 - Exceeds", "Level 4:", "Score 4:"
+  const performanceLevelPatterns = [
+    /[1-5]\s*[=\-–:]\s*(?:excellent|exceeds|proficient|meets|developing|emerging|beginning|unsatisfactory|poor|advanced|mastery|competent|novice)/i,
+    /(?:level|score|rating)\s*[1-5]/i,
+    /(?:excellent|proficient|developing|beginning)\s*[=\-–:]\s*[1-5]/i,
+  ];
+  
+  for (const pattern of performanceLevelPatterns) {
+    if (pattern.test(rubricText)) {
+      hasPerformanceLevels = true;
+      break;
+    }
+  }
+
+  // (A) PRIORITY: Look for EXPLICIT total points patterns FIRST
+  // These patterns are the most authoritative and should NEVER be guessed
+  const explicitTotalPatterns = [
+    // "Total Points: 20" or "Total Points = 20"
+    /total\s*points?\s*[:=]\s*(\d+)/i,
+    // "Total: 20 points" or "Total: 20 pts"
+    /total\s*[:=]\s*(\d+)\s*(?:pts?|points?)/i,
+    // "(20 points total)" or "20 points total"
+    /(\d+)\s*(?:pts?|points?)\s*total/i,
+    // "out of 20" or "/20 points"
+    /(?:out of|\/)\s*(\d+)\s*(?:pts?|points?)?(?:\s|$)/i,
+    // "Maximum: 20 points" or "Max Score: 20"
+    /max(?:imum)?\s*(?:score|points?)?\s*[:=]?\s*(\d+)/i,
+    // "__/20" scoring format often in rubrics
+    /__\/(\d+)/,
+  ];
+
+  for (const pattern of explicitTotalPatterns) {
+    const match = rubricText.match(pattern);
+    if (match) {
+      const val = parseInt(match[1], 10);
+      if (val > 0 && val <= 1000) {
+        explicitTotal = val;
+        rawTotalMatch = match[0];
+        break;
+      }
+    }
+  }
+
+  // (B) Parse individual criteria/items with EXPLICIT CATEGORY WEIGHTS
+  // Patterns: "Accuracy – 40 points", "Work Shown (30 pts)", "Clarity: 20 points"
+  // IMPORTANT: These are category point weights, NOT performance levels
+  const categoryPatterns = [
+    /([A-Za-z][A-Za-z\s\/\-–]+?)(?:[\-–:]|\s*[\(\[])\s*(\d+)\s*(?:pts?|points?)(?:[\)\]])?/g,
+    /(\d+)\s*(?:pts?|points?)\s*[-:–]\s*([A-Za-z][A-Za-z\s\/\-]+)/g,
+    /([A-Za-z][A-Za-z\s\/\-]+?)\s*[-–]\s*(\d+)\s*(?:pts?|points?)?/g,
+  ];
+
+  for (const pattern of categoryPatterns) {
+    let match;
+    while ((match = pattern.exec(rubricText)) !== null) {
+      let label: string;
+      let points: number;
+      
+      // Check if points come first or label comes first
+      if (/^\d+$/.test(match[1])) {
+        points = parseInt(match[1], 10);
+        label = match[2]?.trim() || '';
+      } else {
+        label = match[1]?.trim() || '';
+        points = parseInt(match[2], 10);
+      }
+      
+      // Validate - exclude common false positives
+      const lowerLabel = label.toLowerCase();
+      const isExcluded = ['total', 'maximum', 'max', 'out of', 'score', 'level', 'rating'].some(
+        ex => lowerLabel === ex || lowerLabel.startsWith(ex + ' ')
+      );
+      
+      // When performance levels are detected, require higher point values to be category weights
+      // (Small numbers like 1-5 are likely performance levels, not category weights)
+      const minPoints = hasPerformanceLevels ? 10 : 1;
+      
+      if (!isExcluded && label.length > 2 && label.length < 60 && points >= minPoints && points <= 100) {
+        // Avoid duplicates
+        if (!items.some(i => i.label.toLowerCase() === label.toLowerCase())) {
+          items.push({ label, pointsPossible: points });
+        }
+      }
+    }
+  }
+
+  // Calculate sum of items
+  const sumOfItems = items.reduce((sum, item) => sum + item.pointsPossible, 0);
+
+  // Determine final total and type using priority rules
+  let totalPoints: number | null = null;
+  let pointScaleType: RubricMeta['pointScaleType'] = 'none';
+  let hasPointValues = false;
+  let detectionConfidence: RubricMeta['detectionConfidence'] = 'none';
+  let isWeightedRubric = false;
+
+  // SAFEGUARD: Common performance level counts that should NEVER be used as totalPoints
+  // when explicit category weights exist
+  const performanceLevelCounts = [3, 4, 5, 6];
+  const hasCategoryWeights = items.length >= 2 && sumOfItems >= 10;
+
+  // Check if this is a weighted 100-point rubric
+  if (sumOfItems === 100 && items.length >= 2) {
+    // Category weights sum to exactly 100 - this is a weighted rubric
+    totalPoints = 100;
+    hasPointValues = true;
+    pointScaleType = 'weighted-100';
+    detectionConfidence = 'high';
+    isWeightedRubric = true;
+  }
+  // PRIORITY A: Explicit total - but SAFEGUARD against performance level counts
+  else if (explicitTotal && explicitTotal > 0) {
+    // SAFEGUARD: If explicit total matches a performance level count (3-6) 
+    // AND we have category weights, prefer sumOfItems
+    if (hasPerformanceLevels && hasCategoryWeights && performanceLevelCounts.includes(explicitTotal)) {
+      // Explicit total looks like a performance level count - use category sum instead
+      totalPoints = sumOfItems;
+      hasPointValues = true;
+      pointScaleType = items.length > 1 ? 'by-category' : 'per-question';
+      detectionConfidence = 'high';
+      isWeightedRubric = sumOfItems === 100;
+    } else {
+      totalPoints = explicitTotal;
+      hasPointValues = true;
+      pointScaleType = 'total';
+      detectionConfidence = 'high';
+    }
+  } 
+  // PRIORITY B: Sum of item points as second choice
+  else if (sumOfItems > 0) {
+    totalPoints = sumOfItems;
+    hasPointValues = true;
+    pointScaleType = items.length > 1 ? 'by-category' : 'per-question';
+    // Higher confidence if sum is reasonable for a multi-item rubric
+    detectionConfidence = sumOfItems >= 10 || items.length <= 2 ? 'high' : 'low';
+    isWeightedRubric = sumOfItems === 100;
+  }
+  // PRIORITY C/D: Try inference
+  else {
+    const inferred = inferPointsFromContext(answerKeyText, studentWorkText);
+    if (inferred.totalPoints) {
+      return {
+        ...inferred,
+        source: 'inferred',
+        detectionConfidence: 'low',
+        hasPerformanceLevels,
+      };
+    }
+    // Return null total - UI will prompt for manual input
+    return {
+      totalPoints: null,
+      hasPointValues: false,
+      pointScaleType: 'none',
+      rubricItems: [],
+      source: 'none',
+      detectionConfidence: 'none',
+      hasPerformanceLevels,
+    };
+  }
+
+  return {
+    totalPoints,
+    hasPointValues,
+    pointScaleType,
+    rubricItems: items,
+    source: 'parsed',
+    detectionConfidence,
+    rawTotalMatch,
+    hasPerformanceLevels,
+    isWeightedRubric,
   };
-  criteria?: RubricCriterion[];
-  strengths: string[];
-  areasForImprovement: string[];
-  nextStep: string;
-  confidence: number;
-  flags?: string[];
-  evidenceSnippets?: string[];
-  criterionNotes?: Record<string, string>;
+}
+
+/**
+ * Infer points from answer key or student work when no rubric
+ */
+function inferPointsFromContext(answerKeyText?: string, studentWorkText?: string): RubricMeta {
+  // (C) Count questions in answer key
+  if (answerKeyText?.trim()) {
+    const questionPatterns = [
+      /^\s*\d+[\.\)]/gm,  // "1." or "1)"
+      /^[A-Z][\.\)]/gm,   // "A." or "A)"
+      /question\s*\d+/gi,
+    ];
+    
+    let maxCount = 0;
+    for (const pattern of questionPatterns) {
+      const matches = answerKeyText.match(pattern);
+      if (matches && matches.length > maxCount) {
+        maxCount = matches.length;
+      }
+    }
+    
+    if (maxCount > 0) {
+      return {
+        totalPoints: maxCount, // 1 point per question default
+        hasPointValues: false,
+        pointScaleType: 'per-question',
+        rubricItems: [],
+        source: 'inferred',
+        detectionConfidence: 'low',
+      };
+    }
+  }
+
+  // (D) Count questions in student work
+  if (studentWorkText?.trim()) {
+    const questionPatterns = [
+      /^\s*\d+[\.\)]/gm,
+      /^[A-Z][\.\)]/gm,
+    ];
+    
+    let maxCount = 0;
+    for (const pattern of questionPatterns) {
+      const matches = studentWorkText.match(pattern);
+      if (matches && matches.length > maxCount) {
+        maxCount = matches.length;
+      }
+    }
+    
+    if (maxCount > 0) {
+      return {
+        totalPoints: maxCount,
+        hasPointValues: false,
+        pointScaleType: 'inferred',
+        rubricItems: [],
+        source: 'inferred',
+        detectionConfidence: 'low',
+      };
+    }
+  }
+
+  // No points could be determined - return null (UI will prompt)
+  return {
+    totalPoints: null,
+    hasPointValues: false,
+    pointScaleType: 'none',
+    rubricItems: [],
+    source: 'none',
+    detectionConfidence: 'none',
+  };
+}
+
+/**
+ * Detect if uploaded file or text contains an answer key
+ */
+function detectAnswerKey(filename: string, text: string): boolean {
+  const lowerFilename = filename.toLowerCase();
+  const lowerText = text.toLowerCase();
+  
+  // Check filename
+  if (lowerFilename.includes('answer') && lowerFilename.includes('key')) return true;
+  if (lowerFilename.includes('answerkey')) return true;
+  if (lowerFilename.includes('answer_key')) return true;
+  if (lowerFilename.includes('solutions')) return true;
+  
+  // Check text content (first 500 chars)
+  const preview = lowerText.slice(0, 500);
+  if (preview.includes('answer key')) return true;
+  if (preview.includes('answer sheet')) return true;
+  if (preview.includes('solutions')) return true;
+  if (preview.includes('correct answers')) return true;
+  
+  return false;
+}
+
+interface GradePapersForm {
+  grade_level: string;
+  subject: string;
+  assignment_type: string;
+  rubric: string;
+  answer_key: string;
+}
+
+interface GradingResult {
+  score_suggestion: string;
+  score_derivation?: string;
+  score_percent?: number;
+  letter_grade?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  rubric_source?: 'teacher' | 'auto-generated';
+  strengths: string;
+  areas_for_improvement: string;
+  feedback_paragraph: string;
 }
 
 interface StudentGroup {
   studentName: string;
-  detectedName: string;
-  nameSource: "document" | "filename" | "unknown";
-  nameConfidence: "high" | "low";
+  detectedName: string; // Original detected name (for display)
+  nameSource: 'document' | 'filename' | 'unknown'; // How the name was detected
+  nameConfidence: 'high' | 'low'; // Confidence in the detected name
+  nameConfirmed: boolean; // Teacher has confirmed/edited the name
   files: UploadedFileItem[];
   extractedText: string;
-  feedback: StudentFeedback | null;
-  processing: boolean;
+  result: GradingResult | null;
+  grading: boolean;
 }
 
-// =============================================================================
-// HELPER FUNCTIONS
-// =============================================================================
+type GradingMode = "scoring" | "feedback-only";
+type RubricMode = "none" | "draft" | "locked";
+// ScoringMode is now imported from ScoringOptionsSection
 
-function detectSubjectFromText(text: string): SubjectDetectionResult {
-  const lowerText = text.toLowerCase();
+/**
+ * Stop-word labels that should NOT be part of a student name
+ * These commonly appear after names on worksheets
+ */
+const NAME_STOP_WORDS = [
+  'date', 'name', 'student', 'grade', 'class', 'period', 
+  'teacher', 'id', 'score', 'points', 'page', 'section',
+  'assignment', 'subject', 'course', 'hour', 'block', 'room',
+  'number', 'no', 'total', 'time', 'due'
+];
+
+/**
+ * Metadata line prefixes - lines starting with these should be skipped entirely
+ */
+const METADATA_LINE_PREFIXES = [
+  'date', 'class', 'period', 'teacher', 'grade', 'subject',
+  'assignment', 'course', 'hour', 'block', 'room', 'score',
+  'points', 'total', 'page', 'section', 'id', 'number', 'due'
+];
+
+/**
+ * Clean a detected name by removing trailing stop-word labels
+ * Allows apostrophes and hyphens as valid name characters (e.g., O'Connor, Mary-Jane, D'Andre)
+ * @returns cleaned name and confidence level
+ */
+function cleanStudentName(rawName: string): { name: string; confidence: 'high' | 'low' } {
+  if (!rawName) return { name: '', confidence: 'low' };
   
-  // Math indicators
-  const mathKeywords = ["equation", "solve", "calculate", "x =", "y =", "graph", "polynomial", "fraction", "multiply", "divide", "sum", "product", "integer", "decimal", "percentage", "area", "volume", "perimeter"];
-  const mathPatterns = [/\d+\s*[\+\-\*\/\=]\s*\d+/, /\d+x/, /x\s*=\s*\d+/];
+  const words = rawName.trim().split(/\s+/);
+  const cleanedWords: string[] = [];
+  let hitStopWord = false;
+  let hasMergedMetadata = false;
   
-  // ELA indicators
-  const elaKeywords = ["essay", "paragraph", "thesis", "author", "character", "plot", "theme", "metaphor", "simile", "narrative", "persuasive", "argument", "evidence", "quote", "source", "citation"];
-  
-  let mathScore = 0;
-  let elaScore = 0;
-  
-  mathKeywords.forEach(kw => { if (lowerText.includes(kw)) mathScore++; });
-  mathPatterns.forEach(p => { if (p.test(lowerText)) mathScore += 2; });
-  elaKeywords.forEach(kw => { if (lowerText.includes(kw)) elaScore++; });
-  
-  const totalScore = mathScore + elaScore;
-  if (totalScore === 0) {
-    return { subject: "unknown", confidence: 0, reasoning: "No subject indicators found in the text." };
+  for (const word of words) {
+    // Extract only letters for stop-word comparison (ignore apostrophes/hyphens)
+    const lowerWord = word.toLowerCase().replace(/[^a-z]/g, '');
+    // Stop if we hit a stop-word label
+    if (NAME_STOP_WORDS.includes(lowerWord)) {
+      hitStopWord = true;
+      break;
+    }
+    // Check if word contains numbers or unusual punctuation (indicates merged metadata)
+    if (/\d/.test(word) || /[^a-zA-Z''\-\s]/.test(word)) {
+      hasMergedMetadata = true;
+      break;
+    }
+    // Keep words that have letters - allow apostrophes and hyphens as valid name chars
+    if (word.replace(/[^a-zA-Z''\-]/g, '').length > 0) {
+      cleanedWords.push(word);
+    }
   }
   
-  if (mathScore > elaScore) {
-    const confidence = Math.min(100, Math.round((mathScore / totalScore) * 100));
-    return { 
-      subject: "math", 
-      confidence, 
-      reasoning: `Detected ${mathScore} math indicators (equations, calculations, math terms).` 
-    };
-  } else if (elaScore > mathScore) {
-    const confidence = Math.min(100, Math.round((elaScore / totalScore) * 100));
-    return { 
-      subject: "ela", 
-      confidence, 
-      reasoning: `Detected ${elaScore} ELA indicators (writing terms, literary devices).` 
-    };
+  // Validate: must be 2-4 words
+  if (cleanedWords.length < 2 || cleanedWords.length > 4) {
+    return { name: rawName.trim(), confidence: 'low' };
   }
   
-  return { subject: "unknown", confidence: 50, reasoning: "Mixed subject indicators detected." };
+  // Check if all words are properly capitalized
+  // Allow: "O'Connor", "D'Andre", "Mary-Jane", "Ana María-Lopez"
+  const allCapitalized = cleanedWords.every(w => {
+    // First letter should be uppercase
+    if (!/^[A-Z]/.test(w)) return false;
+    // For names with apostrophe followed by capital (O'Connor, D'Andre), that's valid
+    // For hyphenated names, each part should start with capital (Mary-Jane)
+    return true;
+  });
+  
+  const cleanedName = cleanedWords.join(' ');
+  
+  // Low confidence only if:
+  // - We had to remove stop words (name was merged with metadata)
+  // - Name has merged metadata (numbers, unusual punctuation)
+  // - Not all words are properly capitalized
+  // NOTE: Apostrophes and hyphens are VALID name characters and do NOT lower confidence
+  const confidence: 'high' | 'low' = (hitStopWord || hasMergedMetadata || !allCapitalized) ? 'low' : 'high';
+  
+  return { name: cleanedName, confidence };
 }
 
-function detectStudentNameFromText(text: string): { name: string; source: "document" | "unknown"; confidence: "high" | "low" } {
-  if (!text?.trim()) return { name: "", source: "unknown", confidence: "low" };
+/**
+ * Check if a line is a metadata line that should be skipped
+ */
+function isMetadataLine(line: string): boolean {
+  const trimmed = line.trim().toLowerCase();
+  // Skip empty lines
+  if (!trimmed) return true;
+  // Check if line starts with a metadata prefix
+  return METADATA_LINE_PREFIXES.some(prefix => 
+    trimmed.startsWith(prefix + ':') || 
+    trimmed.startsWith(prefix + ' ') ||
+    trimmed === prefix
+  );
+}
+
+/**
+ * Extract the name value after a label like "Name:" or "Student Name:"
+ * Stops at any metadata label that follows
+ */
+function extractNameAfterLabel(text: string): string | null {
+  // Match "Name:" or "Student Name:" followed by the value
+  const labelMatch = text.match(/(?:student\s*)?name\s*[:=]\s*(.+)/i);
+  if (!labelMatch) return null;
   
-  const lines = text.split("\n").slice(0, 25);
+  let nameValue = labelMatch[1].trim();
   
-  // Look for explicit name patterns
+  // Stop at any metadata label that might follow on the same line
+  // e.g., "John Smith Date: 10/15" -> "John Smith"
+  for (const stopWord of NAME_STOP_WORDS) {
+    // Match stop word followed by colon, equals, or as standalone word boundary
+    const stopPattern = new RegExp(`\\b${stopWord}\\s*[:=]`, 'i');
+    const stopMatch = nameValue.match(stopPattern);
+    if (stopMatch && stopMatch.index !== undefined) {
+      nameValue = nameValue.substring(0, stopMatch.index).trim();
+    }
+  }
+  
+  return nameValue || null;
+}
+
+/**
+ * Detect student name from extracted document text (OCR)
+ * Priority: Explicit labels (Name:, Student Name:) > Filename fallback
+ * Now includes stop-word filtering and confidence scoring
+ */
+function detectStudentNameFromText(text: string): { 
+  name: string; 
+  source: 'document' | 'unknown';
+  confidence: 'high' | 'low';
+} {
+  if (!text || !text.trim()) {
+    return { name: '', source: 'unknown', confidence: 'low' };
+  }
+
+  // Look at first ~25 lines for name patterns, filtering out metadata lines
+  const lines = text.split('\n').slice(0, 25);
+  const relevantLines: string[] = [];
+  
   for (const line of lines) {
-    const nameMatch = line.match(/(?:student\s*)?name\s*[:=]\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i);
-    if (nameMatch?.[1]) {
-      const name = nameMatch[1].trim();
-      const words = name.split(/\s+/);
-      if (words.length >= 2 && words.length <= 4) {
-        return { name, source: "document", confidence: "high" };
+    // Skip metadata lines (lines starting with Date:, Class:, etc.)
+    if (!isMetadataLine(line)) {
+      relevantLines.push(line);
+    }
+  }
+  
+  const filteredText = relevantLines.join('\n');
+
+  // First priority: Look for explicit "Name:" or "Student Name:" labels
+  for (const line of lines) {
+    const nameValue = extractNameAfterLabel(line);
+    if (nameValue) {
+      const { name: cleanedName, confidence } = cleanStudentName(nameValue);
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
+        return { name: cleanedName, source: 'document', confidence };
       }
     }
   }
-  
-  // Look for name at start of first line
-  const firstLine = lines.find(l => l.trim());
-  if (firstLine) {
-    const startMatch = firstLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*)/);
-    if (startMatch?.[1]) {
-      return { name: startMatch[1], source: "document", confidence: "low" };
+
+  // Second priority: Look for name at start of first non-metadata line
+  // Allow apostrophes and hyphens in names (e.g., O'Connor, Mary-Jane)
+  const firstContentLine = relevantLines.find(l => l.trim().length > 0);
+  if (firstContentLine) {
+    const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
+    if (startMatch && startMatch[1]) {
+      const { name: cleanedName, confidence } = cleanStudentName(startMatch[1]);
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4) {
+        return { name: cleanedName, source: 'document', confidence };
+      }
     }
   }
+
+  // Third priority: Look for "By: Name" or "Student: Name" patterns
+  // Allow apostrophes and hyphens in names
+  const byPatterns = [
+    /student\s*[:=]\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
+    /by\s*[:=]?\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
+  ];
   
-  return { name: "", source: "unknown", confidence: "low" };
+  for (const pattern of byPatterns) {
+    const match = filteredText.match(pattern);
+    if (match && match[1]) {
+      const { name: cleanedName, confidence } = cleanStudentName(match[1].trim());
+      const words = cleanedName.split(/\s+/);
+      if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
+        return { name: cleanedName, source: 'document', confidence };
+      }
+    }
+  }
+
+  return { name: '', source: 'unknown', confidence: 'low' };
 }
 
+/**
+ * Parse student name from filename (fallback)
+ * Patterns:
+ *  - Lesson4_Functions__AaliyahJohnson__p1.pdf → "Aaliyah Johnson"
+ *  - AaliyahJohnson_Assignment.pdf → "Aaliyah Johnson"
+ */
+function parseStudentNameFromFilename(filename: string): { name: string; found: boolean } {
+  const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+
+  // Pattern 1: Double underscore format
+  const doubleUnderscoreMatch = nameWithoutExt.match(/__([^_]+)__/);
+  if (doubleUnderscoreMatch) {
+    return { name: formatStudentName(doubleUnderscoreMatch[1]), found: true };
+  }
+
+  // Pattern 2: CamelCase/PascalCase
+  const camelCaseMatch = nameWithoutExt.match(/([A-Z][a-z]+[A-Z][a-z]+)/);
+  if (camelCaseMatch) {
+    return { name: formatStudentName(camelCaseMatch[1]), found: true };
+  }
+
+  // Pattern 3: Underscore separated (first two parts)
+  // Note: Don't split on hyphens in filenames as they may be part of names (Mary-Jane)
+  const parts = nameWithoutExt.split(/[_\s]+/);
+  if (parts.length >= 2) {
+    const firstTwo = parts.slice(0, 2).join(" ");
+    // Allow apostrophes and hyphens in names
+    if (/^[A-Za-z'-]+ [A-Za-z'-]+$/.test(firstTwo)) {
+      return { name: firstTwo, found: true };
+    }
+  }
+
+  return { name: '', found: false };
+}
+
+/**
+ * Format camelCase/PascalCase to "First Last"
+ */
+function formatStudentName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .trim();
+}
+
+/**
+ * Group files by detected student name
+ * Priority: Document OCR > Filename > Unknown
+ */
 function groupFilesByStudent(files: UploadedFileItem[]): StudentGroup[] {
   const groups: StudentGroup[] = [];
-  
+
   for (const file of files) {
-    const detection = detectStudentNameFromText(file.extractedText);
-    let studentName = detection.name || "Unknown Student";
-    
+    // Try document text first
+    const docResult = detectStudentNameFromText(file.extractedText);
+    let studentName = docResult.name;
+    let nameSource: 'document' | 'filename' | 'unknown' = docResult.source;
+    let nameConfidence: 'high' | 'low' = docResult.confidence;
+
+    // Fallback to filename
+    if (!studentName) {
+      const fileResult = parseStudentNameFromFilename(file.fileName);
+      if (fileResult.found) {
+        studentName = fileResult.name;
+        nameSource = 'filename';
+        // Filename-based detection is lower confidence
+        nameConfidence = 'low';
+      }
+    }
+
+    // Still no name
+    if (!studentName) {
+      studentName = 'Unknown Student';
+      nameSource = 'unknown';
+      nameConfidence = 'low';
+    }
+
     // Find existing group or create new
-    const existing = groups.find(g => g.studentName === studentName);
-    if (existing) {
-      existing.files.push(file);
-      existing.extractedText = existing.files.map(f => f.extractedText).join("\n\n--- PAGE BREAK ---\n\n");
+    const existingGroup = groups.find(g => g.studentName === studentName);
+    if (existingGroup) {
+      existingGroup.files.push(file);
+      existingGroup.extractedText = existingGroup.files
+        .map(f => f.extractedText)
+        .join('\n\n--- PAGE BREAK ---\n\n');
     } else {
       groups.push({
         studentName,
         detectedName: studentName,
-        nameSource: detection.source,
-        nameConfidence: detection.confidence,
+        nameSource,
+        nameConfidence,
+        // Auto-confirm only if from document with high confidence
+        nameConfirmed: nameSource === 'document' && nameConfidence === 'high',
         files: [file],
         extractedText: file.extractedText,
-        feedback: null,
-        processing: false,
+        result: null,
+        grading: false,
       });
     }
   }
-  
+
   return groups;
 }
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// =============================================================================
-// MAIN COMPONENT
-// =============================================================================
 
 export default function GradePapers() {
   const { user, loading: authLoading } = useAuth();
@@ -246,124 +744,650 @@ export default function GradePapers() {
   // File input refs
   const studentFileInputRef = useRef<HTMLInputElement>(null);
   const rubricFileInputRef = useRef<HTMLInputElement>(null);
+  const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
 
-  // File upload hooks
-  const studentUpload = useFileUpload({ maxConcurrentExtractions: 3, maxDimension: 1600 });
+  const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
+
+  // File upload hooks for each section
+  const studentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const rubricUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  const answerKeyUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
 
-  // ==========================================================================
-  // STATE
-  // ==========================================================================
-  
-  // Workflow state
-  const [currentStep, setCurrentStep] = useState<WorkflowStep>("upload");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  // Rubric state
-  const [rubricTab, setRubricTab] = useState<"upload" | "paste">("upload");
-  const [rubricText, setRubricText] = useState("");
-  const [rubricFileName, setRubricFileName] = useState<string | undefined>();
-  
-  // Subject detection
-  const [subject, setSubject] = useState<Subject>("unknown");
-  const [subjectDetection, setSubjectDetection] = useState<SubjectDetectionResult | undefined>();
-  
-  // Grading
-  const [gradingMode, setGradingMode] = useState<GradingMode>("feedback-only");
-  const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
-  const [requiresReview, setRequiresReview] = useState(false);
-  
-  // Results
-  const [feedback, setFeedback] = useState<StudentFeedback[]>([]);
-  const [expandedFeedback, setExpandedFeedback] = useState<Set<number>>(new Set());
-  
-  // Grading criteria accordion (collapsed by default)
-  const [criteriaOpen, setCriteriaOpen] = useState(false);
-  
-  // Copied state for feedback
-  const [copied, setCopied] = useState<string | null>(null);
+  const [form, setForm] = useState<GradePapersForm>({
+    grade_level: "",
+    subject: "",
+    assignment_type: "",
+    rubric: "",
+    answer_key: "",
+  });
 
-  // ==========================================================================
-  // DERIVED STATE
-  // ==========================================================================
-  
-  const hasUploadedImages = studentUpload.files.length > 0;
-  const hasReadyImages = studentUpload.files.some(f => f.status === "ready");
-  const totalFileSize = studentUpload.files.reduce((sum, f) => sum + f.size, 0);
-  
-  const hasRubric = useMemo(() => {
-    const hasRubricFile = rubricUpload.files.some(f => f.status === "ready");
-    const hasRubricText = rubricText.trim().length > 0;
-    return hasRubricFile || hasRubricText;
-  }, [rubricUpload.files, rubricText]);
-  
-  const rubricCombinedText = useMemo(() => {
-    const extractedText = rubricUpload.files
-      .filter(f => f.status === "ready")
-      .map(f => f.extractedText?.trim())
-      .filter(Boolean)
-      .join("\n\n");
-    return [extractedText, rubricText.trim()].filter(Boolean).join("\n\n");
-  }, [rubricUpload.files, rubricText]);
+  const [gradingMode, setGradingMode] = useState<GradingMode>("scoring");
+  const [rubricMode, setRubricMode] = useState<RubricMode>("none");
+  const [rubricLocked, setRubricLocked] = useState(false);
+  const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
-  const buttonLabel = hasRubric ? "Generate Grade + Feedback" : "Generate Feedback";
-  const isProcessing = loading || studentUpload.isExtracting;
+  // Grading Criteria accordion state (collapsed by default)
+  const [gradingCriteriaOpen, setGradingCriteriaOpen] = useState(false);
+
+  // Manual total points override (when auto-detection fails or user wants to change)
+  const [manualTotalPoints, setManualTotalPoints] = useState<number | null>(null);
   
-  // Progress through steps
-  const stepProgress = useMemo(() => {
-    switch (currentStep) {
-      case "upload": return 20;
-      case "rubric": return 40;
-      case "subject-select": return 50;
-      case "packet-review": return 60;
-      case "processing": return 80;
-      case "results": return 100;
-      default: return 0;
+  // Answer key detection state
+  const [answerKeyDetected, setAnswerKeyDetected] = useState(false);
+  
+  // Rubric detection state (tracks if rubric content exists)
+  const rubricDetected = useMemo(() => {
+    const hasRubricFile = rubricUpload.files.some(f => f.status === 'ready');
+    const hasRubricText = form.rubric.trim().length > 0;
+    const hasRubricFromExtraction = rubricUpload.files.some(f => 
+      f.status === 'ready' && f.extractedText && f.extractedText.trim().length > 0
+    );
+    return hasRubricFile || hasRubricText || hasRubricFromExtraction;
+  }, [rubricUpload.files, form.rubric]);
+
+  // Scoring options state (assignment type removed for pilot)
+  const [scoringMode, setScoringMode] = useState<ScoringMode>("feedback-only"); // Default to feedback-only
+  const [autoScoreSettings, setAutoScoreSettings] = useState<AutoScoreSettings>(DEFAULT_AUTO_SCORE_SETTINGS);
+  const [quickRubricSettings, setQuickRubricSettings] = useState<QuickRubricSettings>(DEFAULT_QUICK_RUBRIC_SETTINGS);
+  
+  // Check if rubric or answer key is provided (file with Ready status OR text entered)
+  // This determines button label and grading intent - reacts immediately to file status changes
+  const hasGradingCriteria = useMemo(() => {
+    const hasRubricFile = rubricUpload.files.some(f => f.status === 'ready');
+    const hasRubricText = form.rubric.trim().length > 0;
+    const hasAnswerKeyFile = answerKeyUpload.files.some(f => f.status === 'ready');
+    const hasAnswerKeyText = form.answer_key.trim().length > 0;
+    return hasRubricFile || hasRubricText || hasAnswerKeyFile || hasAnswerKeyText;
+  }, [rubricUpload.files, form.rubric, answerKeyUpload.files, form.answer_key]);
+  
+  // Determine if scoring is enabled (rubric/answer key present OR manual scoring rules configured)
+  const hasScoringEnabled = useMemo(() => {
+    if (scoringMode === 'feedback-only') return false;
+    if (rubricMode !== 'none') return true; // Has rubric
+    if (hasGradingCriteria) return true; // Has answer key or rubric content
+    if (scoringMode === 'auto-score') {
+      return validateAutoScoreSettings(autoScoreSettings);
     }
-  }, [currentStep]);
+    if (scoringMode === 'rubric-based') {
+      return quickRubricSettings.enabled 
+        ? quickRubricSettings.categories.length > 0 
+        : quickRubricSettings.totalPoints !== null;
+    }
+    return false;
+  }, [scoringMode, rubricMode, hasGradingCriteria, autoScoreSettings, quickRubricSettings]);
 
-  // ==========================================================================
-  // HANDLERS
-  // ==========================================================================
+  // Student groups for batch grading
+  const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
+  const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
+  
+  // Grouping review modal state (for multi-page safety)
+  const [groupingReviewOpen, setGroupingReviewOpen] = useState(false);
+  const [groupingResult, setGroupingResult] = useState<GroupingResult | null>(null);
+  const [pendingGroupsForReview, setPendingGroupsForReview] = useState<StudentGroupPreview[]>([]);
+  
+  // Inline name editing state
+  const [editingNameIndex, setEditingNameIndex] = useState<number | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState("");
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const [grading, setGrading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  
+  // Feedback expansion state - collapsed by default for calm UX
+  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
+
+  // Track if grading has completed for any student (for feedback timing)
+  const hasGradingResults = studentGroups.some(g => g.result !== null);
+  
+  // Pilot feedback panel with smart timing (scroll or timeout)
+  const { showFeedback, dismissFeedback, skipFeedback } = usePilotFeedback(isGuest, hasGradingResults);
+
+  // Extract just the text content from uploaded rubric files (excluding status placeholders)
+  const rubricExtractedText = useMemo(() => {
+    const readyFiles = rubricUpload.files.filter(f => f.status === 'ready');
+    const textParts = readyFiles
+      .map(f => f.extractedText?.trim())
+      .filter(Boolean);
+    return textParts.join('\n\n');
+  }, [rubricUpload.files]);
+
+  // Combined text from files + manual textarea
+  const rubricFinalText = useMemo(() => {
+    return [rubricExtractedText, form.rubric.trim()].filter(Boolean).join('\n\n');
+  }, [rubricExtractedText, form.rubric]);
+
+  // Legacy alias for backward compatibility
+  const rubricTextCombined = useMemo(() => {
+    const parts: string[] = [];
+    if (rubricExtractedText) {
+      parts.push("--- From Uploaded Files ---\n" + rubricExtractedText);
+    }
+    if (form.rubric.trim()) {
+      parts.push("--- From Manual Entry ---\n" + form.rubric);
+    }
+    return parts.join("\n\n");
+  }, [rubricExtractedText, form.rubric]);
+
+  // Extract just the text content from uploaded answer key files
+  const answerKeyExtractedText = useMemo(() => {
+    const readyFiles = answerKeyUpload.files.filter(f => f.status === 'ready');
+    const textParts = readyFiles
+      .map(f => f.extractedText?.trim())
+      .filter(Boolean);
+    return textParts.join('\n\n');
+  }, [answerKeyUpload.files]);
+
+  const answerKeyTextCombined = useMemo(() => {
+    const parts: string[] = [];
+    if (answerKeyExtractedText) {
+      parts.push("--- From Uploaded Files ---\n" + answerKeyExtractedText);
+    }
+    if (form.answer_key.trim()) {
+      parts.push("--- From Manual Entry ---\n" + form.answer_key);
+    }
+    return parts.join("\n\n");
+  }, [answerKeyExtractedText, form.answer_key]);
+
+  // Warning: Rubric file uploaded but no text extracted
+  const rubricExtractionWarning = useMemo(() => {
+    const hasRubricFiles = rubricUpload.files.some(f => f.status === 'ready');
+    const hasExtractedText = rubricExtractedText.trim().length > 0;
+    return hasRubricFiles && !hasExtractedText;
+  }, [rubricUpload.files, rubricExtractedText]);
+
+  // Parse rubric to extract scoring metadata (points, categories, etc.)
+  // Uses priority: (A) parsed total → (B) sum of items → (C) answer key → (D) student work
+  const parsedRubricMeta = useMemo((): RubricMeta => {
+    // Get student work text for inference fallback
+    const studentWorkText = studentGroups.length > 0 
+      ? studentGroups.map(g => g.extractedText).join('\n\n')
+      : studentUpload.combinedText;
+    
+    return parseRubricForPoints(rubricFinalText, answerKeyTextCombined, studentWorkText);
+  }, [rubricFinalText, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
+
+  // Effective total points: manual override > parsed > default to 20 (never null when rubric detected)
+  const effectiveTotalPoints = useMemo(() => {
+    if (manualTotalPoints && manualTotalPoints > 0) return manualTotalPoints;
+    if (parsedRubricMeta.totalPoints) return parsedRubricMeta.totalPoints;
+    // Default to 20 when rubric is detected but points couldn't be parsed
+    // This prevents blocking the grading flow
+    if (rubricDetected) return 20;
+    return null;
+  }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
+  
+  // Track if total points were inferred vs parsed
+  const totalPointsInferred = useMemo(() => {
+    if (manualTotalPoints && manualTotalPoints > 0) return false;
+    if (parsedRubricMeta.totalPoints) return false;
+    return rubricDetected; // Inferred when rubric exists but no points found
+  }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
+
+  // Determine if scoring is valid based on parsed rubric or manual settings
+  // UPDATED: Never block with errors when rubric is detected - default to 20 points
+  const scoringValidation = useMemo(() => {
+    // Helper to build appropriate badge message based on rubric type
+    const buildBadgeMessage = (total: number, isManual: boolean, isInferred: boolean) => {
+      if (isManual) {
+        return `Rubric locked — scoring enabled (Total: ${total} points, manually set)`;
+      }
+      if (parsedRubricMeta.isWeightedRubric) {
+        return `Weighted rubric detected — Total: ${total} points`;
+      }
+      if (parsedRubricMeta.pointScaleType === 'weighted-100') {
+        return `Weighted rubric detected — Total: ${total} points`;
+      }
+      if (isInferred) {
+        return `Rubric locked — total points inferred as ${total} (editable below)`;
+      }
+      return `Rubric locked — scoring enabled (Total: ${total} points)`;
+    };
+
+    // If rubric is locked with effective total points, scoring is valid
+    if (rubricLocked && effectiveTotalPoints) {
+      const isManualOverride = manualTotalPoints && manualTotalPoints > 0;
+      
+      return { 
+        isValid: true, 
+        totalPoints: effectiveTotalPoints,
+        source: isManualOverride ? 'manual' as const : parsedRubricMeta.source,
+        confidence: isManualOverride ? 'high' as const : parsedRubricMeta.detectionConfidence,
+        message: buildBadgeMessage(effectiveTotalPoints, isManualOverride, totalPointsInferred)
+      };
+    }
+
+    // Rubric detected but not locked - still valid with effective total
+    if (rubricDetected && effectiveTotalPoints) {
+      let message: string;
+      if (parsedRubricMeta.isWeightedRubric || parsedRubricMeta.pointScaleType === 'weighted-100') {
+        message = `Weighted rubric detected — Total: ${effectiveTotalPoints} points`;
+      } else if (totalPointsInferred) {
+        message = `Rubric detected — total points inferred (${effectiveTotalPoints}). Lock rubric or edit below.`;
+      } else if (parsedRubricMeta.hasPointValues) {
+        message = `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`;
+      } else {
+        message = `Points inferred from ${parsedRubricMeta.pointScaleType === 'per-question' ? 'answer key' : 'content'} (Total: ${effectiveTotalPoints} points)`;
+      }
+      
+      return { 
+        isValid: true, 
+        totalPoints: effectiveTotalPoints,
+        source: parsedRubricMeta.source,
+        confidence: parsedRubricMeta.detectionConfidence,
+        message
+      };
+    }
+
+    // Has grading criteria (answer key) with valid total
+    if (hasGradingCriteria && effectiveTotalPoints) {
+      return { 
+        isValid: true, 
+        totalPoints: effectiveTotalPoints,
+        source: parsedRubricMeta.source,
+        confidence: parsedRubricMeta.detectionConfidence,
+        message: `Scoring enabled (Total: ${effectiveTotalPoints} points)`
+      };
+    }
+
+    // Check manual scoring settings (legacy)
+    if (scoringMode === 'auto-score' && validateAutoScoreSettings(autoScoreSettings)) {
+      const total = autoScoreSettings.usePointsPerQuestion 
+        ? (autoScoreSettings.pointsPerQuestion || 0) * (autoScoreSettings.questionCount || 0)
+        : autoScoreSettings.totalPoints || 0;
+      return { 
+        isValid: true, 
+        totalPoints: total,
+        source: 'manual' as const,
+        confidence: 'high' as const,
+        message: `Manual scoring configured (Total: ${total} points)`
+      };
+    }
+
+    if (scoringMode === 'rubric-based') {
+      const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+      const total = rubricMax || quickRubricSettings.totalPoints;
+      if (total) {
+        return { 
+          isValid: true, 
+          totalPoints: total,
+          source: 'manual' as const,
+          confidence: 'high' as const,
+          message: `Quick rubric configured (Total: ${total} points)`
+        };
+      }
+    }
+
+    // No valid scoring configuration - but never block
+    return { 
+      isValid: true, // Changed from false to true - we always score
+      totalPoints: 20, // Default fallback
+      source: 'none' as const,
+      confidence: 'none' as const,
+      message: 'Using default scoring (20 points)'
+    };
+  }, [rubricLocked, rubricDetected, effectiveTotalPoints, totalPointsInferred, manualTotalPoints, parsedRubricMeta, hasGradingCriteria, scoringMode, autoScoreSettings, quickRubricSettings]);
+
+  const detectRubricInText = (text: string): boolean => {
+    if (!text.trim()) return false;
+    const lowerText = text.toLowerCase();
+    const matches = RUBRIC_KEYWORDS.filter((k) => lowerText.includes(k.toLowerCase()));
+    return matches.length >= 2;
+  };
+
+  // Auto-group student files when they change
+  // Also analyzes grouping confidence for multi-page safety
+  useEffect(() => {
+    const readyFiles = studentUpload.files.filter((f) => f.status === "ready");
+    if (readyFiles.length === 0) {
+      setStudentGroups([]);
+      setGroupingResult(null);
+      return;
+    }
+
+    // Use the new grouping analysis for confidence detection
+    const analysis = analyzeAndGroupFiles(readyFiles, detectStudentNameFromText);
+    setGroupingResult(analysis);
+    
+    // Convert StudentGroupPreview to StudentGroup format
+    const groups: StudentGroup[] = analysis.groups.map(g => ({
+      studentName: g.studentName,
+      detectedName: g.studentName,
+      nameSource: g.nameSource,
+      nameConfidence: g.nameConfidence,
+      nameConfirmed: g.nameConfidence === 'high' && g.nameSource === 'document',
+      files: g.pages.map(p => readyFiles.find(f => f.id === p.fileId)!).filter(Boolean),
+      extractedText: g.pages
+        .map(p => readyFiles.find(f => f.id === p.fileId)?.extractedText || '')
+        .filter(Boolean)
+        .join('\n\n--- PAGE BREAK ---\n\n'),
+      result: null,
+      grading: false,
+    }));
+    
+    setStudentGroups(groups);
+    setSelectedGroupIndex(0);
+  }, [studentUpload.files]);
+
+  // Update student name (for teacher editing)
+  const updateStudentName = (groupIndex: number, newName: string) => {
+    setStudentGroups(prev => {
+      const updated = [...prev];
+      if (updated[groupIndex]) {
+        updated[groupIndex] = {
+          ...updated[groupIndex],
+          studentName: newName,
+          nameConfirmed: true,
+          nameConfidence: 'high', // Mark as high confidence once confirmed
+        };
+      }
+      return updated;
+    });
+  };
+
+  // Inline name editing helpers
+  const startNameEdit = (index: number, currentName: string) => {
+    setEditingNameIndex(index);
+    setEditingNameValue(currentName === 'Unknown Student' ? '' : currentName);
+  };
+
+  const confirmNameEdit = (index: number) => {
+    const trimmedName = editingNameValue.trim();
+    updateStudentName(index, trimmedName || 'Unknown Student');
+    setEditingNameIndex(null);
+    setEditingNameValue('');
+  };
+
+  const cancelNameEdit = () => {
+    setEditingNameIndex(null);
+    setEditingNameValue('');
+  };
+
+  // Detect rubric and control grading mode dynamically
+  // When rubric is present: enable scoring mode and auto-lock
+  // When no rubric: feedback-only mode (no numeric scores)
+  useEffect(() => {
+    const hasRubricContent = rubricFinalText.trim().length > 0;
+    
+    if (!hasRubricContent) {
+      // NO RUBRIC: Feedback-only mode
+      setGradingMode("feedback-only");
+      setRubricMode("none");
+      setRubricLocked(false);
+      setScoringMode('feedback-only');
+    } else {
+      // RUBRIC DETECTED: Enable scoring mode and auto-lock
+      setGradingMode("scoring");
+      setRubricMode("locked");
+      setRubricLocked(true);
+      setScoringMode('rubric-based');
+    }
+
+    // Set rubric source description
+    if (rubricFinalText.trim()) {
+      if (rubricExtractedText.trim() && form.rubric.trim()) {
+        setDetectedRubricSource("Uploaded files + Manual entry");
+      } else if (rubricExtractedText.trim()) {
+        setDetectedRubricSource("Uploaded files");
+      } else {
+        setDetectedRubricSource("Manual entry");
+      }
+    } else {
+      setDetectedRubricSource("");
+    }
+  }, [rubricFinalText, rubricExtractedText, form.rubric]);
+
+  // Detect answer key from uploaded files or text content
+  useEffect(() => {
+    // Check answer key upload files
+    const answerKeyFromFiles = answerKeyUpload.files.some(f => 
+      f.status === 'ready' && detectAnswerKey(f.fileName, f.extractedText || '')
+    );
+    
+    // Check rubric files (might contain answer key combined)
+    const answerKeyFromRubric = rubricUpload.files.some(f => 
+      f.status === 'ready' && detectAnswerKey(f.fileName, f.extractedText || '')
+    );
+    
+    // Check pasted text for answer key keywords
+    const answerKeyFromPaste = form.answer_key.trim().length > 0;
+    
+    // Check rubric text for answer key keywords
+    const answerKeyInRubricText = form.rubric.toLowerCase().includes('answer key') || 
+      form.rubric.toLowerCase().includes('answers') ||
+      form.rubric.toLowerCase().includes('step-by-step') ||
+      /^\s*\d+[\.\)]\s*[A-Za-z]/m.test(form.rubric); // Numbered solutions pattern
+    
+    setAnswerKeyDetected(answerKeyFromFiles || answerKeyFromRubric || answerKeyFromPaste || answerKeyInRubricText);
+  }, [answerKeyUpload.files, rubricUpload.files, form.answer_key, form.rubric]);
+
+  // Toggle rubric lock (for teacher control)
+  const toggleRubricLock = () => {
+    if (rubricLocked) {
+      // Unlocking - restore manual control
+      setRubricLocked(false);
+      setRubricMode("draft");
+    } else {
+      // Locking - enforce scoring
+      setRubricLocked(true);
+      setRubricMode("locked");
+      setScoringMode('rubric-based');
+      setGradingMode('scoring');
+    }
+  };
+
+  const updateForm = (field: keyof GradePapersForm, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleStudentFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       studentUpload.addFiles(e.target.files);
     }
-    e.target.value = "";
-  }, [studentUpload]);
+    if (studentFileInputRef.current) studentFileInputRef.current.value = "";
+  };
 
-  const handleRubricFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      rubricUpload.addFiles(e.target.files);
-      if (e.target.files[0]) {
-        setRubricFileName(e.target.files[0].name);
+  const handleRubricFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) rubricUpload.addFiles(e.target.files);
+    if (rubricFileInputRef.current) rubricFileInputRef.current.value = "";
+  };
+
+  const handleAnswerKeyFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) answerKeyUpload.addFiles(e.target.files);
+    if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = "";
+  };
+
+
+  const handleGenerateGrades = async () => {
+    if (studentGroups.length === 0) {
+      toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
+      return;
+    }
+
+    // Check if grouping needs review (low confidence with multiple students)
+    if (groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1) {
+      // Show review modal instead of grading directly
+      setPendingGroupsForReview(groupingResult.groups);
+      setGroupingReviewOpen(true);
+      return;
+    }
+
+    // Proceed with grading
+    await executeGrading();
+  };
+
+  // Handle confirmed grouping from review modal
+  const handleGroupingConfirmed = (confirmedGroups: StudentGroupPreview[]) => {
+    const readyFiles = studentUpload.files.filter((f) => f.status === "ready");
+    
+    // Convert confirmed groups back to StudentGroup format
+    const groups: StudentGroup[] = confirmedGroups.map(g => ({
+      studentName: g.studentName,
+      detectedName: g.studentName,
+      nameSource: g.nameSource,
+      nameConfidence: 'high' as const, // User confirmed
+      nameConfirmed: true,
+      files: g.pages.map(p => readyFiles.find(f => f.id === p.fileId)!).filter(Boolean),
+      extractedText: g.pages
+        .map(p => readyFiles.find(f => f.id === p.fileId)?.extractedText || '')
+        .filter(Boolean)
+        .join('\n\n--- PAGE BREAK ---\n\n'),
+      result: null,
+      grading: false,
+    }));
+    
+    setStudentGroups(groups);
+    setSelectedGroupIndex(0);
+    
+    // Now proceed with grading
+    setTimeout(() => executeGrading(), 100);
+  };
+
+  const handleGroupingCancelled = () => {
+    // Just close the modal, don't grade
+    setPendingGroupsForReview([]);
+  };
+
+  const executeGrading = async () => {
+    if (studentGroups.length === 0) {
+      toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
+      return;
+    }
+
+    // Determine if we're in scoring mode (rubric present) or feedback-only mode
+    const isScoring = rubricDetected && gradingMode === "scoring";
+    const finalTotalPoints = isScoring ? (effectiveTotalPoints || 20) : null;
+    
+    // Show non-blocking warning if total was inferred (only in scoring mode)
+    if (isScoring && totalPointsInferred && !manualTotalPoints) {
+      toast({ 
+        title: "Total points inferred", 
+        description: `Using ${finalTotalPoints} points. You can edit the score after grading.`,
+      });
+    }
+
+    setGrading(true);
+
+    // Build effective rubric: only use if we're in scoring mode
+    const effectiveRubric = isScoring
+      ? (rubricFinalText || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : ""))
+      : "";
+    
+    console.log('[GradePapers] Grading with mode:', gradingMode, 'isScoring:', isScoring, {
+      rubricFinalTextLength: rubricFinalText.length,
+      effectiveRubricLength: effectiveRubric.length,
+      hasRubricFromFiles: rubricExtractedText.length > 0,
+      hasRubricFromPaste: form.rubric.trim().length > 0,
+      parsedRubricMeta,
+      effectiveTotalPoints,
+      scoringValidation,
+    });
+
+    // Build auto-score settings based on scoring mode OR parsed rubric
+    // PRIORITY: manualTotalPoints > parsedRubricMeta.totalPoints > default
+    let effectiveAutoScoreSettings = undefined;
+    
+    // If rubric is locked or has effective total points, use those
+    if (rubricLocked || effectiveTotalPoints) {
+      effectiveAutoScoreSettings = {
+        ...autoScoreSettings,
+        totalPoints: effectiveTotalPoints || 20,
+        usePointsPerQuestion: false,
+      };
+    } else if (scoringMode === 'auto-score') {
+      effectiveAutoScoreSettings = autoScoreSettings;
+    } else if (scoringMode === 'rubric-based') {
+      // Rubric-based: convert to total points mode
+      const rubricMax = getMaxScoreFromQuickRubric(quickRubricSettings);
+      effectiveAutoScoreSettings = {
+        ...autoScoreSettings,
+        totalPoints: rubricMax || quickRubricSettings.totalPoints,
+        usePointsPerQuestion: false,
+      };
+    }
+
+    // Build quick rubric categories for AI prompt
+    const quickRubricCategories = quickRubricSettings.enabled 
+      ? quickRubricSettings.categories.map(c => `${c.name}: ${c.points} pts`).join(', ')
+      : '';
+
+    // Grade each student group independently
+    const updatedGroups = [...studentGroups];
+
+    for (let i = 0; i < updatedGroups.length; i++) {
+      const group = updatedGroups[i];
+      updatedGroups[i] = { ...group, grading: true };
+      setStudentGroups([...updatedGroups]);
+
+      try {
+        const { data, error } = await supabase.functions.invoke("grade-paper", {
+          body: {
+            student_work: group.extractedText,
+            grade_level: form.grade_level,
+            subject: form.subject,
+            rubric: effectiveRubric,
+            answer_key: isScoring ? (answerKeyTextCombined || null) : null,
+            grading_mode: gradingMode,
+            scoring_mode: isScoring ? scoringMode : 'feedback-only',
+            auto_score_settings: isScoring ? effectiveAutoScoreSettings : undefined,
+            quick_rubric_categories: isScoring ? quickRubricCategories : '',
+          },
+        });
+
+        if (error) throw error;
+
+        // Build result based on mode - feedback-only mode gets no scores
+        updatedGroups[i] = {
+          ...group,
+          grading: false,
+          result: {
+            score_suggestion: isScoring ? (data.score_suggestion || "0/20") : "N/A",
+            score_derivation: isScoring ? data.score_derivation : undefined,
+            score_percent: isScoring ? (data.score_percent || 0) : undefined,
+            letter_grade: isScoring ? data.letter_grade : undefined,
+            confidence: data.confidence || 'medium',
+            rubric_source: isScoring ? (data.rubric_source || 'auto-generated') : undefined,
+            strengths: data.strengths || "Not provided",
+            areas_for_improvement: data.areas_for_improvement || "Not provided",
+            feedback_paragraph: data.feedback_paragraph || "Not provided",
+          },
+        };
+      } catch (error) {
+        console.error(`Grading error for ${group.studentName}:`, error);
+        updatedGroups[i] = {
+          ...group,
+          grading: false,
+          result: {
+            score_suggestion: "Error",
+            strengths: "Grading failed",
+            areas_for_improvement: "Please try again",
+            feedback_paragraph: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
       }
+
+      setStudentGroups([...updatedGroups]);
     }
-    e.target.value = "";
-  }, [rubricUpload]);
 
-  const handleClearAll = useCallback(() => {
-    studentUpload.clearAllFiles();
-    setStudentGroups([]);
-    setFeedback([]);
-    setCurrentStep("upload");
-    setError(null);
-  }, [studentUpload]);
+    setGrading(false);
+    toast({ title: `Graded ${updatedGroups.length} student(s)!` });
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
+    // Feedback is now handled by usePilotFeedback hook with smart timing
+  };
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.dataTransfer.files) {
-      studentUpload.addFiles(e.dataTransfer.files);
-    }
-  }, [studentUpload]);
+  const updateGroupResult = (groupIndex: number, field: keyof GradingResult, value: string) => {
+    setStudentGroups((prev) => {
+      const updated = [...prev];
+      if (updated[groupIndex]?.result) {
+        updated[groupIndex] = {
+          ...updated[groupIndex],
+          result: { ...updated[groupIndex].result!, [field]: value },
+        };
+      }
+      return updated;
+    });
+  };
 
   const handleCopy = async (text: string, label: string) => {
     await navigator.clipboard.writeText(text);
@@ -372,163 +1396,183 @@ export default function GradePapers() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const toggleFeedbackExpanded = (index: number) => {
-    setExpandedFeedback(prev => {
-      const next = new Set(prev);
-      if (next.has(index)) {
-        next.delete(index);
-      } else {
-        next.add(index);
+  const handleDownloadPdf = async () => {
+    const currentGroup = studentGroups[selectedGroupIndex];
+    if (!currentGroup?.result) return;
+
+    setDownloadingPdf(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-pdf-report", {
+        body: {
+          studentName: currentGroup.studentName,
+          assignmentName: form.subject || "Assignment",
+          score: currentGroup.result.score_suggestion,
+          strengths: currentGroup.result.strengths,
+          areasForImprovement: currentGroup.result.areas_for_improvement,
+          feedback: currentGroup.result.feedback_paragraph,
+          gradingMode: gradingMode,
+          subject: form.subject,
+          gradeLevel: form.grade_level,
+          generatedAt: new Date().toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }),
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.fallback) {
+        const printWindow = window.open("", "_blank");
+        if (printWindow) {
+          printWindow.document.write(data.html);
+          printWindow.document.close();
+          printWindow.focus();
+          setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+          }, 500);
+        }
+        toast({ title: "PDF generated using print dialog" });
+        return;
       }
-      return next;
-    });
+
+      const blob = new Blob([data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const dateStr = new Date().toISOString().split("T")[0];
+      const sanitizedStudent = currentGroup.studentName.replace(/[^a-zA-Z0-9]/g, "_");
+      const sanitizedAssignment = (form.subject || "Assignment").replace(/[^a-zA-Z0-9]/g, "_");
+      const filename = `GradeReport_${sanitizedStudent}_${sanitizedAssignment}_${dateStr}.pdf`;
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({ title: "PDF downloaded!" });
+    } catch (error) {
+      console.error("PDF download error:", error);
+      toast({ title: "PDF download failed", variant: "destructive" });
+    } finally {
+      setDownloadingPdf(false);
+    }
   };
 
-  // ==========================================================================
-  // GRADING LOGIC
-  // ==========================================================================
+  const handlePrintReport = () => {
+    const currentGroup = studentGroups[selectedGroupIndex];
+    if (!currentGroup?.result) return;
 
-  const handleGenerate = async () => {
-    if (!hasReadyImages) {
-      toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Grade Report - ${currentGroup.studentName}</title>
+        <style>
+          @page { size: letter portrait; margin: 0.75in; }
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; padding: 20px; }
+          .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 24px; }
+          .header h1 { font-size: 20pt; font-weight: 700; color: #1e40af; margin-bottom: 4px; }
+          .header .subtitle { font-size: 10pt; color: #6b7280; }
+          .meta-info { display: flex; flex-wrap: wrap; gap: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; }
+          .meta-item { flex: 1; min-width: 120px; }
+          .meta-label { font-size: 9pt; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+          .meta-value { font-size: 11pt; font-weight: 600; color: #1a1a1a; }
+          .section { margin-bottom: 20px; page-break-inside: avoid; }
+          .section-title { font-size: 12pt; font-weight: 600; color: #1e40af; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; }
+          .section-content { font-size: 11pt; line-height: 1.6; color: #374151; white-space: pre-wrap; }
+          .score-box { background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%); border: 2px solid #3b82f6; border-radius: 12px; padding: 16px 24px; text-align: center; margin-bottom: 24px; }
+          .score-label { font-size: 10pt; color: #1e40af; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+          .score-value { font-size: 28pt; font-weight: 700; color: #1e40af; }
+          .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; text-align: center; font-size: 9pt; color: #9ca3af; }
+          @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Grade Report</h1>
+          <div class="subtitle">Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</div>
+        </div>
+        <div class="meta-info">
+          <div class="meta-item"><div class="meta-label">Student</div><div class="meta-value">${currentGroup.studentName}</div></div>
+          ${form.subject ? `<div class="meta-item"><div class="meta-label">Subject</div><div class="meta-value">${form.subject}</div></div>` : ""}
+          ${form.grade_level ? `<div class="meta-item"><div class="meta-label">Grade Level</div><div class="meta-value">${form.grade_level}</div></div>` : ""}
+        </div>
+        ${
+          hasScoringEnabled && currentGroup.result.score_suggestion !== "N/A"
+            ? `
+          <div class="score-box">
+            <div class="score-label">Suggested Score</div>
+            <div class="score-value">${currentGroup.result.score_suggestion}</div>
+          </div>
+        `
+            : ""
+        }
+        <div class="section"><div class="section-title">Strengths</div><div class="section-content">${currentGroup.result.strengths}</div></div>
+        <div class="section"><div class="section-title">Areas for Improvement</div><div class="section-content">${currentGroup.result.areas_for_improvement}</div></div>
+        <div class="section"><div class="section-title">Draft Feedback</div><div class="section-content">${currentGroup.result.feedback_paragraph}</div></div>
+        <div class="footer">This report was generated using AI assistance. Please review before sharing.</div>
+      </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => printWindow.print(), 300);
+    }
+  };
+
+  const handleSave = async () => {
+    const currentGroup = studentGroups[selectedGroupIndex];
+    if (!currentGroup?.result) return;
+
+    // Prompt guests to sign up
+    if (isGuest || !user) {
+      toast({ 
+        title: "Account Required", 
+        description: "Create a free account to save and revisit your grading sessions.",
+      });
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    setCurrentStep("processing");
-
+    setSaving(true);
     try {
-      // Group files by student
-      const readyFiles = studentUpload.files.filter(f => f.status === "ready");
-      const groups = groupFilesByStudent(readyFiles);
-      setStudentGroups(groups);
+      const sessionData = {
+        user_id: user.id,
+        status: "completed",
+        title: `${currentGroup.studentName} - ${form.subject || "Grading"}`,
+        snippet: `Score: ${currentGroup.result.score_suggestion}`,
+        summary_json: {
+          ...currentGroup.result,
+          input_type: "grading",
+          grading_mode: gradingMode,
+          studentName: currentGroup.studentName,
+        },
+        teacher_notes: JSON.stringify(form),
+        transcript: currentGroup.extractedText,
+      };
 
-      // Detect subject if not already set
-      if (subject === "unknown") {
-        const combinedText = groups.map(g => g.extractedText).join("\n\n");
-        const detection = detectSubjectFromText(combinedText);
-        setSubjectDetection(detection);
-        
-        if (detection.confidence < 60) {
-          // Need manual subject selection
-          setLoading(false);
-          setCurrentStep("subject-select");
-          return;
-        }
-        setSubject(detection.subject);
+      if (sessionId) {
+        await supabase.from("sessions").update(sessionData).eq("id", sessionId);
+      } else {
+        const { data } = await supabase.from("sessions").insert(sessionData).select().single();
+        if (data) setSessionId(data.id);
       }
-
-      // Set grading mode based on rubric presence
-      const mode = hasRubric ? "full" : "feedback-only";
-      setGradingMode(mode);
-
-      // Grade each student
-      const results: StudentFeedback[] = [];
-      
-      for (const group of groups) {
-        try {
-          const { data, error: apiError } = await supabase.functions.invoke("grade-paper", {
-            body: {
-              student_work: group.extractedText,
-              rubric: rubricCombinedText || null,
-              grading_mode: mode,
-              subject: subject !== "unknown" ? subject : undefined,
-            },
-          });
-
-          if (apiError) throw apiError;
-
-          const result: StudentFeedback = {
-            studentName: group.studentName,
-            score: mode === "full" && data.score_suggestion ? {
-              earned: data.total_score || 0,
-              total: data.total_points || 20,
-              percent: data.score_percent || 0,
-              letterGrade: data.letter_grade || "N/A",
-            } : undefined,
-            criteria: data.rubric_breakdown?.map((c: any) => ({
-              name: c.criterion || c.name,
-              earnedPoints: c.earned_points || 0,
-              possiblePoints: c.possible_points || 0,
-            })),
-            strengths: data.strengths?.split("\n").filter(Boolean) || [],
-            areasForImprovement: data.areas_for_improvement?.split("\n").filter(Boolean) || [],
-            nextStep: data.feedback_paragraph || "",
-            confidence: data.confidence === "high" ? 90 : data.confidence === "medium" ? 70 : 50,
-            flags: data.scoring_warning ? [data.scoring_warning] : undefined,
-          };
-
-          results.push(result);
-        } catch (err) {
-          console.error(`Grading error for ${group.studentName}:`, err);
-          results.push({
-            studentName: group.studentName,
-            strengths: ["Grading failed"],
-            areasForImprovement: ["Please try again"],
-            nextStep: err instanceof Error ? err.message : "Unknown error occurred",
-            confidence: 0,
-            flags: ["error"],
-          });
-        }
-      }
-
-      setFeedback(results);
-      setCurrentStep("results");
-      toast({ title: `Graded ${results.length} student(s)!` });
-
-    } catch (err) {
-      console.error("Grading error:", err);
-      setError(err instanceof Error ? err.message : "An error occurred during grading");
-      setCurrentStep("upload");
+      toast({ title: "Saved successfully!" });
+    } catch (error) {
+      toast({ title: "Save failed", variant: "destructive" });
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
-
-  const handleSubjectSelected = (selectedSubject: Subject) => {
-    setSubject(selectedSubject);
-    if (selectedSubject === "unknown") {
-      setGradingMode("feedback-only");
-    }
-    // Continue with grading
-    handleGenerate();
-  };
-
-  const handleRetry = () => {
-    setError(null);
-    handleGenerate();
-  };
-
-  const handleExportCSV = () => {
-    if (feedback.length === 0) return;
-    
-    const headers = ["Student Name", "Score", "Percent", "Letter Grade", "Strengths", "Areas for Improvement", "Next Step"];
-    const rows = feedback.map(f => [
-      f.studentName,
-      f.score ? `${f.score.earned}/${f.score.total}` : "N/A",
-      f.score ? `${f.score.percent}%` : "N/A",
-      f.score?.letterGrade || "N/A",
-      f.strengths.join("; "),
-      f.areasForImprovement.join("; "),
-      f.nextStep,
-    ]);
-    
-    const csv = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `grading-results-${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast({ title: "CSV exported!" });
-  };
-
-  // ==========================================================================
-  // LOADING STATE
-  // ==========================================================================
 
   if (authLoading) {
     return (
@@ -538,15 +1582,19 @@ export default function GradePapers() {
     );
   }
 
-  // ==========================================================================
-  // RENDER
-  // ==========================================================================
+  const isExtracting = studentUpload.isExtracting || rubricUpload.isExtracting || answerKeyUpload.isExtracting;
+  const hasFailedFiles = studentUpload.failedFiles > 0;
+  const allFilesReady = studentUpload.totalFiles > 0 && studentUpload.completedFiles === studentUpload.totalFiles;
+  
+  // Can generate if: has ready files AND (all files ready OR user can proceed with ready only) AND not currently grading
+  const canGenerate = studentUpload.hasReadyFiles && !grading;
+  const shouldWaitForProcessing = isExtracting && !hasFailedFiles;
+  const currentGroup = studentGroups[selectedGroupIndex];
 
   return (
     <div className="min-h-screen bg-bottor-gradient">
-      {/* Header */}
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground">
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -554,548 +1602,993 @@ export default function GradePapers() {
             </Button>
             <h1 className="text-xl font-bold text-foreground">Grade Papers</h1>
           </div>
-          
-          {/* Progress Indicator */}
-          <div className="hidden sm:flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">Progress</span>
-            <Progress value={stepProgress} className="w-24 h-2" />
-          </div>
-          
           {isGuest && (
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
               Pilot Mode
-            </Badge>
+            </span>
           )}
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 pb-32 md:pb-6">
-        {/* Step Progress on Mobile */}
-        <div className="sm:hidden mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-muted-foreground">
-              Step {currentStep === "upload" ? 1 : currentStep === "rubric" ? 2 : currentStep === "results" ? 3 : 2} of 3
-            </span>
-            <span className="text-xs font-medium text-primary">{stepProgress}%</span>
+      {/* Guest Pilot Notice */}
+      {isGuest && (
+        <div className="max-w-2xl mx-auto px-4 pt-4">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm text-muted-foreground">
+            <Info className="w-4 h-4 text-primary flex-shrink-0" />
+            <span>Pilot Mode — sample documents only. Feedback welcome.</span>
           </div>
-          <Progress value={stepProgress} className="h-2" />
         </div>
+      )}
 
-        {/* Error Alert */}
-        {error && (
-          <Alert variant="destructive" className="mb-6">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription className="flex items-center justify-between">
-              <span>{error}</span>
-              <Button size="sm" variant="outline" onClick={handleRetry}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-
-        <div className="space-y-6">
-          {/* ================================================================
-              STEP 1: UPLOAD STUDENT WORK
-          ================================================================ */}
-          <Card className="border shadow-sm">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <span className="text-sm font-bold text-primary">1</span>
-                </div>
-                <div>
-                  <CardTitle className="text-lg">Upload Student Work</CardTitle>
-                  <CardDescription>
-                    Drag and drop or click to upload images of student work
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            
-            <CardContent className="space-y-4">
-              {/* Drop Zone */}
-              <div
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                onClick={() => studentFileInputRef.current?.click()}
-                className="relative flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-muted-foreground/30 rounded-lg cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors"
-              >
-                <input
-                  ref={studentFileInputRef}
-                  type="file"
-                  multiple
-                  accept=".jpg,.jpeg,.png,.heic"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-                <Upload className="w-10 h-10 text-muted-foreground mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">Click to upload</span> or drag and drop
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  JPG, PNG, or HEIC (max 10MB each)
-                </p>
-              </div>
-
-              {/* Uploaded Files */}
-              {hasUploadedImages && (
-                <div className="space-y-3">
-                  {/* Stats Bar */}
-                  <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-4">
-                      <span className="text-muted-foreground">
-                        <Image className="w-4 h-4 inline mr-1" />
-                        {studentUpload.files.length} image{studentUpload.files.length !== 1 ? "s" : ""}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {formatFileSize(totalFileSize)}
-                      </span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleClearAll}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="w-4 h-4 mr-1" />
-                      Clear All
-                    </Button>
-                  </div>
-
-                  {/* File Grid */}
-                  <FileUploadList
-                    files={studentUpload.files}
-                    onRemove={studentUpload.removeFile}
-                    onRetry={studentUpload.retryExtraction}
-                    label="Uploaded Images"
-                    totalFiles={studentUpload.totalFiles}
-                    completedFiles={studentUpload.completedFiles}
-                    failedFiles={studentUpload.failedFiles}
-                    progress={studentUpload.progress}
-                    isExtracting={studentUpload.isExtracting}
-                  />
-                </div>
+      <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        {/* ===== STUDENT WORK (REQUIRED) ===== */}
+        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">Student Work (Required)</CardTitle>
+              <CardDescription className="text-xs">
+                Bottor automatically detects student names inside each document. No special file naming required.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              {studentUpload.files.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={studentUpload.clearAllFiles}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  Clear all
+                </Button>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="relative">
+              <input
+                ref={studentFileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                onChange={handleStudentFileSelect}
+                className="hidden"
+                id="student-file-upload"
+              />
+              <label
+                htmlFor="student-file-upload"
+                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+              >
+                {/* Stacked document icons to indicate multiple files */}
+                <div className="relative mb-2">
+                  <FileText className="w-5 h-5 text-muted-foreground/40 absolute -left-1 -top-1" />
+                  <FileText className="w-6 h-6 text-muted-foreground relative z-10" />
+                </div>
+                <span className="text-sm font-medium text-foreground">Upload Student Work</span>
+                <span className="text-sm text-muted-foreground mt-1">
+                  📄 Upload single or multiple student submissions at once
+                </span>
+                <span className="text-xs text-muted-foreground/70 mt-1">
+                  Any filename works — student names detected from document content
+                </span>
+              </label>
+            </div>
 
-          {/* ================================================================
-              STEP 2: RUBRIC INPUT (Optional - Collapsible)
-          ================================================================ */}
-          <Collapsible open={criteriaOpen} onOpenChange={setCriteriaOpen}>
-            <Card className={`border shadow-sm transition-colors ${
-              hasRubric ? "border-primary/30 bg-primary/5" : "border-muted"
-            }`}>
-              <CollapsibleTrigger asChild>
-                <CardHeader className="cursor-pointer hover:bg-muted/30 transition-colors pb-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                        <span className="text-sm font-bold text-muted-foreground">2</span>
-                      </div>
-                      <div>
-                        <CardTitle className="text-lg flex items-center gap-2">
-                          Grading Criteria
-                          <Badge variant="outline" className="text-xs font-normal">Optional</Badge>
-                        </CardTitle>
-                        <CardDescription>
-                          {hasRubric 
-                            ? "Rubric detected — numeric scoring enabled"
-                            : "Add a rubric to enable numeric scoring"
-                          }
-                        </CardDescription>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {hasRubric && (
-                        <Badge className="bg-primary/20 text-primary border-0">
-                          <Check className="w-3 h-3 mr-1" />
-                          Ready
-                        </Badge>
-                      )}
-                      <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform ${
-                        criteriaOpen ? "rotate-180" : ""
-                      }`} />
+            {studentUpload.files.length > 0 && (
+              <FileUploadList
+                files={studentUpload.files}
+                onRemove={studentUpload.removeFile}
+                onRetry={studentUpload.retryExtraction}
+                label="Uploaded Files"
+                totalFiles={studentUpload.totalFiles}
+                completedFiles={studentUpload.completedFiles}
+                failedFiles={studentUpload.failedFiles}
+                progress={studentUpload.progress}
+                isExtracting={studentUpload.isExtracting}
+              />
+            )}
+
+            {/* Student Groups Preview */}
+            {studentGroups.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-primary" />
+                  <Label className="text-sm font-medium">Detected Students ({studentGroups.length})</Label>
+                </div>
+                
+                {/* Multi-page grouping confidence warning */}
+                {groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1 && (
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        Page grouping needs confirmation
+                      </p>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Multiple students detected with some unnamed pages. When you click Grade, you'll be asked to confirm pages are grouped correctly.
+                      </p>
                     </div>
                   </div>
-                </CardHeader>
-              </CollapsibleTrigger>
-
-              <CollapsibleContent>
-                <CardContent className="pt-0">
-                  <Tabs value={rubricTab} onValueChange={(v) => setRubricTab(v as "upload" | "paste")}>
-                    <TabsList className="w-full grid grid-cols-2 mb-4">
-                      <TabsTrigger value="upload" className="gap-2">
-                        <Upload className="w-4 h-4" />
-                        Upload File
-                      </TabsTrigger>
-                      <TabsTrigger value="paste" className="gap-2">
-                        <FileText className="w-4 h-4" />
-                        Paste Text
-                      </TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="upload" className="space-y-3">
-                      <input
-                        ref={rubricFileInputRef}
-                        type="file"
-                        accept=".txt,.doc,.docx,.pdf,.jpg,.jpeg,.png"
-                        onChange={handleRubricFileSelect}
-                        className="hidden"
-                      />
+                )}
+                
+                {/* Non-blocking name verification banner */}
+                {!(groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1) && 
+                 studentGroups.some(g => !g.nameConfirmed && (g.nameSource === 'unknown' || g.nameConfidence === 'low')) && (
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        Names detected automatically
+                      </p>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Please confirm or edit any names marked for verification to ensure accurate grading. You can proceed without confirming — we'll use the detected names.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
+                <div className="space-y-2">
+                  {studentGroups.map((group, idx) => {
+                    // Determine confidence state
+                    const isHighConfidence = group.nameConfirmed || 
+                      (group.nameSource === 'document' && group.nameConfidence === 'high');
+                    const needsVerification = !group.nameConfirmed && 
+                      (group.nameSource === 'unknown' || group.nameConfidence === 'low');
+                    const isEditing = editingNameIndex === idx;
+                    
+                    return (
                       <div
-                        onClick={() => rubricFileInputRef.current?.click()}
-                        className="flex items-center justify-center w-full h-20 border-2 border-dashed border-muted-foreground/30 rounded-lg cursor-pointer hover:border-primary/50 transition-colors"
+                        key={`${group.detectedName}-${idx}`}
+                        className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
+                          idx === selectedGroupIndex 
+                            ? 'border-primary bg-primary/5' 
+                            : 'border-muted bg-background hover:border-primary/30'
+                        }`}
+                        onClick={() => setSelectedGroupIndex(idx)}
                       >
-                        <div className="text-center">
-                          <File className="w-6 h-6 text-muted-foreground mx-auto mb-1" />
-                          <p className="text-sm text-muted-foreground">
-                            Upload rubric (PDF, DOC, TXT, or image)
-                          </p>
+                        {/* Confidence indicator */}
+                        <div className="flex-shrink-0">
+                          {isHighConfidence ? (
+                            <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                            </div>
+                          ) : (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center cursor-help">
+                                    <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="left">
+                                  <p className="text-xs max-w-[200px]">
+                                    {group.nameSource === 'unknown' 
+                                      ? 'Name could not be detected. Please enter manually.'
+                                      : 'Name detected but may need verification. Click to edit.'}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
+                        
+                        {/* Name field */}
+                        <div className="flex-1 min-w-0">
+                          {isEditing ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                autoFocus
+                                value={editingNameValue}
+                                onChange={(e) => setEditingNameValue(e.target.value)}
+                                placeholder="Enter student name..."
+                                className="h-8 text-sm flex-1"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    confirmNameEdit(idx);
+                                  } else if (e.key === 'Escape') {
+                                    cancelNameEdit();
+                                  }
+                                }}
+                              />
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  confirmNameEdit(idx);
+                                }}
+                                title="Confirm"
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cancelNameEdit();
+                                }}
+                                title="Cancel"
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div 
+                              className="flex flex-col gap-0.5 cursor-text"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startNameEdit(idx, group.studentName);
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-medium truncate ${
+                                  group.studentName === 'Unknown Student' ? 'text-muted-foreground italic' : ''
+                                }`}>
+                                  {group.studentName === 'Unknown Student' ? 'Click to enter name' : group.studentName}
+                                </span>
+                                <Badge variant="outline" className="text-xs flex-shrink-0 font-normal">
+                                  {group.files.length} file{group.files.length !== 1 ? 's' : ''}
+                                </Badge>
+                                {group.result && (
+                                  <Badge variant="secondary" className="text-xs flex-shrink-0 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                                    Graded
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {isHighConfidence 
+                                  ? 'Detected from document' 
+                                  : needsVerification 
+                                    ? 'Needs verification — click to edit'
+                                    : 'Detected from filename'}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-                      {rubricUpload.files.length > 0 && (
-                        <div className="space-y-2">
-                          {rubricUpload.files.map(file => (
-                            <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                              <div className="flex items-center gap-2">
-                                <FileText className="w-4 h-4 text-muted-foreground" />
-                                <span className="text-sm truncate">{file.fileName}</span>
-                                <Badge variant="outline" className="text-xs">
-                                  {file.status === "ready" ? "Ready" : file.status}
-                                </Badge>
-                              </div>
+        {/* ===== GRADING CRITERIA (OPTIONAL) - COLLAPSED ACCORDION ===== */}
+        <Collapsible open={gradingCriteriaOpen} onOpenChange={setGradingCriteriaOpen}>
+          <Card className={`border shadow-sm transition-colors ${
+            hasGradingCriteria 
+              ? "border-primary/30 bg-primary/5" 
+              : "border-muted bg-muted/5"
+          }`}>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <BookOpen className="w-5 h-5 text-muted-foreground" />
+                    <div>
+                      <CardTitle className="text-base font-medium flex items-center gap-2">
+                        Grading Criteria
+                        <span className="text-xs font-normal text-muted-foreground">Optional</span>
+                        {rubricDetected && (
+                          <Badge variant="secondary" className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                            <Lock className="w-3 h-3 mr-1" />
+                            Locked for Scoring
+                          </Badge>
+                        )}
+                      </CardTitle>
+                      <CardDescription className="text-xs mt-0.5">
+                        {rubricDetected 
+                          ? "Rubric detected and locked. Numeric score will be calculated from your criteria."
+                          : "Feedback only mode is on, upload a rubric to unlock scoring."}
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {hasGradingCriteria && (
+                      <Badge variant="secondary" className="text-xs bg-primary/10 text-primary border-primary/20">
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Ready
+                      </Badge>
+                    )}
+                    <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${
+                      gradingCriteriaOpen ? "rotate-180" : ""
+                    }`} />
+                  </div>
+                </div>
+              </CardHeader>
+            </CollapsibleTrigger>
+            
+            <CollapsibleContent>
+              <CardContent className="space-y-6 pt-0">
+                {/* ===== ANSWER KEY SECTION ===== */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileSearch className="w-4 h-4 text-muted-foreground" />
+                    <Label className="text-sm font-medium">Answer Key</Label>
+                    <span className="text-xs text-muted-foreground">(Optional)</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Used to improve accuracy and enable scoring. Not required for feedback.
+                  </p>
+                  
+                  {/* Answer Key File Upload */}
+                  <div className="space-y-2">
+                    <input
+                      ref={answerKeyFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      onChange={handleAnswerKeyFileSelect}
+                      className="hidden"
+                      id="answerkey-file-upload"
+                    />
+                    <label
+                      htmlFor="answerkey-file-upload"
+                      className="flex items-center justify-center w-full h-12 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                    >
+                      <Upload className="w-4 h-4 text-muted-foreground mr-2" />
+                      <span className="text-sm text-muted-foreground">Upload answer key files</span>
+                    </label>
+
+                    {/* Uploaded Answer Key Files List */}
+                    {answerKeyUpload.files.length > 0 && (
+                      <div className="space-y-1">
+                        {answerKeyUpload.files.map((file) => (
+                          <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-sm truncate">{file.fileName}</span>
+                              <Badge variant="outline" className="text-xs flex-shrink-0">
+                                {file.status === "ready" ? "Ready" : file.status}
+                              </Badge>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => answerKeyUpload.removeFile(file.id)}
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Answer Key Textarea */}
+                  <Textarea
+                    placeholder="Or paste answer key text here..."
+                    value={form.answer_key}
+                    onChange={(e) => updateForm("answer_key", e.target.value)}
+                    rows={3}
+                    className="text-sm"
+                  />
+                </div>
+
+                {/* Divider */}
+                <div className="border-t border-muted" />
+
+                {/* ===== RUBRIC SECTION ===== */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-muted-foreground" />
+                    <Label className="text-sm font-medium">Rubric</Label>
+                    <span className="text-xs text-muted-foreground">(Optional)</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Used for category-based or standards-based grading.
+                  </p>
+                  
+                  {/* Rubric File Upload */}
+                  <div className="space-y-2">
+                    <input
+                      ref={rubricFileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      onChange={handleRubricFileSelect}
+                      className="hidden"
+                      id="rubric-file-upload"
+                      disabled={rubricMode === "locked"}
+                    />
+                    <label
+                      htmlFor="rubric-file-upload"
+                      className={`flex items-center justify-center w-full h-12 border-2 border-dashed rounded-lg transition-colors ${
+                        rubricMode === "locked"
+                          ? "border-muted/50 bg-muted/10 cursor-not-allowed opacity-50"
+                          : "border-muted-foreground/25 cursor-pointer hover:border-primary/50 bg-muted/20"
+                      }`}
+                    >
+                      <Upload className="w-4 h-4 text-muted-foreground mr-2" />
+                      <span className="text-sm text-muted-foreground">Upload rubric files</span>
+                    </label>
+
+                    {/* Uploaded Rubric Files List */}
+                    {rubricUpload.files.length > 0 && (
+                      <div className="space-y-1">
+                        {rubricUpload.files.map((file) => (
+                          <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-sm truncate">{file.fileName}</span>
+                              <Badge variant="outline" className="text-xs flex-shrink-0">
+                                {file.status === "ready" ? "Ready" : file.status}
+                              </Badge>
+                            </div>
+                            {rubricMode !== "locked" && (
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => rubricUpload.removeFile(file.id)}
-                                className="h-6 w-6 p-0"
+                                className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
                               >
                                 <X className="w-3 h-3" />
                               </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </TabsContent>
-
-                    <TabsContent value="paste" className="space-y-3">
-                      <Textarea
-                        placeholder="Paste your rubric or grading criteria here..."
-                        value={rubricText}
-                        onChange={(e) => setRubricText(e.target.value)}
-                        rows={6}
-                        className="resize-none"
-                      />
-                      <div className="flex justify-end">
-                        <span className="text-xs text-muted-foreground">
-                          {rubricText.length} characters
-                        </span>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    </TabsContent>
-                  </Tabs>
+                    )}
+                  </div>
 
-                  {/* Subject Detection Info */}
-                  {subjectDetection && subjectDetection.confidence > 0 && (
-                    <Alert className="mt-4">
-                      <Info className="h-4 w-4" />
-                      <AlertTitle className="flex items-center gap-2">
-                        Subject Detected
-                        <Badge variant={subjectDetection.subject === "math" ? "default" : "secondary"}>
-                          {subjectDetection.subject === "math" ? "Math" : subjectDetection.subject === "ela" ? "ELA" : "Unknown"}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          ({subjectDetection.confidence}% confidence)
-                        </span>
-                      </AlertTitle>
-                      <AlertDescription className="text-xs mt-1">
-                        {subjectDetection.reasoning}
-                      </AlertDescription>
-                    </Alert>
+                  {/* Rubric Textarea */}
+                  <Textarea
+                    placeholder="Or paste rubric / grading criteria here..."
+                    value={form.rubric}
+                    onChange={(e) => updateForm("rubric", e.target.value)}
+                    rows={4}
+                    disabled={rubricMode === "locked"}
+                    className={rubricMode === "locked" ? "opacity-75 bg-muted/20" : ""}
+                  />
+
+                  {/* Warning: Rubric file uploaded but could not be read */}
+                  {rubricExtractionWarning && (
+                    <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-700 dark:text-amber-400">
+                      <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs">
+                        Rubric uploaded but could not be read. Paste rubric text or upload a clearer rubric.
+                      </p>
+                    </div>
                   )}
-                </CardContent>
-              </CollapsibleContent>
-            </Card>
-          </Collapsible>
 
-          {/* ================================================================
-              STEP 3: SUBJECT SELECTION (Conditional)
-          ================================================================ */}
-          {currentStep === "subject-select" && (
-            <Card className="border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-600" />
-                  <div>
-                    <CardTitle className="text-lg">Select Subject</CardTitle>
-                    <CardDescription>
-                      We couldn't automatically detect the subject. Please select one to continue.
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <RadioGroup
-                  value={subject}
-                  onValueChange={(v) => setSubject(v as Subject)}
-                  className="space-y-3"
-                >
-                  <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 cursor-pointer">
-                    <RadioGroupItem value="ela" id="ela" />
-                    <Label htmlFor="ela" className="cursor-pointer flex-1">
-                      <span className="font-medium">ELA / Writing</span>
-                      <p className="text-xs text-muted-foreground">Essays, paragraphs, reading responses</p>
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 cursor-pointer">
-                    <RadioGroupItem value="math" id="math" />
-                    <Label htmlFor="math" className="cursor-pointer flex-1">
-                      <span className="font-medium">Math</span>
-                      <p className="text-xs text-muted-foreground">Calculations, equations, problem-solving</p>
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 cursor-pointer">
-                    <RadioGroupItem value="unknown" id="feedback-only" />
-                    <Label htmlFor="feedback-only" className="cursor-pointer flex-1">
-                      <span className="font-medium">Continue with Feedback-Only Mode</span>
-                      <p className="text-xs text-muted-foreground">Skip subject detection and provide general feedback</p>
-                    </Label>
-                  </div>
-                </RadioGroup>
-
-                <Button onClick={() => handleSubjectSelected(subject)} className="w-full">
-                  Continue
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* ================================================================
-              STEP 4: PROCESSING STATE
-          ================================================================ */}
-          {currentStep === "processing" && (
-            <Card className="border shadow-sm">
-              <CardContent className="py-12">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">Generating Feedback...</h3>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Analyzing {studentGroups.length} student{studentGroups.length !== 1 ? "s" : ""}' work
-                  </p>
-                  <Progress value={50} className="w-64 h-2" />
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* ================================================================
-              STEP 5: RESULTS DISPLAY
-          ================================================================ */}
-          {currentStep === "results" && feedback.length > 0 && (
-            <Card className="border shadow-sm">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-                      <CheckCircle2 className="w-5 h-5 text-primary-foreground" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Results</CardTitle>
-                      <CardDescription className="flex items-center gap-2">
-                        <Badge variant={gradingMode === "full" ? "default" : "secondary"}>
-                          {subject === "ela" ? "ELA" : subject === "math" ? "Math" : "General"}
-                        </Badge>
-                        <Badge variant="outline">
-                          {gradingMode === "full" ? "Full Grading" : "Feedback Only"}
-                        </Badge>
-                      </CardDescription>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={handleExportCSV}>
-                      <Download className="w-4 h-4 mr-2" />
-                      CSV
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardContent className="space-y-4">
-                {feedback.map((student, index) => (
-                  <Card key={index} className="border shadow-sm overflow-hidden">
-                    {/* Student Header */}
-                    <CardHeader className="pb-3 bg-muted/30">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <User className="w-5 h-5 text-muted-foreground" />
-                          <CardTitle className="text-base">{student.studentName}</CardTitle>
+                  {/* DEV DEBUG: Rubric Detection Panel */}
+                  {process.env.NODE_ENV === 'development' && (rubricUpload.files.length > 0 || rubricFinalText.length > 0) && (
+                    <Collapsible>
+                      <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors py-1">
+                        <ChevronDown className="w-3 h-3" />
+                        <span>🔍 Debug: Rubric Detected</span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="mt-2 p-3 bg-muted/30 rounded-md border border-muted text-xs font-mono space-y-2">
+                        <div>
+                          <strong>Files:</strong> {rubricUpload.files.length} ({rubricUpload.files.filter(f => f.status === 'ready').length} ready)
                         </div>
-                        
-                        {/* Score Display */}
-                        {student.score && (
-                          <div className="text-right">
-                            <p className="text-2xl font-bold text-primary">
-                              {student.score.earned}/{student.score.total}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {student.score.percent}% • {student.score.letterGrade}
-                            </p>
+                        <div>
+                          <strong>Extracted Text Length:</strong> {rubricExtractedText.length} chars
+                        </div>
+                        <div>
+                          <strong>Final Text Length:</strong> {rubricFinalText.length} chars
+                        </div>
+                        {rubricFinalText && (
+                          <div className="border-t border-muted pt-2 mt-2">
+                            <strong>Preview (first 300 chars):</strong>
+                            <pre className="whitespace-pre-wrap text-muted-foreground mt-1 max-h-32 overflow-auto">
+                              {rubricFinalText.slice(0, 300)}{rubricFinalText.length > 300 ? '...' : ''}
+                            </pre>
                           </div>
                         )}
-                      </div>
-                    </CardHeader>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
 
-                    <CardContent className="pt-4 space-y-4">
-                      {/* Criterion Breakdown (if full grading) */}
-                      {student.criteria && student.criteria.length > 0 && (
-                        <div className="space-y-2">
-                          <h4 className="text-sm font-medium text-muted-foreground">Criterion Breakdown</h4>
-                          <div className="space-y-2">
-                            {student.criteria.map((criterion, cidx) => (
-                              <div key={cidx} className="space-y-1">
-                                <div className="flex items-center justify-between text-sm">
-                                  <span>{criterion.name}</span>
-                                  <span className="font-medium">
-                                    {criterion.earnedPoints}/{criterion.possiblePoints}
-                                  </span>
-                                </div>
-                                <Progress 
-                                  value={(criterion.earnedPoints / criterion.possiblePoints) * 100} 
-                                  className="h-2"
-                                />
-                              </div>
-                            ))}
-                          </div>
-                          <Separator className="my-4" />
-                        </div>
+        {/* ===== GRADING STATUS BANNERS ===== */}
+        {/* Answer Key Detected Banner */}
+        {answerKeyDetected && !rubricLocked && (
+          <Card className="border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center">
+                  <FileSearch className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                    Answer key detected — accuracy boosted.
+                  </p>
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    Bottor will use the answer key to validate correctness and provide more accurate scoring.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Rubric + Answer Key: Enhanced Scoring */}
+        {rubricLocked && answerKeyDetected && (
+          <Card className="border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                      Rubric + Answer Key detected — enhanced scoring enabled.
+                    </p>
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      {effectiveTotalPoints 
+                        ? `Total: ${effectiveTotalPoints} points. Using rubric for scoring structure and answer key for correctness validation.`
+                        : `Points need to be specified. Using rubric criteria and answer key for validation.`
+                      }
+                    </p>
+                  </div>
+                </div>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleRubricLock}
+                        className="flex-shrink-0"
+                      >
+                        {rubricLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {rubricLocked ? "Unlock rubric to show scoring options" : "Lock rubric for auto-grading"}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Rubric Only: Locked for Scoring - GREEN status card with parsed points info */}
+        {rubricLocked && !answerKeyDetected && (
+          <Card className="border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
+                    <Lock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                      Rubric locked — scoring rules enforced (Total: {effectiveTotalPoints || 20} points)
+                    </p>
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      {parsedRubricMeta.rubricItems.length > 0 
+                        ? `${parsedRubricMeta.rubricItems.length} criteria detected. ` 
+                        : ''
+                      }
+                      {totalPointsInferred ? 'Points inferred — editable below. ' : ''}
+                      Add an answer key to improve accuracy.
+                    </p>
+                  </div>
+                </div>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleRubricLock}
+                        className="flex-shrink-0"
+                      >
+                        <Lock className="w-4 h-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Unlock rubric to show scoring options
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Total Points Editor - NON-BLOCKING warning when points are inferred (defaulted to 20) */}
+        {rubricLocked && totalPointsInferred && (
+          <Card className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center flex-shrink-0">
+                  <Info className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                    Total points inferred — you can edit if needed
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    We detected a rubric but couldn't parse the point total. Using {effectiveTotalPoints || 20} points by default.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 pl-11">
+                <Label htmlFor="manual-total-points" className="text-sm whitespace-nowrap">
+                  Total points for this assignment:
+                </Label>
+                <Input
+                  id="manual-total-points"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  placeholder="20"
+                  value={manualTotalPoints || effectiveTotalPoints || 20}
+                  onChange={(e) => setManualTotalPoints(e.target.value ? parseInt(e.target.value, 10) : null)}
+                  className="w-24 h-9"
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Scoring validation message when not locked but has criteria */}
+        {!rubricLocked && hasGradingCriteria && scoringValidation.message && (
+          <Card className={`border ${scoringValidation.isValid ? 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20' : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'}`}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Info className={`w-4 h-4 ${scoringValidation.isValid ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`} />
+                <p className={`text-sm ${scoringValidation.isValid ? 'text-blue-700 dark:text-blue-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                  {scoringValidation.message}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ===== SCORING OPTIONS (HIDDEN when rubric is locked) ===== */}
+        {/* Only show when grading criteria exists BUT rubric is NOT locked */}
+        {hasGradingCriteria && !rubricLocked && (
+          <ScoringOptionsSection
+            scoringMode={scoringMode}
+            onScoringModeChange={setScoringMode}
+            autoScoreSettings={autoScoreSettings}
+            onAutoScoreSettingsChange={setAutoScoreSettings}
+            quickRubricSettings={quickRubricSettings}
+            onQuickRubricSettingsChange={setQuickRubricSettings}
+            hasRubric={rubricMode !== "none"}
+            disabled={rubricMode === "locked"}
+          />
+        )}
+
+        {/* ===== MODE INDICATOR ===== */}
+        {!rubricDetected && studentUpload.files.length > 0 && (
+          <Card className="border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  <span className="font-medium">Feedback only mode is on</span>, upload a rubric to unlock scoring.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ===== GENERATE BUTTON ===== */}
+        <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border space-y-2">
+          {/* Show info about processing state */}
+          {shouldWaitForProcessing && (
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Processing {studentUpload.completedFiles}/{studentUpload.totalFiles} files...
+            </div>
+          )}
+          
+          {/* Show warning if some files failed but can still proceed */}
+          {hasFailedFiles && studentUpload.hasReadyFiles && !isExtracting && (
+            <div className="flex items-center justify-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+              <Info className="w-4 h-4" />
+              {studentUpload.failedFiles} file(s) failed — you can proceed with {studentUpload.completedFiles} ready file(s)
+            </div>
+          )}
+          
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <Button 
+                    onClick={handleGenerateGrades} 
+                    disabled={!canGenerate || shouldWaitForProcessing} 
+                    className="w-full" 
+                    size="lg"
+                  >
+                    {grading ? (
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-5 h-5 mr-2" />
+                    )}
+                    {studentGroups.length > 1
+                      ? rubricDetected 
+                        ? `Generate Grade + Feedback (${studentGroups.length})`
+                        : `Generate Feedback (${studentGroups.length})`
+                      : hasFailedFiles && studentUpload.hasReadyFiles
+                        ? "Proceed with Ready Files"
+                        : rubricDetected
+                          ? "Generate Grade + Feedback"
+                          : "Generate Feedback"}
+                  </Button>
+                </div>
+              </TooltipTrigger>
+              {shouldWaitForProcessing && (
+                <TooltipContent>
+                  <p>Waiting for text extraction to complete...</p>
+                </TooltipContent>
+              )}
+              {!canGenerate && !shouldWaitForProcessing && !studentUpload.hasReadyFiles && (
+                <TooltipContent>
+                  <p>Upload student work files first</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+
+        {/* ===== RESULTS ===== */}
+        {currentGroup?.result && (
+          <div className="space-y-4 animate-fade-in">
+            {/* Student Selector Tabs */}
+            {studentGroups.length > 1 && (
+              <Card className="border border-muted">
+                <CardContent className="p-3">
+                  <div className="flex flex-wrap gap-2">
+                    {studentGroups.map((group, idx) => (
+                      <Button
+                        key={group.studentName}
+                        variant={idx === selectedGroupIndex ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setSelectedGroupIndex(idx)}
+                      >
+                        {group.studentName}
+                        {group.result && <Check className="w-3 h-3 ml-1" />}
+                      </Button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Suggested Score - Only shown when rubric was present (scoring mode) */}
+            {currentGroup.result.score_suggestion !== "N/A" && currentGroup.result.score_percent !== undefined && (
+              <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl font-bold">{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Score</span>
+                      {/* Scoring source badge */}
+                      <Badge variant="outline" className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                        <Lock className="w-3 h-3 mr-1" />
+                        Rubric-based scoring
+                      </Badge>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleCopy(currentGroup.result!.score_suggestion, "Score")}
+                    >
+                      {copied === "Score" ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Large prominent score display */}
+                  <div className="flex items-center gap-4 py-2">
+                    <div className="flex items-baseline gap-2">
+                      <Input
+                        value={currentGroup.result.score_suggestion}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "score_suggestion", e.target.value)}
+                        className="text-3xl font-bold text-primary max-w-36 h-14 text-center border-2 border-primary/20"
+                      />
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <span className="text-4xl font-bold text-foreground">
+                        {currentGroup.result.score_percent}%
+                      </span>
+                      {currentGroup.result.letter_grade && (
+                        <Badge variant="secondary" className="text-xl px-4 py-1 mt-1 font-bold">
+                          {currentGroup.result.letter_grade}
+                        </Badge>
                       )}
+                    </div>
+                  </div>
+                  {currentGroup.result.score_derivation && (
+                    <p className="text-sm text-muted-foreground flex items-start gap-2">
+                      <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      {currentGroup.result.score_derivation}
+                    </p>
+                  )}
+                  {/* Confidence indicator */}
+                  {currentGroup.result.confidence && currentGroup.result.confidence !== 'high' && (
+                    <div className={`flex items-center gap-2 text-xs p-2 rounded-md ${
+                      currentGroup.result.confidence === 'low' 
+                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                        : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                    }`}>
+                      <Info className="w-3 h-3" />
+                      Confidence: {currentGroup.result.confidence} — teacher review recommended
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
-                      {/* Feedback Sections */}
-                      <div className="space-y-4">
-                        {/* Strengths */}
-                        <div>
-                          <h4 className="text-sm font-medium text-emerald-600 flex items-center gap-2 mb-2">
-                            <Check className="w-4 h-4" />
-                            Strengths
-                          </h4>
-                          <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                            {student.strengths.map((s, i) => (
-                              <li key={i}>{s}</li>
-                            ))}
-                          </ul>
-                        </div>
+            {/* Feedback-only mode header - shown when no rubric was used */}
+            {currentGroup.result.score_suggestion === "N/A" && (
+              <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-lg bg-blue-50 dark:bg-blue-900/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <span className="text-xl font-bold">{studentGroups.length > 1 ? `${currentGroup.studentName} — ` : ""}Feedback</span>
+                    <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-300">
+                      Feedback-only mode
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    No numeric score generated. Add a rubric to enable scoring for future assignments.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
-                        {/* Areas for Improvement */}
-                        <div>
-                          <h4 className="text-sm font-medium text-amber-600 flex items-center gap-2 mb-2">
-                            <ArrowLeft className="w-4 h-4 rotate-[135deg]" />
-                            Areas for Improvement
-                          </h4>
-                          <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                            {student.areasForImprovement.map((a, i) => (
-                              <li key={i}>{a}</li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        {/* Next Step */}
-                        <div>
-                          <h4 className="text-sm font-medium text-blue-600 flex items-center gap-2 mb-2">
-                            <Sparkles className="w-4 h-4" />
-                            Next Step
-                          </h4>
-                          <p className="text-sm text-muted-foreground">{student.nextStep}</p>
-                        </div>
-                      </div>
-
-                      {/* Collapsible Notes & Details */}
-                      <Collapsible open={expandedFeedback.has(index)} onOpenChange={() => toggleFeedbackExpanded(index)}>
-                        <CollapsibleTrigger asChild>
-                          <Button variant="ghost" size="sm" className="w-full justify-between text-muted-foreground">
-                            Notes & Details
-                            <ChevronDown className={`w-4 h-4 transition-transform ${expandedFeedback.has(index) ? "rotate-180" : ""}`} />
-                          </Button>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="pt-3 space-y-3">
-                          {/* Confidence Score */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">Confidence:</span>
-                            <Progress value={student.confidence} className="w-20 h-2" />
-                            <span className={`text-xs font-medium ${
-                              student.confidence >= 80 ? "text-emerald-600" :
-                              student.confidence >= 70 ? "text-amber-600" : "text-destructive"
-                            }`}>
-                              {student.confidence}%
-                            </span>
-                          </div>
-
-                          {/* Flags */}
-                          {student.flags && student.flags.length > 0 && (
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs text-muted-foreground">Flags:</span>
-                              {student.flags.map((flag, i) => (
-                                <Badge key={i} variant="outline" className="text-xs">
-                                  {flag}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Copy Feedback */}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleCopy(
-                              `Strengths:\n${student.strengths.join("\n")}\n\nAreas for Improvement:\n${student.areasForImprovement.join("\n")}\n\nNext Step:\n${student.nextStep}`,
-                              student.studentName
-                            )}
-                          >
-                            <Copy className="w-4 h-4 mr-2" />
-                            {copied === student.studentName ? "Copied!" : "Copy Feedback"}
-                          </Button>
-                        </CollapsibleContent>
-                      </Collapsible>
-                    </CardContent>
-                  </Card>
-                ))}
+            {/* Quick Summary - Strengths & Areas for Improvement headers (always visible) */}
+            <Card className="border-0 shadow-md">
+              <CardContent className="p-4 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Strengths Summary */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-sm font-medium text-foreground">Strengths</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">
+                      {currentGroup.result.strengths?.slice(0, 100) || "See detailed feedback"}
+                      {(currentGroup.result.strengths?.length || 0) > 100 ? "..." : ""}
+                    </p>
+                  </div>
+                  
+                  {/* Areas for Improvement Summary */}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span className="text-sm font-medium text-foreground">Areas for Improvement</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">
+                      {currentGroup.result.areas_for_improvement?.slice(0, 100) || "See detailed feedback"}
+                      {(currentGroup.result.areas_for_improvement?.length || 0) > 100 ? "..." : ""}
+                    </p>
+                  </div>
+                </div>
               </CardContent>
             </Card>
-          )}
-        </div>
+
+            {/* ===== DETAILED FEEDBACK (Collapsible - closed by default) ===== */}
+            <Collapsible open={feedbackExpanded} onOpenChange={setFeedbackExpanded}>
+              <Card className="border shadow-md">
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-5 h-5 text-muted-foreground" />
+                        <CardTitle className="text-base font-medium">
+                          View Detailed Feedback
+                        </CardTitle>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="text-xs">
+                          {feedbackExpanded ? "Collapse" : "Expand"}
+                        </Badge>
+                        <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${
+                          feedbackExpanded ? "rotate-180" : ""
+                        }`} />
+                      </div>
+                    </div>
+                  </CardHeader>
+                </CollapsibleTrigger>
+                
+                <CollapsibleContent>
+                  <CardContent className="space-y-4 pt-0">
+                    {/* Strengths - Full */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        Strengths
+                      </Label>
+                      <Textarea
+                        value={currentGroup.result.strengths}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "strengths", e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                    
+                    {/* Areas for Improvement - Full */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        Areas for Improvement
+                      </Label>
+                      <Textarea
+                        value={currentGroup.result.areas_for_improvement}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "areas_for_improvement", e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                    
+                    {/* Draft Feedback - Full */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-primary" />
+                        Draft Feedback for Student
+                      </Label>
+                      <Textarea
+                        value={currentGroup.result.feedback_paragraph}
+                        onChange={(e) => updateGroupResult(selectedGroupIndex, "feedback_paragraph", e.target.value)}
+                        rows={5}
+                      />
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="outline"
+                onClick={handleDownloadPdf}
+                disabled={downloadingPdf}
+                className="flex-1 min-w-[140px]"
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4 mr-2" />
+                )}
+                Download PDF
+              </Button>
+              <Button variant="ghost" onClick={handlePrintReport} className="min-w-[120px]">
+                <Printer className="w-4 h-4 mr-2" />
+                Print Report
+              </Button>
+              <Button onClick={handleSave} disabled={saving} className="flex-1 min-w-[100px]">
+                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                {sessionId ? "Update" : "Save"}
+              </Button>
+            </div>
+          </div>
+        )}
       </main>
 
-      {/* ================================================================
-          MAIN ACTION BUTTON
-      ================================================================ */}
-      {currentStep !== "results" && currentStep !== "processing" && currentStep !== "subject-select" && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t border-border md:relative md:border-0 md:bg-transparent md:backdrop-blur-none">
-          <div className="max-w-7xl mx-auto">
-            <Button
-              onClick={handleGenerate}
-              disabled={!hasReadyImages || isProcessing}
-              className="w-full md:w-auto md:min-w-[240px] h-12 text-base font-semibold"
-              size="lg"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5 mr-2" />
-                  {buttonLabel}
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-      )}
+      {/* Pilot Feedback Panel - slides in from bottom-right */}
+      <PilotFeedbackPanel
+        show={showFeedback}
+        onDismiss={dismissFeedback}
+        onSkip={skipFeedback}
+      />
+
+      {/* Grouping Review Modal - for multi-page safety */}
+      <GroupingReviewModal
+        open={groupingReviewOpen}
+        onOpenChange={setGroupingReviewOpen}
+        groups={pendingGroupsForReview}
+        onConfirm={handleGroupingConfirmed}
+        onCancel={handleGroupingCancelled}
+      />
+
     </div>
   );
 }
