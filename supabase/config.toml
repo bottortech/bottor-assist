@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.format-teacher-note]
 verify_jwt = false
+
+[functions.grade-ela]
+verify_jwt = false

@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 import {
   ArrowLeft,
@@ -47,6 +48,8 @@ import {
   FileText,
   ChevronDown,
   BookOpen,
+  Calculator,
+  PenLine,
 } from "lucide-react";
 import {
   Collapsible,
@@ -69,9 +72,14 @@ import {
   validateAutoScoreSettings,
   getMaxScoreFromQuickRubric
 } from "@/components/ScoringOptionsSection";
+import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
+import type { ELAGradeResponse } from "@/types/elaGrading";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+
+// Subject type for routing to correct grading pipeline
+type GradingSubject = "math" | "ela";
 
 // Subject and Grade level lists removed for pilot - Bottor infers from content
 
@@ -766,6 +774,13 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
+  // Subject selection state (Math vs ELA/Writing)
+  const [gradingSubject, setGradingSubject] = useState<GradingSubject>("math");
+  
+  // ELA-specific state
+  const [elaRubricText, setElaRubricText] = useState("");
+  const [elaResults, setElaResults] = useState<Map<string, ELAGradeResponse>>(new Map());
+
   // Grading Criteria accordion state (collapsed by default)
   const [gradingCriteriaOpen, setGradingCriteriaOpen] = useState(false);
 
@@ -1255,6 +1270,100 @@ export default function GradePapers() {
       return;
     }
 
+    setGrading(true);
+
+    // Route to appropriate pipeline based on subject
+    if (gradingSubject === "ela") {
+      await executeELAGrading();
+    } else {
+      await executeMathGrading();
+    }
+
+    setGrading(false);
+  };
+
+  // ELA/Writing grading pipeline
+  const executeELAGrading = async () => {
+    console.log('[GradePapers] Starting ELA grading pipeline');
+    
+    const updatedGroups = [...studentGroups];
+    const newElaResults = new Map(elaResults);
+
+    for (let i = 0; i < updatedGroups.length; i++) {
+      const group = updatedGroups[i];
+      updatedGroups[i] = { ...group, grading: true };
+      setStudentGroups([...updatedGroups]);
+
+      try {
+        const { data, error } = await supabase.functions.invoke("grade-ela", {
+          body: {
+            student_work: group.extractedText,
+            student_name: group.studentName,
+            rubric_text: elaRubricText.trim() || undefined,
+            grade_level: form.grade_level || undefined,
+            assignment_type: "Writing",
+          },
+        });
+
+        if (error) throw error;
+
+        // Store ELA result
+        const elaResult: ELAGradeResponse = {
+          student_name: data.student_name || group.studentName,
+          score: data.score || "N/A",
+          letter_grade: data.letter_grade,
+          percent: data.percent,
+          earned: data.earned,
+          possible: data.possible,
+          strengths: data.strengths || [],
+          areas_for_improvement: data.areas_for_improvement || [],
+          next_step: data.next_step || "Keep practicing!",
+          confidence: data.confidence || 70,
+          criterion_breakdown: data.criterion_breakdown,
+          teacher_notes: data.teacher_notes,
+          rubric_used: data.rubric_used,
+        };
+
+        newElaResults.set(group.studentName, elaResult);
+
+        // Also update the group result for compatibility
+        updatedGroups[i] = {
+          ...group,
+          grading: false,
+          result: {
+            score_suggestion: data.score || "N/A",
+            score_percent: data.percent,
+            letter_grade: data.letter_grade,
+            confidence: data.confidence >= 80 ? 'high' : data.confidence >= 60 ? 'medium' : 'low',
+            rubric_source: data.rubric_used?.source === 'teacher' ? 'teacher' : 'auto-generated',
+            strengths: data.strengths?.join("; ") || "Not provided",
+            areas_for_improvement: data.areas_for_improvement?.join("; ") || "Not provided",
+            feedback_paragraph: data.next_step || "Not provided",
+          },
+        };
+      } catch (error) {
+        console.error(`ELA grading error for ${group.studentName}:`, error);
+        updatedGroups[i] = {
+          ...group,
+          grading: false,
+          result: {
+            score_suggestion: "Error",
+            strengths: "Grading failed",
+            areas_for_improvement: "Please try again",
+            feedback_paragraph: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
+      }
+
+      setStudentGroups([...updatedGroups]);
+    }
+
+    setElaResults(newElaResults);
+    toast({ title: `Graded ${updatedGroups.length} student(s) (ELA)!` });
+  };
+
+  // Math grading pipeline (existing logic preserved)
+  const executeMathGrading = async () => {
     // Determine if we're in scoring mode (rubric present) or feedback-only mode
     const isScoring = rubricDetected && gradingMode === "scoring";
     const finalTotalPoints = isScoring ? (effectiveTotalPoints || 20) : null;
@@ -1266,8 +1375,6 @@ export default function GradePapers() {
         description: `Using ${finalTotalPoints} points. You can edit the score after grading.`,
       });
     }
-
-    setGrading(true);
 
     // Build effective rubric: only use if we're in scoring mode
     const effectiveRubric = isScoring
@@ -1370,7 +1477,6 @@ export default function GradePapers() {
       setStudentGroups([...updatedGroups]);
     }
 
-    setGrading(false);
     toast({ title: `Graded ${updatedGroups.length} student(s)!` });
 
     // Feedback is now handled by usePilotFeedback hook with smart timing
@@ -1621,6 +1727,77 @@ export default function GradePapers() {
       )}
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        {/* ===== SUBJECT SELECTION ===== */}
+        <Card className="border shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              Subject Type
+              <Badge variant={gradingSubject === "math" ? "default" : "secondary"} className="ml-auto">
+                {gradingSubject === "math" ? "Math" : "ELA/Writing"}
+              </Badge>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Select the subject to use the appropriate grading pipeline
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <RadioGroup
+              value={gradingSubject}
+              onValueChange={(value) => setGradingSubject(value as GradingSubject)}
+              className="flex gap-4"
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="math" id="subject-math" />
+                <Label htmlFor="subject-math" className="flex items-center gap-2 cursor-pointer">
+                  <Calculator className="w-4 h-4 text-blue-500" />
+                  <span>Math</span>
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="ela" id="subject-ela" />
+                <Label htmlFor="subject-ela" className="flex items-center gap-2 cursor-pointer">
+                  <PenLine className="w-4 h-4 text-purple-500" />
+                  <span>ELA/Writing</span>
+                </Label>
+              </div>
+            </RadioGroup>
+          </CardContent>
+        </Card>
+
+        {/* ===== ELA RUBRIC INPUT (Conditional) ===== */}
+        {gradingSubject === "ela" && (
+          <Card className="border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <PenLine className="w-4 h-4 text-purple-500" />
+                ELA Rubric
+                <span className="text-xs font-normal text-muted-foreground ml-1">(Optional)</span>
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Leave blank for feedback-only mode. Add a rubric for scored grading.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              <div className="relative">
+                <Textarea
+                  placeholder="Paste your ELA/Writing rubric here...&#10;&#10;Example:&#10;Ideas & Content (25 pts): Development of ideas with supporting details&#10;Organization (20 pts): Structure, transitions, logical flow&#10;Voice (15 pts): Engagement, appropriate tone&#10;..."
+                  value={elaRubricText}
+                  onChange={(e) => setElaRubricText(e.target.value)}
+                  className="min-h-[200px] text-sm"
+                />
+                {elaRubricText.length > 0 && (
+                  <div className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-background/80 px-2 py-0.5 rounded">
+                    {elaRubricText.length} characters
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                💡 For best results, include point values for each criterion (e.g., "Ideas: 25 pts")
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -2362,8 +2539,16 @@ export default function GradePapers() {
               </Card>
             )}
 
-            {/* Suggested Score - Only shown when rubric was present (scoring mode) */}
-            {currentGroup.result.score_suggestion !== "N/A" && currentGroup.result.score_percent !== undefined && (
+            {/* ELA-Specific Results Display */}
+            {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (
+              <ELAResultsDisplay
+                result={elaResults.get(currentGroup.studentName)!}
+                onCopy={handleCopy}
+              />
+            )}
+
+            {/* Math Results - Suggested Score - Only shown when rubric was present (scoring mode) */}
+            {gradingSubject === "math" && currentGroup.result.score_suggestion !== "N/A" && currentGroup.result.score_percent !== undefined && (
               <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg flex justify-between items-center">
@@ -2426,8 +2611,8 @@ export default function GradePapers() {
               </Card>
             )}
 
-            {/* Feedback-only mode header - shown when no rubric was used */}
-            {currentGroup.result.score_suggestion === "N/A" && (
+            {/* Math: Feedback-only mode header - shown when no rubric was used */}
+            {gradingSubject === "math" && currentGroup.result.score_suggestion === "N/A" && (
               <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-lg bg-blue-50 dark:bg-blue-900/20">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -2445,7 +2630,8 @@ export default function GradePapers() {
               </Card>
             )}
 
-            {/* Quick Summary - Strengths & Areas for Improvement headers (always visible) */}
+            {/* Math: Quick Summary - Strengths & Areas for Improvement headers (always visible for Math) */}
+            {gradingSubject === "math" && (
             <Card className="border-0 shadow-md">
               <CardContent className="p-4 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2475,8 +2661,10 @@ export default function GradePapers() {
                 </div>
               </CardContent>
             </Card>
+            )}
 
-            {/* ===== DETAILED FEEDBACK (Collapsible - closed by default) ===== */}
+            {/* ===== DETAILED FEEDBACK (Collapsible - closed by default) - Math only ===== */}
+            {gradingSubject === "math" && (
             <Collapsible open={feedbackExpanded} onOpenChange={setFeedbackExpanded}>
               <Card className="border shadow-md">
                 <CollapsibleTrigger asChild>
@@ -2544,6 +2732,7 @@ export default function GradePapers() {
                 </CollapsibleContent>
               </Card>
             </Collapsible>
+            )}
 
             {/* Action Buttons */}
             <div className="flex flex-wrap gap-3">
