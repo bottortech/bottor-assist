@@ -357,9 +357,30 @@ function parseAutoScoreSettings(settings: {
  * Attempt to parse point values from rubric text
  * Uses STRICT priority: explicit total > sum of criteria > fallback
  * Returns null if no clear point structure is found
+ * 
+ * IMPORTANT: Distinguishes between:
+ * - Category weights (e.g., "Accuracy – 40 points") → actual point allocations
+ * - Performance levels (e.g., "4 = Excellent, 3 = Proficient") → descriptors, NOT points
  */
 function parseRubricText(text: string): ParsedRubric | null {
   let explicitTotal: number | null = null;
+  let hasPerformanceLevels = false;
+
+  // Detect performance level patterns (these are descriptors, NOT points)
+  // Common patterns: "4 = Excellent", "4 - Exceeds", "Level 4:", "Score 4:"
+  const performanceLevelPatterns = [
+    /[1-5]\s*[=\-–:]\s*(?:excellent|exceeds|proficient|meets|developing|emerging|beginning|unsatisfactory|poor|advanced|mastery|competent|novice)/i,
+    /(?:level|score|rating)\s*[1-5]/i,
+    /(?:excellent|proficient|developing|beginning)\s*[=\-–:]\s*[1-5]/i,
+  ];
+  
+  for (const pattern of performanceLevelPatterns) {
+    if (pattern.test(text)) {
+      hasPerformanceLevels = true;
+      console.log(`[grade-paper] Detected performance levels (treated as descriptors, not points)`);
+      break;
+    }
+  }
 
   // (A) PRIORITY: Look for EXPLICIT total patterns FIRST
   // These are the most authoritative and should NEVER be guessed
@@ -390,8 +411,9 @@ function parseRubricText(text: string): ParsedRubric | null {
     }
   }
 
-  // (B) Parse individual criteria/items with points
-  const categoryPattern = /([A-Za-z][A-Za-z\s\/]+?)(?::|[\(\[])\s*(\d+)\s*(?:pts?|points?)?(?:[\)\]])?/g;
+  // (B) Parse individual criteria/items with EXPLICIT point weights
+  // Pattern matches: "Accuracy – 40 points", "Work Shown (30 pts)", "Clarity: 20 points"
+  const categoryPattern = /([A-Za-z][A-Za-z\s\/\-–]+?)(?:[\-–:]|\s*[\(\[])\s*(\d+)\s*(?:pts?|points?)(?:[\)\]])?/gi;
   const criteria: RubricCriterion[] = [];
   let match;
   
@@ -401,36 +423,77 @@ function parseRubricText(text: string): ParsedRubric | null {
     
     // Filter out obvious non-criteria matches
     const lowerName = name.toLowerCase();
-    const isExcluded = ['total', 'maximum', 'max', 'out of', 'score'].some(
-      ex => lowerName === ex || lowerName.startsWith(ex + ' ')
+    const isExcluded = ['total', 'maximum', 'max', 'out of', 'score', 'level', 'rating'].some(
+      ex => lowerName === ex || lowerName.startsWith(ex + ' ') || lowerName.endsWith(' ' + ex)
     );
     
-    if (!isExcluded && name.length > 2 && name.length < 50 && points > 0 && points <= 100) {
+    // Only accept criteria with significant point values (not small numbers that might be performance levels)
+    // If performance levels detected, be stricter about what counts as a category weight
+    const minPoints = hasPerformanceLevels ? 10 : 1;
+    const maxPoints = hasPerformanceLevels ? 100 : 100;
+    
+    if (!isExcluded && name.length > 2 && name.length < 50 && points >= minPoints && points <= maxPoints) {
       criteria.push({
         name,
         points,
-        guidance: `Teacher rubric criterion: ${name}`
+        guidance: `Teacher rubric criterion: ${name} (${points} points)`
       });
     }
   }
 
-  // If we found an explicit total, use it (highest priority)
+  // Calculate the sum of criteria points
+  const criteriaSum = criteria.reduce((sum, c) => sum + c.points, 0);
+  
+  // Determine final total points
+  let finalTotal: number;
+  let scoringMode: 'weighted-100' | 'explicit-total' | 'criteria-sum' = 'criteria-sum';
+  
   if (explicitTotal) {
+    finalTotal = explicitTotal;
+    scoringMode = 'explicit-total';
+  } else if (criteriaSum > 0) {
+    finalTotal = criteriaSum;
+    // If criteria sum to exactly 100, treat as 100-point scale
+    if (criteriaSum === 100) {
+      scoringMode = 'weighted-100';
+      console.log(`[grade-paper] Rubric criteria sum to 100 — using 100-point scale`);
+    }
+  } else {
+    finalTotal = 0;
+  }
+
+  // If we found criteria with explicit weights
+  if (criteria.length > 0 && finalTotal > 0) {
+    // Add metadata about performance levels if detected
+    const updatedCriteria = criteria.map(c => ({
+      ...c,
+      guidance: hasPerformanceLevels 
+        ? `${c.guidance}. Use performance level descriptors for qualitative assessment, then convert to proportional score within this ${c.points}-point category.`
+        : c.guidance
+    }));
+    
+    console.log(`[grade-paper] Parsed ${criteria.length} criteria, total: ${finalTotal} points, mode: ${scoringMode}, performance levels: ${hasPerformanceLevels}`);
+    
     return {
-      totalPoints: explicitTotal,
-      criteria: criteria.length > 0 ? criteria : [{
-        name: "Overall Assessment",
-        points: explicitTotal,
-        guidance: "Evaluate based on teacher's rubric criteria in the text"
-      }],
+      totalPoints: finalTotal,
+      criteria: updatedCriteria,
       source: 'teacher'
     };
   }
 
-  // If we found criteria, sum them for total
-  if (criteria.length > 0) {
-    const total = criteria.reduce((sum, c) => sum + c.points, 0);
-    return { totalPoints: total, criteria, source: 'teacher' };
+  // If we found an explicit total but no parseable criteria
+  if (explicitTotal) {
+    return {
+      totalPoints: explicitTotal,
+      criteria: [{
+        name: "Overall Assessment",
+        points: explicitTotal,
+        guidance: hasPerformanceLevels
+          ? "Evaluate based on teacher's rubric criteria. Use performance level descriptors for qualitative assessment, then convert to proportional score."
+          : "Evaluate based on teacher's rubric criteria in the text"
+      }],
+      source: 'teacher'
+    };
   }
 
   // Check for presence of rubric keywords without parseable points
@@ -466,6 +529,9 @@ function buildScoringPrompts(params: {
   const isAutoGenerated = params.parsedRubric.source === 'auto-generated';
   const hasAnswerKey = !!params.answerKey?.trim();
   const enhancedMode = params.enhancedMode || false;
+  
+  // Detect if this is a 100-point weighted rubric
+  const is100PointScale = params.parsedRubric.totalPoints === 100;
 
   // Build enhanced system prompt when both rubric and answer key are present
   const systemPrompt = `You are Bottor Assist, a teacher-facing grading assistant. You must be accurate, conservative, and transparent.
@@ -486,6 +552,14 @@ ${enhancedMode ? `5. ENHANCED MODE ACTIVE: Both rubric AND answer key are presen
    - Use the ANSWER KEY as the correctness reference
    - Cross-validate: ensure rubric scores align with answer key correctness
    - This provides the highest grading accuracy` : ''}
+
+CRITICAL: PERFORMANCE LEVELS vs CATEGORY WEIGHTS
+- If a rubric has explicit CATEGORY POINT VALUES (e.g., "Accuracy – 40 points", "Work Shown – 30 points"), these are the actual point allocations. Do NOT normalize to a 5-point scale.
+- If a rubric has PERFORMANCE LEVELS (e.g., "4 = Excellent, 3 = Proficient, 2 = Developing, 1 = Beginning"), these are DESCRIPTORS, not points.
+- When both exist: Use performance levels to determine quality within each category, then apply proportional scaling to that category's point weight.
+- Example: If "Accuracy" is worth 40 points and student earns "Proficient (3/4)", award (3/4) × 40 = 30 points for that category.
+${is100PointScale ? `- This rubric uses a 100-point scale. Output the final score out of 100 points.` : ''}
+
 6. If something is unclear or illegible, award 0 points for that criterion and note it.
 7. Include a confidence level: "high" if grading is straightforward, "medium" if some interpretation needed, "low" if significant uncertainty.
 8. Be consistent: total earned points must equal the sum of criterion scores.
