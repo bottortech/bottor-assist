@@ -810,7 +810,9 @@ function forceCorrectPerformanceLevelMapping(
     const t = (rubricText || "").toLowerCase();
     // Numeric level patterns
     const hasNumericLevels =
-      /\b4\s*[=:]\s*\w+/.test(t) && /\b3\s*[=:]\s*\w+/.test(t) && /\b2\s*[=:]\s*\w+/.test(t) &&
+      /\b4\s*[=:]\s*\w+/.test(t) &&
+      /\b3\s*[=:]\s*\w+/.test(t) &&
+      /\b2\s*[=:]\s*\w+/.test(t) &&
       /\b1\s*[=:]\s*\w+/.test(t);
     // Common labels
     const hasCommonLabels = t.includes("proficient") && (t.includes("excellent") || t.includes("exemplary"));
@@ -840,19 +842,32 @@ function forceCorrectPerformanceLevelMapping(
     const evidenceText = (item.evidence || "").toLowerCase();
     const rawRatio = earnedPoints / possiblePoints;
 
-    // Prefer explicit level/label mentions in evidence; otherwise, coerce common AI drift ranges.
+    // CRITICAL: Always prioritize explicit level/label mentions in evidence text
     let detectedLevel: 1 | 2 | 3 | 4 = 4;
-    if (/(\blevel\s*4\b|\bexcellent\b|\bexemplary\b)/.test(evidenceText)) detectedLevel = 4;
-    else if (/(\blevel\s*3\b|\bproficient\b|\bcompetent\b)/.test(evidenceText)) detectedLevel = 3;
-    else if (/(\blevel\s*2\b|\bdeveloping\b|\bbasic\b)/.test(evidenceText)) detectedLevel = 2;
-    else if (/(\blevel\s*1\b|\bbeginning\b|\bneeds\s*work\b)/.test(evidenceText)) detectedLevel = 1;
-    else {
-      // Heuristic coercion to fix observed mis-mapping:
-      // - Treat anything ~55%-85% as Level 3 (Proficient) so 60%/80% drift becomes 75%.
-      if (rawRatio >= 0.875) detectedLevel = 4;
-      else if (rawRatio >= 0.55) detectedLevel = 3;
-      else if (rawRatio >= 0.35) detectedLevel = 2;
-      else detectedLevel = 1;
+
+    // First check: Look for explicit performance level indicators in evidence
+    if (/(\blevel\s*4\b|\bexcellent\b|\bexemplary\b|\ball\s+correct\b|5\s*\/\s*5|perfect)/i.test(evidenceText)) {
+      detectedLevel = 4;
+    } else if (
+      /(\blevel\s*3\b|\bproficient\b|\bcompetent\b|4\s*out\s*of\s*5|4\s*\/\s*5|generally\s+correct|minor\s+error)/i.test(
+        evidenceText,
+      )
+    ) {
+      detectedLevel = 3;
+    } else if (/(\blevel\s*2\b|\bdeveloping\b|\bbasic\b|2-3|some\s+correct)/i.test(evidenceText)) {
+      detectedLevel = 2;
+    } else if (/(\blevel\s*1\b|\bbeginning\b|\bneeds\s*work\b|0-1|little\s+to\s+no)/i.test(evidenceText)) {
+      detectedLevel = 1;
+    } else {
+      // Fallback: Map AI's percentage back to intended level
+      // The AI sometimes outputs wrong percentages (50%, 60%, 80%) so we correct them
+      if (rawRatio >= 0.95)
+        detectedLevel = 4; // 95-100% = Excellent (Level 4)
+      else if (rawRatio >= 0.65)
+        detectedLevel = 3; // 65-94% = Proficient (Level 3) - catches 75%, 80%
+      else if (rawRatio >= 0.4)
+        detectedLevel = 2; // 40-64% = Developing (Level 2) - catches 50%, 60%
+      else detectedLevel = 1; // 0-39% = Beginning (Level 1)
     }
 
     const correctPercent = LEVEL_TO_PERCENT[detectedLevel];
