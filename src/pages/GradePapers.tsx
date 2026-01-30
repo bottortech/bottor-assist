@@ -57,6 +57,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
+import { GroupingReviewModal, analyzeAndGroupFiles, GroupingResult } from "@/components/GroupingReviewModal";
+import type { StudentGroupPreview } from "@/components/GroupingReviewModal";
 import { 
   ScoringOptionsSection, 
   ScoringMode, 
@@ -764,6 +766,11 @@ export default function GradePapers() {
   const [studentGroups, setStudentGroups] = useState<StudentGroup[]>([]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
   
+  // Grouping review modal state (for multi-page safety)
+  const [groupingReviewOpen, setGroupingReviewOpen] = useState(false);
+  const [groupingResult, setGroupingResult] = useState<GroupingResult | null>(null);
+  const [pendingGroupsForReview, setPendingGroupsForReview] = useState<StudentGroupPreview[]>([]);
+  
   // Inline name editing state
   const [editingNameIndex, setEditingNameIndex] = useState<number | null>(null);
   const [editingNameValue, setEditingNameValue] = useState("");
@@ -959,14 +966,35 @@ export default function GradePapers() {
   };
 
   // Auto-group student files when they change
+  // Also analyzes grouping confidence for multi-page safety
   useEffect(() => {
     const readyFiles = studentUpload.files.filter((f) => f.status === "ready");
     if (readyFiles.length === 0) {
       setStudentGroups([]);
+      setGroupingResult(null);
       return;
     }
 
-    const groups = groupFilesByStudent(readyFiles);
+    // Use the new grouping analysis for confidence detection
+    const analysis = analyzeAndGroupFiles(readyFiles, detectStudentNameFromText);
+    setGroupingResult(analysis);
+    
+    // Convert StudentGroupPreview to StudentGroup format
+    const groups: StudentGroup[] = analysis.groups.map(g => ({
+      studentName: g.studentName,
+      detectedName: g.studentName,
+      nameSource: g.nameSource,
+      nameConfidence: g.nameConfidence,
+      nameConfirmed: g.nameConfidence === 'high' && g.nameSource === 'document',
+      files: g.pages.map(p => readyFiles.find(f => f.id === p.fileId)!).filter(Boolean),
+      extractedText: g.pages
+        .map(p => readyFiles.find(f => f.id === p.fileId)?.extractedText || '')
+        .filter(Boolean)
+        .join('\n\n--- PAGE BREAK ---\n\n'),
+      result: null,
+      grading: false,
+    }));
+    
     setStudentGroups(groups);
     setSelectedGroupIndex(0);
   }, [studentUpload.files]);
@@ -1101,6 +1129,56 @@ export default function GradePapers() {
 
 
   const handleGenerateGrades = async () => {
+    if (studentGroups.length === 0) {
+      toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
+      return;
+    }
+
+    // Check if grouping needs review (low confidence with multiple students)
+    if (groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1) {
+      // Show review modal instead of grading directly
+      setPendingGroupsForReview(groupingResult.groups);
+      setGroupingReviewOpen(true);
+      return;
+    }
+
+    // Proceed with grading
+    await executeGrading();
+  };
+
+  // Handle confirmed grouping from review modal
+  const handleGroupingConfirmed = (confirmedGroups: StudentGroupPreview[]) => {
+    const readyFiles = studentUpload.files.filter((f) => f.status === "ready");
+    
+    // Convert confirmed groups back to StudentGroup format
+    const groups: StudentGroup[] = confirmedGroups.map(g => ({
+      studentName: g.studentName,
+      detectedName: g.studentName,
+      nameSource: g.nameSource,
+      nameConfidence: 'high' as const, // User confirmed
+      nameConfirmed: true,
+      files: g.pages.map(p => readyFiles.find(f => f.id === p.fileId)!).filter(Boolean),
+      extractedText: g.pages
+        .map(p => readyFiles.find(f => f.id === p.fileId)?.extractedText || '')
+        .filter(Boolean)
+        .join('\n\n--- PAGE BREAK ---\n\n'),
+      result: null,
+      grading: false,
+    }));
+    
+    setStudentGroups(groups);
+    setSelectedGroupIndex(0);
+    
+    // Now proceed with grading
+    setTimeout(() => executeGrading(), 100);
+  };
+
+  const handleGroupingCancelled = () => {
+    // Just close the modal, don't grade
+    setPendingGroupsForReview([]);
+  };
+
+  const executeGrading = async () => {
     if (studentGroups.length === 0) {
       toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
       return;
@@ -1546,8 +1624,24 @@ export default function GradePapers() {
                   <Label className="text-sm font-medium">Detected Students ({studentGroups.length})</Label>
                 </div>
                 
-                {/* Non-blocking verification banner */}
-                {studentGroups.some(g => !g.nameConfirmed && (g.nameSource === 'unknown' || g.nameConfidence === 'low')) && (
+                {/* Multi-page grouping confidence warning */}
+                {groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1 && (
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        Page grouping needs confirmation
+                      </p>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Multiple students detected with some unnamed pages. When you click Grade, you'll be asked to confirm pages are grouped correctly.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Non-blocking name verification banner */}
+                {!(groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1) && 
+                 studentGroups.some(g => !g.nameConfirmed && (g.nameSource === 'unknown' || g.nameConfidence === 'low')) && (
                   <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
                     <Info className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                     <div className="space-y-1">
@@ -2413,6 +2507,15 @@ export default function GradePapers() {
         show={showFeedback}
         onDismiss={dismissFeedback}
         onSkip={skipFeedback}
+      />
+
+      {/* Grouping Review Modal - for multi-page safety */}
+      <GroupingReviewModal
+        open={groupingReviewOpen}
+        onOpenChange={setGroupingReviewOpen}
+        groups={pendingGroupsForReview}
+        onConfirm={handleGroupingConfirmed}
+        onCancel={handleGroupingCancelled}
       />
 
     </div>
