@@ -444,20 +444,33 @@ function parseRubricText(text: string): ParsedRubric | null {
   // Calculate the sum of criteria points
   const criteriaSum = criteria.reduce((sum, c) => sum + c.points, 0);
   
+  // SAFEGUARD: Common performance level counts that should NEVER be used as totalPoints
+  // when explicit category weights exist
+  const performanceLevelCounts = [3, 4, 5, 6];
+  const hasCategoryWeights = criteria.length >= 2 && criteriaSum >= 10;
+  
   // Determine final total points
   let finalTotal: number;
   let scoringMode: 'weighted-100' | 'explicit-total' | 'criteria-sum' = 'criteria-sum';
   
-  if (explicitTotal) {
+  // Check for weighted-100 first (highest priority for category-based rubrics)
+  if (criteriaSum === 100 && criteria.length >= 2) {
+    finalTotal = 100;
+    scoringMode = 'weighted-100';
+    console.log(`[grade-paper] Rubric criteria sum to 100 — using 100-point scale`);
+  }
+  // SAFEGUARD: If explicit total matches a performance level count AND we have category weights
+  else if (explicitTotal && hasPerformanceLevels && hasCategoryWeights && performanceLevelCounts.includes(explicitTotal)) {
+    // Explicit total looks like a performance level count - use category sum instead
+    finalTotal = criteriaSum;
+    scoringMode = 'criteria-sum';
+    console.log(`[grade-paper] SAFEGUARD: Ignored explicit total ${explicitTotal} (looks like performance level count), using criteria sum ${criteriaSum}`);
+  }
+  else if (explicitTotal) {
     finalTotal = explicitTotal;
     scoringMode = 'explicit-total';
   } else if (criteriaSum > 0) {
     finalTotal = criteriaSum;
-    // If criteria sum to exactly 100, treat as 100-point scale
-    if (criteriaSum === 100) {
-      scoringMode = 'weighted-100';
-      console.log(`[grade-paper] Rubric criteria sum to 100 — using 100-point scale`);
-    }
   } else {
     finalTotal = 0;
   }

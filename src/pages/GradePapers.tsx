@@ -233,6 +233,11 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
   let detectionConfidence: RubricMeta['detectionConfidence'] = 'none';
   let isWeightedRubric = false;
 
+  // SAFEGUARD: Common performance level counts that should NEVER be used as totalPoints
+  // when explicit category weights exist
+  const performanceLevelCounts = [3, 4, 5, 6];
+  const hasCategoryWeights = items.length >= 2 && sumOfItems >= 10;
+
   // Check if this is a weighted 100-point rubric
   if (sumOfItems === 100 && items.length >= 2) {
     // Category weights sum to exactly 100 - this is a weighted rubric
@@ -242,12 +247,23 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
     detectionConfidence = 'high';
     isWeightedRubric = true;
   }
-  // PRIORITY A: Explicit total always wins (unless we already detected weighted-100)
+  // PRIORITY A: Explicit total - but SAFEGUARD against performance level counts
   else if (explicitTotal && explicitTotal > 0) {
-    totalPoints = explicitTotal;
-    hasPointValues = true;
-    pointScaleType = 'total';
-    detectionConfidence = 'high';
+    // SAFEGUARD: If explicit total matches a performance level count (3-6) 
+    // AND we have category weights, prefer sumOfItems
+    if (hasPerformanceLevels && hasCategoryWeights && performanceLevelCounts.includes(explicitTotal)) {
+      // Explicit total looks like a performance level count - use category sum instead
+      totalPoints = sumOfItems;
+      hasPointValues = true;
+      pointScaleType = items.length > 1 ? 'by-category' : 'per-question';
+      detectionConfidence = 'high';
+      isWeightedRubric = sumOfItems === 100;
+    } else {
+      totalPoints = explicitTotal;
+      hasPointValues = true;
+      pointScaleType = 'total';
+      detectionConfidence = 'high';
+    }
   } 
   // PRIORITY B: Sum of item points as second choice
   else if (sumOfItems > 0) {
@@ -256,7 +272,8 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
     pointScaleType = items.length > 1 ? 'by-category' : 'per-question';
     // Higher confidence if sum is reasonable for a multi-item rubric
     detectionConfidence = sumOfItems >= 10 || items.length <= 2 ? 'high' : 'low';
-  } 
+    isWeightedRubric = sumOfItems === 100;
+  }
   // PRIORITY C/D: Try inference
   else {
     const inferred = inferPointsFromContext(answerKeyText, studentWorkText);
