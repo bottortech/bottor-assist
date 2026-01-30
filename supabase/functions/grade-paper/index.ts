@@ -2,12 +2,12 @@
  * =============================================================================
  * GRADE PAPER EDGE FUNCTION - BOTTOR ASSIST
  * =============================================================================
- * 
+ *
  * MANDATORY NUMERIC SCORING:
  * - Always produces a numeric score (X/TOTAL) with percent
  * - Uses teacher-provided rubric if available
  * - Falls back to default 20-point rubric if none provided
- * 
+ *
  * GUARDRAILS:
  * - Be accurate, conservative, and transparent
  * - If confidence is low, flag for teacher review
@@ -27,10 +27,22 @@ const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const DEFAULT_RUBRIC = {
   totalPoints: 20,
   criteria: [
-    { name: "Accuracy / Correctness", points: 10, guidance: "Evaluate factual accuracy, correct answers, and sound reasoning" },
-    { name: "Work Shown / Reasoning", points: 5, guidance: "Evaluate explanation of thought process, steps shown, and logical progression" },
-    { name: "Completeness / Formatting", points: 5, guidance: "Evaluate whether all parts are addressed, proper format, and organization" }
-  ]
+    {
+      name: "Accuracy / Correctness",
+      points: 10,
+      guidance: "Evaluate factual accuracy, correct answers, and sound reasoning",
+    },
+    {
+      name: "Work Shown / Reasoning",
+      points: 5,
+      guidance: "Evaluate explanation of thought process, steps shown, and logical progression",
+    },
+    {
+      name: "Completeness / Formatting",
+      points: 5,
+      guidance: "Evaluate whether all parts are addressed, proper format, and organization",
+    },
+  ],
 };
 
 interface RubricCriterion {
@@ -42,7 +54,7 @@ interface RubricCriterion {
 interface ParsedRubric {
   totalPoints: number;
   criteria: RubricCriterion[];
-  source: 'teacher' | 'auto-generated';
+  source: "teacher" | "auto-generated";
 }
 
 interface GradeRequest {
@@ -54,8 +66,8 @@ interface GradeRequest {
   answer_key?: string;
   prompt_text?: string;
   assignment_doc_text?: string;
-  grading_mode?: 'scoring' | 'feedback-only';
-  scoring_mode?: 'feedback-only' | 'auto-score' | 'rubric-based';
+  grading_mode?: "scoring" | "feedback-only";
+  scoring_mode?: "feedback-only" | "auto-score" | "rubric-based";
   auto_score_settings?: {
     totalPoints: number | null;
     pointsPerQuestion: number | null;
@@ -73,24 +85,24 @@ serve(async (req) => {
 
   try {
     const body: GradeRequest = await req.json();
-    const { 
-      student_work, 
-      grade_level, 
+    const {
+      student_work,
+      grade_level,
       subject,
       assignment_type,
-      rubric, 
-      answer_key, 
+      rubric,
+      answer_key,
       prompt_text,
       assignment_doc_text,
       auto_score_settings,
-      quick_rubric_categories
+      quick_rubric_categories,
     } = body;
 
     if (!student_work?.trim()) {
-      return new Response(
-        JSON.stringify({ error: "No student work provided" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ error: "No student work provided" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -103,19 +115,19 @@ serve(async (req) => {
       rubricText: rubric,
       answerKey: answer_key,
       quickRubricCategories: quick_rubric_categories,
-      autoScoreSettings: auto_score_settings
+      autoScoreSettings: auto_score_settings,
     });
 
     console.log(`[grade-paper] Rubric source: ${parsedRubric.source}, Total points: ${parsedRubric.totalPoints}`);
     console.log(`[grade-paper] Criteria count: ${parsedRubric.criteria.length}`);
-    console.log(`[grade-paper] Grade level: ${grade_level || 'unspecified'}, Subject: ${subject || 'unspecified'}`);
+    console.log(`[grade-paper] Grade level: ${grade_level || "unspecified"}, Subject: ${subject || "unspecified"}`);
     console.log(`[grade-paper] Answer key provided: ${!!answer_key?.trim()}`);
 
     // Determine grading mode based on materials
-    const hasRubric = parsedRubric.source === 'teacher';
+    const hasRubric = parsedRubric.source === "teacher";
     const hasAnswerKey = !!answer_key?.trim();
     const enhancedMode = hasRubric && hasAnswerKey;
-    
+
     console.log(`[grade-paper] Enhanced mode (rubric + answer key): ${enhancedMode}`);
 
     // Build the prompt - always scoring mode now
@@ -152,16 +164,16 @@ serve(async (req) => {
 
     if (!response.ok) {
       if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
       if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add funds to continue." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add funds to continue." }), {
+          status: 402,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
       const errorText = await response.text();
       console.error("[grade-paper] AI error:", response.status, errorText);
@@ -186,7 +198,6 @@ serve(async (req) => {
 
       // Normalize and validate the response
       gradingResult = normalizeGradingResult(gradingResult, parsedRubric);
-
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
       // Fallback result with default scoring
@@ -202,22 +213,21 @@ serve(async (req) => {
         improvements_list: ["Manual review required - AI parsing failed"],
         feedback_paragraph: "Please review this work and provide personalized feedback.",
         draft_feedback: "Please review this work and provide personalized feedback.",
-        teacher_notes: ["AI response could not be parsed. Manual grading recommended."]
+        teacher_notes: ["AI response could not be parsed. Manual grading recommended."],
       };
     }
 
     console.log("[grade-paper] Grading complete, score:", gradingResult.score_suggestion);
 
-    return new Response(
-      JSON.stringify(gradingResult),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify(gradingResult), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error) {
     console.error("[grade-paper] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
 
@@ -264,7 +274,7 @@ function buildRubric(params: {
       // If we have rubric text, mark as teacher-provided even if using frontend totalPoints
       if (rubricText?.trim()) {
         console.log(`[grade-paper] Using frontend totalPoints (${parsed.totalPoints}) with teacher rubric text`);
-        return { ...parsed, source: 'teacher' };
+        return { ...parsed, source: "teacher" };
       }
       return parsed;
     }
@@ -276,7 +286,7 @@ function buildRubric(params: {
     console.log(`[grade-paper] Using default rubric with answer key`);
     return {
       ...DEFAULT_RUBRIC,
-      source: 'auto-generated'
+      source: "auto-generated",
     };
   }
 
@@ -284,7 +294,7 @@ function buildRubric(params: {
   console.log(`[grade-paper] Using default fallback rubric`);
   return {
     ...DEFAULT_RUBRIC,
-    source: 'auto-generated'
+    source: "auto-generated",
   };
 }
 
@@ -292,7 +302,10 @@ function buildRubric(params: {
  * Parse quick rubric format: "Category: X pts, Category2: Y pts"
  */
 function parseQuickRubric(text: string): ParsedRubric | null {
-  const parts = text.split(',').map(p => p.trim()).filter(Boolean);
+  const parts = text
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
   const criteria: RubricCriterion[] = [];
   let total = 0;
 
@@ -303,14 +316,14 @@ function parseQuickRubric(text: string): ParsedRubric | null {
       criteria.push({
         name: match[1].trim(),
         points,
-        guidance: `Evaluate ${match[1].trim().toLowerCase()}`
+        guidance: `Evaluate ${match[1].trim().toLowerCase()}`,
       });
       total += points;
     }
   }
 
   if (criteria.length > 0 && total > 0) {
-    return { totalPoints: total, criteria, source: 'teacher' };
+    return { totalPoints: total, criteria, source: "teacher" };
   }
   return null;
 }
@@ -329,24 +342,28 @@ function parseAutoScoreSettings(settings: {
     const total = settings.pointsPerQuestion * settings.questionCount;
     return {
       totalPoints: total,
-      criteria: [{
-        name: "Question Correctness",
-        points: total,
-        guidance: `${settings.questionCount} questions at ${settings.pointsPerQuestion} points each. ${settings.partialCreditAllowed ? 'Partial credit allowed.' : ''}`
-      }],
-      source: 'teacher'
+      criteria: [
+        {
+          name: "Question Correctness",
+          points: total,
+          guidance: `${settings.questionCount} questions at ${settings.pointsPerQuestion} points each. ${settings.partialCreditAllowed ? "Partial credit allowed." : ""}`,
+        },
+      ],
+      source: "teacher",
     };
   }
 
   if (settings.totalPoints) {
     return {
       totalPoints: settings.totalPoints,
-      criteria: [{
-        name: "Overall Score",
-        points: settings.totalPoints,
-        guidance: "Evaluate overall quality and correctness"
-      }],
-      source: 'teacher'
+      criteria: [
+        {
+          name: "Overall Score",
+          points: settings.totalPoints,
+          guidance: "Evaluate overall quality and correctness",
+        },
+      ],
+      source: "teacher",
     };
   }
 
@@ -357,7 +374,7 @@ function parseAutoScoreSettings(settings: {
  * Attempt to parse point values from rubric text
  * Uses STRICT priority: explicit total > sum of criteria > fallback
  * Returns null if no clear point structure is found
- * 
+ *
  * IMPORTANT: Distinguishes between:
  * - Category weights (e.g., "Accuracy – 40 points") → actual point allocations
  * - Performance levels (e.g., "4 = Excellent, 3 = Proficient") → descriptors, NOT points
@@ -373,7 +390,7 @@ function parseRubricText(text: string): ParsedRubric | null {
     /(?:level|score|rating)\s*[1-5]/i,
     /(?:excellent|proficient|developing|beginning)\s*[=\-–:]\s*[1-5]/i,
   ];
-  
+
   for (const pattern of performanceLevelPatterns) {
     if (pattern.test(text)) {
       hasPerformanceLevels = true;
@@ -416,59 +433,65 @@ function parseRubricText(text: string): ParsedRubric | null {
   const categoryPattern = /([A-Za-z][A-Za-z\s\/\-–]+?)(?:[\-–:]|\s*[\(\[])\s*(\d+)\s*(?:pts?|points?)(?:[\)\]])?/gi;
   const criteria: RubricCriterion[] = [];
   let match;
-  
+
   while ((match = categoryPattern.exec(text)) !== null) {
     const name = match[1].trim();
     const points = parseInt(match[2], 10);
-    
+
     // Filter out obvious non-criteria matches
     const lowerName = name.toLowerCase();
-    const isExcluded = ['total', 'maximum', 'max', 'out of', 'score', 'level', 'rating'].some(
-      ex => lowerName === ex || lowerName.startsWith(ex + ' ') || lowerName.endsWith(' ' + ex)
+    const isExcluded = ["total", "maximum", "max", "out of", "score", "level", "rating"].some(
+      (ex) => lowerName === ex || lowerName.startsWith(ex + " ") || lowerName.endsWith(" " + ex),
     );
-    
+
     // Only accept criteria with significant point values (not small numbers that might be performance levels)
     // If performance levels detected, be stricter about what counts as a category weight
     const minPoints = hasPerformanceLevels ? 10 : 1;
     const maxPoints = hasPerformanceLevels ? 100 : 100;
-    
+
     if (!isExcluded && name.length > 2 && name.length < 50 && points >= minPoints && points <= maxPoints) {
       criteria.push({
         name,
         points,
-        guidance: `Teacher rubric criterion: ${name} (${points} points)`
+        guidance: `Teacher rubric criterion: ${name} (${points} points)`,
       });
     }
   }
 
   // Calculate the sum of criteria points
   const criteriaSum = criteria.reduce((sum, c) => sum + c.points, 0);
-  
+
   // SAFEGUARD: Common performance level counts that should NEVER be used as totalPoints
   // when explicit category weights exist
   const performanceLevelCounts = [3, 4, 5, 6];
   const hasCategoryWeights = criteria.length >= 2 && criteriaSum >= 10;
-  
+
   // Determine final total points
   let finalTotal: number;
-  let scoringMode: 'weighted-100' | 'explicit-total' | 'criteria-sum' = 'criteria-sum';
-  
+  let scoringMode: "weighted-100" | "explicit-total" | "criteria-sum" = "criteria-sum";
+
   // Check for weighted-100 first (highest priority for category-based rubrics)
   if (criteriaSum === 100 && criteria.length >= 2) {
     finalTotal = 100;
-    scoringMode = 'weighted-100';
+    scoringMode = "weighted-100";
     console.log(`[grade-paper] Rubric criteria sum to 100 — using 100-point scale`);
   }
   // SAFEGUARD: If explicit total matches a performance level count AND we have category weights
-  else if (explicitTotal && hasPerformanceLevels && hasCategoryWeights && performanceLevelCounts.includes(explicitTotal)) {
+  else if (
+    explicitTotal &&
+    hasPerformanceLevels &&
+    hasCategoryWeights &&
+    performanceLevelCounts.includes(explicitTotal)
+  ) {
     // Explicit total looks like a performance level count - use category sum instead
     finalTotal = criteriaSum;
-    scoringMode = 'criteria-sum';
-    console.log(`[grade-paper] SAFEGUARD: Ignored explicit total ${explicitTotal} (looks like performance level count), using criteria sum ${criteriaSum}`);
-  }
-  else if (explicitTotal) {
+    scoringMode = "criteria-sum";
+    console.log(
+      `[grade-paper] SAFEGUARD: Ignored explicit total ${explicitTotal} (looks like performance level count), using criteria sum ${criteriaSum}`,
+    );
+  } else if (explicitTotal) {
     finalTotal = explicitTotal;
-    scoringMode = 'explicit-total';
+    scoringMode = "explicit-total";
   } else if (criteriaSum > 0) {
     finalTotal = criteriaSum;
   } else {
@@ -478,19 +501,21 @@ function parseRubricText(text: string): ParsedRubric | null {
   // If we found criteria with explicit weights
   if (criteria.length > 0 && finalTotal > 0) {
     // Add metadata about performance levels if detected
-    const updatedCriteria = criteria.map(c => ({
+    const updatedCriteria = criteria.map((c) => ({
       ...c,
-      guidance: hasPerformanceLevels 
+      guidance: hasPerformanceLevels
         ? `${c.guidance}. Use performance level descriptors for qualitative assessment, then convert to proportional score within this ${c.points}-point category.`
-        : c.guidance
+        : c.guidance,
     }));
-    
-    console.log(`[grade-paper] Parsed ${criteria.length} criteria, total: ${finalTotal} points, mode: ${scoringMode}, performance levels: ${hasPerformanceLevels}`);
-    
+
+    console.log(
+      `[grade-paper] Parsed ${criteria.length} criteria, total: ${finalTotal} points, mode: ${scoringMode}, performance levels: ${hasPerformanceLevels}`,
+    );
+
     return {
       totalPoints: finalTotal,
       criteria: updatedCriteria,
-      source: 'teacher'
+      source: "teacher",
     };
   }
 
@@ -498,14 +523,16 @@ function parseRubricText(text: string): ParsedRubric | null {
   if (explicitTotal) {
     return {
       totalPoints: explicitTotal,
-      criteria: [{
-        name: "Overall Assessment",
-        points: explicitTotal,
-        guidance: hasPerformanceLevels
-          ? "Evaluate based on teacher's rubric criteria. Use performance level descriptors for qualitative assessment, then convert to proportional score."
-          : "Evaluate based on teacher's rubric criteria in the text"
-      }],
-      source: 'teacher'
+      criteria: [
+        {
+          name: "Overall Assessment",
+          points: explicitTotal,
+          guidance: hasPerformanceLevels
+            ? "Evaluate based on teacher's rubric criteria. Use performance level descriptors for qualitative assessment, then convert to proportional score."
+            : "Evaluate based on teacher's rubric criteria in the text",
+        },
+      ],
+      source: "teacher",
     };
   }
 
@@ -534,15 +561,14 @@ function buildScoringPrompts(params: {
   assignmentDocText?: string;
   enhancedMode?: boolean;
 }): { systemPrompt: string; userPrompt: string } {
+  const rubricText = params.parsedRubric.criteria
+    .map((c) => `- ${c.name}: ${c.points} points (${c.guidance})`)
+    .join("\n");
 
-  const rubricText = params.parsedRubric.criteria.map(c => 
-    `- ${c.name}: ${c.points} points (${c.guidance})`
-  ).join('\n');
-
-  const isAutoGenerated = params.parsedRubric.source === 'auto-generated';
+  const isAutoGenerated = params.parsedRubric.source === "auto-generated";
   const hasAnswerKey = !!params.answerKey?.trim();
   const enhancedMode = params.enhancedMode || false;
-  
+
   // Detect if this is a 100-point weighted rubric
   const is100PointScale = params.parsedRubric.totalPoints === 100;
 
@@ -552,26 +578,49 @@ function buildScoringPrompts(params: {
 MANDATORY RULES:
 1. ALWAYS produce a numeric score out of ${params.parsedRubric.totalPoints} points.
 2. Score must be calculated by summing points from each rubric criterion.
-3. ${isAutoGenerated 
-    ? 'Rubric is auto-generated (default template). Be transparent about this in teacher_notes.' 
-    : 'Rubric is teacher-provided and LOCKED for scoring. Follow it exactly as the single source of truth.'}
-${hasAnswerKey ? `4. ANSWER KEY PROVIDED: Use it to validate correctness for each question/item.
+3. ${
+    isAutoGenerated
+      ? "Rubric is auto-generated (default template). Be transparent about this in teacher_notes."
+      : "Rubric is teacher-provided and LOCKED for scoring. Follow it exactly as the single source of truth."
+  }
+${
+  hasAnswerKey
+    ? `4. ANSWER KEY PROVIDED: Use it to validate correctness for each question/item.
    - Compare student responses against the answer key exactly
    - Award full credit only when the answer matches (allowing for equivalent expressions)
    - Detect partial credit opportunities when student shows correct process but wrong final answer
-   - Resolve ambiguous responses by referencing the answer key` : ''}
-${enhancedMode ? `5. ENHANCED MODE ACTIVE: Both rubric AND answer key are present.
+   - Resolve ambiguous responses by referencing the answer key`
+    : ""
+}
+${
+  enhancedMode
+    ? `5. ENHANCED MODE ACTIVE: Both rubric AND answer key are present.
    - Use the RUBRIC for scoring structure (criteria and point allocations)
    - Use the ANSWER KEY as the correctness reference
    - Cross-validate: ensure rubric scores align with answer key correctness
-   - This provides the highest grading accuracy` : ''}
+   - This provides the highest grading accuracy`
+    : ""
+}
 
 CRITICAL: PERFORMANCE LEVELS vs CATEGORY WEIGHTS
 - If a rubric has explicit CATEGORY POINT VALUES (e.g., "Accuracy – 40 points", "Work Shown – 30 points"), these are the actual point allocations. Do NOT normalize to a 5-point scale.
 - If a rubric has PERFORMANCE LEVELS (e.g., "4 = Excellent, 3 = Proficient, 2 = Developing, 1 = Beginning"), these are DESCRIPTORS, not points.
 - When both exist: Use performance levels to determine quality within each category, then apply proportional scaling to that category's point weight.
-- Example: If "Accuracy" is worth 40 points and student earns "Proficient (3/4)", award (3/4) × 40 = 30 points for that category.
-${is100PointScale ? `- This rubric uses a 100-point scale. Output the final score out of 100 points.` : ''}
+
+MANDATORY PERFORMANCE LEVEL MAPPING (4-level rubrics):
+- Level 4 (Excellent/Exemplary) = 100% of category weight
+- Level 3 (Proficient/Competent) = 75% of category weight
+- Level 2 (Developing/Basic) = 50% of category weight
+- Level 1 (Beginning/Needs Work) = 25% of category weight
+
+SCORING FORMULA: earned_points = ROUND(category_weight × level_percentage)
+- Example 1: Accuracy worth 40 pts, student earns Proficient (Level 3) → 40 × 0.75 = 30 points
+- Example 2: Problem Solving worth 20 pts, student earns Proficient (Level 3) → 20 × 0.75 = 15 points
+- Example 3: Work Shown worth 30 pts, student earns Excellent (Level 4) → 30 × 1.00 = 30 points
+- Example 4: Completion worth 10 pts, student earns Developing (Level 2) → 10 × 0.50 = 5 points
+
+CRITICAL: Apply this mapping consistently. Never use 60% for Proficient or 80% for Excellent.
+${is100PointScale ? `- This rubric uses a 100-point scale. Output the final score out of 100 points.` : ""}
 
 6. If something is unclear or illegible, award 0 points for that criterion and note it.
 7. Include a confidence level: "high" if grading is straightforward, "medium" if some interpretation needed, "low" if significant uncertainty.
@@ -584,24 +633,32 @@ Subject: ${params.subject || "Not provided"}
 Grade level: ${params.gradeLevel || "Not provided"}
 Assignment type: ${params.assignmentType || "Not provided"}
 
-RUBRIC (${isAutoGenerated ? 'Auto-Generated - Default Template' : 'Teacher-Provided — LOCKED FOR SCORING'}):
+RUBRIC (${isAutoGenerated ? "Auto-Generated - Default Template" : "Teacher-Provided — LOCKED FOR SCORING"}):
 Total Points: ${params.parsedRubric.totalPoints}
 Criteria:
 ${rubricText}
 
-${params.answerKey ? `ANSWER KEY (Use for correctness validation):
+${
+  params.answerKey
+    ? `ANSWER KEY (Use for correctness validation):
 ${params.answerKey}
-` : ''}
-${params.assignmentDocText ? `ASSIGNMENT CONTEXT:
+`
+    : ""
+}
+${
+  params.assignmentDocText
+    ? `ASSIGNMENT CONTEXT:
 ${params.assignmentDocText}
-` : ''}
+`
+    : ""
+}
 STUDENT WORK:
 ${params.studentWork}
 
 TASK:
 Grade this student work using the rubric above. You MUST:
 1. Evaluate each criterion and award points based on evidence in the student work
-${hasAnswerKey ? '2. Cross-reference answers against the ANSWER KEY for correctness validation' : '2. Evaluate based on rubric criteria and student reasoning'}
+${hasAnswerKey ? "2. Cross-reference answers against the ANSWER KEY for correctness validation" : "2. Evaluate based on rubric criteria and student reasoning"}
 3. Calculate total earned points (sum of all criterion scores)
 4. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
 5. Determine confidence level based on clarity of student work and rubric alignment
@@ -610,7 +667,7 @@ OUTPUT FORMAT (STRICT JSON):
 {
   "mode": "scoring",
   "rubric_source": "${params.parsedRubric.source}",
-  "grading_mode": "${enhancedMode ? 'enhanced' : hasAnswerKey ? 'answer_key_assisted' : 'rubric_only'}",
+  "grading_mode": "${enhancedMode ? "enhanced" : hasAnswerKey ? "answer_key_assisted" : "rubric_only"}",
   "suggested_score": {
     "earned_points": <number>,
     "possible_points": ${params.parsedRubric.totalPoints},
@@ -639,11 +696,7 @@ OUTPUT FORMAT (STRICT JSON):
 /**
  * Normalize and validate grading result
  */
-function normalizeGradingResult(
-  result: Record<string, unknown>,
-  rubric: ParsedRubric
-): Record<string, unknown> {
-  
+function normalizeGradingResult(result: Record<string, unknown>, rubric: ParsedRubric): Record<string, unknown> {
   result.mode = "scoring";
   result.rubric_source = result.rubric_source || rubric.source;
 
@@ -673,11 +726,11 @@ function normalizeGradingResult(
 
   // Extract and validate score
   const suggestedScore = result.suggested_score as Record<string, unknown> | undefined;
-  if (suggestedScore && typeof suggestedScore === 'object') {
+  if (suggestedScore && typeof suggestedScore === "object") {
     const earned = Number(suggestedScore.earned_points) || 0;
     const possible = rubric.totalPoints;
     const percent = Math.round((earned / possible) * 100);
-    
+
     result.total_score = earned;
     result.max_score = possible;
     result.score_suggestion = `${earned}/${possible}`;
@@ -695,17 +748,17 @@ function normalizeGradingResult(
   }
 
   // Build score derivation from rubric breakdown
-  const breakdown = result.rubric_breakdown as Array<{
-    criterion: string;
-    earned_points: number;
-    possible_points: number;
-  }> | undefined;
+  const breakdown = result.rubric_breakdown as
+    | Array<{
+        criterion: string;
+        earned_points: number;
+        possible_points: number;
+      }>
+    | undefined;
 
   if (breakdown && Array.isArray(breakdown) && breakdown.length > 0) {
-    const derivationParts = breakdown.map(b =>
-      `${b.criterion}: ${b.earned_points}/${b.possible_points}`
-    );
-    result.score_derivation = derivationParts.join(' | ');
+    const derivationParts = breakdown.map((b) => `${b.criterion}: ${b.earned_points}/${b.possible_points}`);
+    result.score_derivation = derivationParts.join(" | ");
   }
 
   // Ensure teacher_notes exists
@@ -714,13 +767,13 @@ function normalizeGradingResult(
   }
 
   // Add auto-generated rubric note if applicable
-  if (rubric.source === 'auto-generated' && Array.isArray(result.teacher_notes)) {
-    const hasNote = (result.teacher_notes as string[]).some(n => 
-      n.toLowerCase().includes('auto-generated') || n.toLowerCase().includes('default')
+  if (rubric.source === "auto-generated" && Array.isArray(result.teacher_notes)) {
+    const hasNote = (result.teacher_notes as string[]).some(
+      (n) => n.toLowerCase().includes("auto-generated") || n.toLowerCase().includes("default"),
     );
     if (!hasNote) {
       (result.teacher_notes as string[]).unshift(
-        "Scored using Bottor's default 20-point template (no rubric detected). Consider providing a rubric for more precise scoring."
+        "Scored using Bottor's default 20-point template (no rubric detected). Consider providing a rubric for more precise scoring.",
       );
     }
   }
