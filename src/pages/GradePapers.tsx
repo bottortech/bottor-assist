@@ -108,11 +108,13 @@ const RUBRIC_KEYWORDS = [
 interface RubricMeta {
   totalPoints: number | null;
   hasPointValues: boolean;
-  pointScaleType: 'total' | 'per-question' | 'by-category' | 'inferred' | 'none';
+  pointScaleType: 'total' | 'per-question' | 'by-category' | 'weighted-100' | 'inferred' | 'none';
   rubricItems: Array<{ label: string; pointsPossible: number }>;
   source: 'parsed' | 'inferred' | 'none';
   detectionConfidence: 'high' | 'low' | 'none';
   rawTotalMatch?: string; // For debugging/display
+  hasPerformanceLevels?: boolean; // Detected "4 = Excellent" style descriptors
+  isWeightedRubric?: boolean; // Category weights sum to 100
 }
 
 /**
@@ -132,6 +134,22 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
   const items: Array<{ label: string; pointsPossible: number }> = [];
   let explicitTotal: number | null = null;
   let rawTotalMatch: string | undefined;
+  let hasPerformanceLevels = false;
+
+  // DETECT PERFORMANCE LEVELS - these are QUALITATIVE DESCRIPTORS, not points
+  // Common patterns: "4 = Excellent", "4 - Exceeds", "Level 4:", "Score 4:"
+  const performanceLevelPatterns = [
+    /[1-5]\s*[=\-–:]\s*(?:excellent|exceeds|proficient|meets|developing|emerging|beginning|unsatisfactory|poor|advanced|mastery|competent|novice)/i,
+    /(?:level|score|rating)\s*[1-5]/i,
+    /(?:excellent|proficient|developing|beginning)\s*[=\-–:]\s*[1-5]/i,
+  ];
+  
+  for (const pattern of performanceLevelPatterns) {
+    if (pattern.test(rubricText)) {
+      hasPerformanceLevels = true;
+      break;
+    }
+  }
 
   // (A) PRIORITY: Look for EXPLICIT total points patterns FIRST
   // These patterns are the most authoritative and should NEVER be guessed
@@ -162,15 +180,16 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
     }
   }
 
-  // (B) Parse individual criteria/items with points
-  // Patterns: "Category: 10 pts", "Category (10 points)", "Category - 10", "10 pts: Category"
-  const itemPatterns = [
-    /([A-Za-z][A-Za-z\s\/\-]+?)(?::|[\(\[])\s*(\d+)\s*(?:pts?|points?)?(?:[\)\]])?/g,
-    /(\d+)\s*(?:pts?|points?)\s*[-:]\s*([A-Za-z][A-Za-z\s\/\-]+)/g,
+  // (B) Parse individual criteria/items with EXPLICIT CATEGORY WEIGHTS
+  // Patterns: "Accuracy – 40 points", "Work Shown (30 pts)", "Clarity: 20 points"
+  // IMPORTANT: These are category point weights, NOT performance levels
+  const categoryPatterns = [
+    /([A-Za-z][A-Za-z\s\/\-–]+?)(?:[\-–:]|\s*[\(\[])\s*(\d+)\s*(?:pts?|points?)(?:[\)\]])?/g,
+    /(\d+)\s*(?:pts?|points?)\s*[-:–]\s*([A-Za-z][A-Za-z\s\/\-]+)/g,
     /([A-Za-z][A-Za-z\s\/\-]+?)\s*[-–]\s*(\d+)\s*(?:pts?|points?)?/g,
   ];
 
-  for (const pattern of itemPatterns) {
+  for (const pattern of categoryPatterns) {
     let match;
     while ((match = pattern.exec(rubricText)) !== null) {
       let label: string;
@@ -187,11 +206,15 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
       
       // Validate - exclude common false positives
       const lowerLabel = label.toLowerCase();
-      const isExcluded = ['total', 'maximum', 'max', 'out of', 'score'].some(
+      const isExcluded = ['total', 'maximum', 'max', 'out of', 'score', 'level', 'rating'].some(
         ex => lowerLabel === ex || lowerLabel.startsWith(ex + ' ')
       );
       
-      if (!isExcluded && label.length > 2 && label.length < 60 && points > 0 && points <= 100) {
+      // When performance levels are detected, require higher point values to be category weights
+      // (Small numbers like 1-5 are likely performance levels, not category weights)
+      const minPoints = hasPerformanceLevels ? 10 : 1;
+      
+      if (!isExcluded && label.length > 2 && label.length < 60 && points >= minPoints && points <= 100) {
         // Avoid duplicates
         if (!items.some(i => i.label.toLowerCase() === label.toLowerCase())) {
           items.push({ label, pointsPossible: points });
@@ -208,9 +231,19 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
   let pointScaleType: RubricMeta['pointScaleType'] = 'none';
   let hasPointValues = false;
   let detectionConfidence: RubricMeta['detectionConfidence'] = 'none';
+  let isWeightedRubric = false;
 
-  // PRIORITY A: Explicit total always wins
-  if (explicitTotal && explicitTotal > 0) {
+  // Check if this is a weighted 100-point rubric
+  if (sumOfItems === 100 && items.length >= 2) {
+    // Category weights sum to exactly 100 - this is a weighted rubric
+    totalPoints = 100;
+    hasPointValues = true;
+    pointScaleType = 'weighted-100';
+    detectionConfidence = 'high';
+    isWeightedRubric = true;
+  }
+  // PRIORITY A: Explicit total always wins (unless we already detected weighted-100)
+  else if (explicitTotal && explicitTotal > 0) {
     totalPoints = explicitTotal;
     hasPointValues = true;
     pointScaleType = 'total';
@@ -221,7 +254,7 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
     totalPoints = sumOfItems;
     hasPointValues = true;
     pointScaleType = items.length > 1 ? 'by-category' : 'per-question';
-    // Lower confidence if sum seems unusually low for a multi-item rubric
+    // Higher confidence if sum is reasonable for a multi-item rubric
     detectionConfidence = sumOfItems >= 10 || items.length <= 2 ? 'high' : 'low';
   } 
   // PRIORITY C/D: Try inference
@@ -232,6 +265,7 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
         ...inferred,
         source: 'inferred',
         detectionConfidence: 'low',
+        hasPerformanceLevels,
       };
     }
     // Return null total - UI will prompt for manual input
@@ -242,6 +276,7 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
       rubricItems: [],
       source: 'none',
       detectionConfidence: 'none',
+      hasPerformanceLevels,
     };
   }
 
@@ -253,6 +288,8 @@ function parseRubricForPoints(rubricText: string, answerKeyText?: string, studen
     source: 'parsed',
     detectionConfidence,
     rawTotalMatch,
+    hasPerformanceLevels,
+    isWeightedRubric,
   };
 }
 
@@ -874,38 +911,55 @@ export default function GradePapers() {
   // Determine if scoring is valid based on parsed rubric or manual settings
   // UPDATED: Never block with errors when rubric is detected - default to 20 points
   const scoringValidation = useMemo(() => {
+    // Helper to build appropriate badge message based on rubric type
+    const buildBadgeMessage = (total: number, isManual: boolean, isInferred: boolean) => {
+      if (isManual) {
+        return `Rubric locked — scoring enabled (Total: ${total} points, manually set)`;
+      }
+      if (parsedRubricMeta.isWeightedRubric) {
+        return `Weighted rubric detected — Total: ${total} points`;
+      }
+      if (parsedRubricMeta.pointScaleType === 'weighted-100') {
+        return `Weighted rubric detected — Total: ${total} points`;
+      }
+      if (isInferred) {
+        return `Rubric locked — total points inferred as ${total} (editable below)`;
+      }
+      return `Rubric locked — scoring enabled (Total: ${total} points)`;
+    };
+
     // If rubric is locked with effective total points, scoring is valid
     if (rubricLocked && effectiveTotalPoints) {
       const isManualOverride = manualTotalPoints && manualTotalPoints > 0;
-      const isParsedWithHighConfidence = parsedRubricMeta.detectionConfidence === 'high';
       
       return { 
         isValid: true, 
         totalPoints: effectiveTotalPoints,
         source: isManualOverride ? 'manual' as const : parsedRubricMeta.source,
         confidence: isManualOverride ? 'high' as const : parsedRubricMeta.detectionConfidence,
-        message: isManualOverride
-          ? `Rubric locked — scoring enabled (Total: ${effectiveTotalPoints} points, manually set)`
-          : isParsedWithHighConfidence
-            ? `Rubric locked — scoring enabled (Total: ${effectiveTotalPoints} points)`
-            : totalPointsInferred
-              ? `Rubric locked — total points inferred as ${effectiveTotalPoints} (editable below)`
-              : `Rubric locked — scoring enabled (Total: ${effectiveTotalPoints} points)`
+        message: buildBadgeMessage(effectiveTotalPoints, isManualOverride, totalPointsInferred)
       };
     }
 
     // Rubric detected but not locked - still valid with effective total
     if (rubricDetected && effectiveTotalPoints) {
+      let message: string;
+      if (parsedRubricMeta.isWeightedRubric || parsedRubricMeta.pointScaleType === 'weighted-100') {
+        message = `Weighted rubric detected — Total: ${effectiveTotalPoints} points`;
+      } else if (totalPointsInferred) {
+        message = `Rubric detected — total points inferred (${effectiveTotalPoints}). Lock rubric or edit below.`;
+      } else if (parsedRubricMeta.hasPointValues) {
+        message = `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`;
+      } else {
+        message = `Points inferred from ${parsedRubricMeta.pointScaleType === 'per-question' ? 'answer key' : 'content'} (Total: ${effectiveTotalPoints} points)`;
+      }
+      
       return { 
         isValid: true, 
         totalPoints: effectiveTotalPoints,
         source: parsedRubricMeta.source,
         confidence: parsedRubricMeta.detectionConfidence,
-        message: totalPointsInferred 
-          ? `Rubric detected — total points inferred (${effectiveTotalPoints}). Lock rubric or edit below.`
-          : parsedRubricMeta.hasPointValues 
-            ? `Rubric detected — scoring enabled (Total: ${effectiveTotalPoints} points)`
-            : `Points inferred from ${parsedRubricMeta.pointScaleType === 'per-question' ? 'answer key' : 'content'} (Total: ${effectiveTotalPoints} points)`
+        message
       };
     }
 
