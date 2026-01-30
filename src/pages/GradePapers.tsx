@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
   ArrowLeft,
@@ -50,6 +51,7 @@ import {
   BookOpen,
   Calculator,
   PenLine,
+  Lightbulb,
 } from "lucide-react";
 import {
   Collapsible,
@@ -779,7 +781,12 @@ export default function GradePapers() {
   
   // ELA-specific state
   const [elaRubricText, setElaRubricText] = useState("");
+  const [elaRubricSource, setElaRubricSource] = useState<"paste" | "file">("paste");
+  const [elaRubricFileName, setElaRubricFileName] = useState<string | null>(null);
+  const [elaRubricFileLoading, setElaRubricFileLoading] = useState(false);
+  const [elaRubricTipsOpen, setElaRubricTipsOpen] = useState(false);
   const [elaResults, setElaResults] = useState<Map<string, ELAGradeResponse>>(new Map());
+  const elaRubricFileInputRef = useRef<HTMLInputElement>(null);
 
   // Grading Criteria accordion state (collapsed by default)
   const [gradingCriteriaOpen, setGradingCriteriaOpen] = useState(false);
@@ -1211,6 +1218,97 @@ export default function GradePapers() {
   const handleAnswerKeyFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) answerKeyUpload.addFiles(e.target.files);
     if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = "";
+  };
+
+  // ELA Rubric file upload handler
+  const handleElaRubricFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (elaRubricFileInputRef.current) elaRubricFileInputRef.current.value = "";
+    
+    // Validate file type
+    const allowedTypes = ['.txt', '.doc', '.docx', '.pdf'];
+    const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!allowedTypes.includes(fileExt)) {
+      toast({ 
+        title: "Invalid file type", 
+        description: "Please upload a .txt, .doc, .docx, or .pdf file",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setElaRubricFileLoading(true);
+    setElaRubricFileName(file.name);
+    
+    try {
+      // Handle text files directly
+      if (fileExt === '.txt') {
+        const text = await file.text();
+        setElaRubricText(text);
+        setElaRubricSource('file');
+        toast({ title: "Rubric loaded!", description: `${file.name} (${text.length} characters)` });
+        setElaRubricFileLoading(false);
+      } 
+      // For PDF/DOC files, we need to extract text via edge function
+      else if (fileExt === '.pdf' || fileExt === '.doc' || fileExt === '.docx') {
+        // Convert file to base64 for processing
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const base64 = (event.target?.result as string)?.split(',')[1];
+            if (!base64) throw new Error('Failed to read file');
+            
+            // Call extract-text edge function
+            const { data, error } = await supabase.functions.invoke("extract-text", {
+              body: {
+                file_data: base64,
+                file_name: file.name,
+                mime_type: file.type || 'application/octet-stream',
+              },
+            });
+            
+            if (error) throw error;
+            
+            if (data?.text) {
+              setElaRubricText(data.text);
+              setElaRubricSource('file');
+              toast({ title: "Rubric extracted!", description: `${file.name} (${data.text.length} characters)` });
+            } else {
+              throw new Error('No text extracted from file');
+            }
+          } catch (err) {
+            console.error('ELA rubric extraction error:', err);
+            toast({ 
+              title: "Extraction failed", 
+              description: "Could not extract text from file. Try pasting the rubric instead.",
+              variant: "destructive"
+            });
+            setElaRubricFileName(null);
+          } finally {
+            setElaRubricFileLoading(false);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      console.error('ELA rubric file error:', err);
+      toast({ 
+        title: "File read error", 
+        description: "Could not read the file. Please try again.",
+        variant: "destructive"
+      });
+      setElaRubricFileName(null);
+      setElaRubricFileLoading(false);
+    }
+  };
+
+  // Clear ELA rubric file
+  const clearElaRubricFile = () => {
+    setElaRubricText("");
+    setElaRubricFileName(null);
+    setElaRubricSource("paste");
   };
 
 
@@ -1764,40 +1862,6 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* ===== ELA RUBRIC INPUT (Conditional) ===== */}
-        {gradingSubject === "ela" && (
-          <Card className="border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <PenLine className="w-4 h-4 text-purple-500" />
-                ELA Rubric
-                <span className="text-xs font-normal text-muted-foreground ml-1">(Optional)</span>
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Leave blank for feedback-only mode. Add a rubric for scored grading.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-0">
-              <div className="relative">
-                <Textarea
-                  placeholder="Paste your ELA/Writing rubric here...&#10;&#10;Example:&#10;Ideas & Content (25 pts): Development of ideas with supporting details&#10;Organization (20 pts): Structure, transitions, logical flow&#10;Voice (15 pts): Engagement, appropriate tone&#10;..."
-                  value={elaRubricText}
-                  onChange={(e) => setElaRubricText(e.target.value)}
-                  className="min-h-[200px] text-sm"
-                />
-                {elaRubricText.length > 0 && (
-                  <div className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-background/80 px-2 py-0.5 rounded">
-                    {elaRubricText.length} characters
-                  </div>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                💡 For best results, include point values for each criterion (e.g., "Ideas: 25 pts")
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -2034,7 +2098,151 @@ export default function GradePapers() {
           </CardContent>
         </Card>
 
-        {/* ===== GRADING CRITERIA (OPTIONAL) - COLLAPSED ACCORDION ===== */}
+        {/* ===== ELA RUBRIC INPUT (Conditional) - BELOW Student Work ===== */}
+        {gradingSubject === "ela" && (
+          <Card className="border border-purple-200 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-900/10 transition-all duration-300">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <PenLine className="w-4 h-4 text-purple-500" />
+                ELA Rubric
+                <span className="text-xs font-normal text-muted-foreground ml-1">(Optional)</span>
+                {elaRubricText.length > 0 && (
+                  <Badge variant="secondary" className="ml-auto text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border-purple-300">
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    Ready
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Leave blank for feedback-only mode. Add a rubric for scored grading.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+              {/* Tabs for Paste Text vs Upload File */}
+              <Tabs defaultValue="paste" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="paste" className="text-sm">
+                    <FileText className="w-4 h-4 mr-2" />
+                    Paste Text
+                  </TabsTrigger>
+                  <TabsTrigger value="upload" className="text-sm">
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload File
+                  </TabsTrigger>
+                </TabsList>
+                
+                {/* Tab 1: Paste Text */}
+                <TabsContent value="paste" className="space-y-3 mt-4">
+                  <div className="relative">
+                    <Textarea
+                      placeholder="Paste your ELA/Writing rubric here...&#10;&#10;Example:&#10;Ideas & Content (25 pts): Development of ideas with supporting details&#10;Organization (20 pts): Structure, transitions, logical flow&#10;Voice (15 pts): Engagement, appropriate tone&#10;..."
+                      value={elaRubricSource === 'paste' ? elaRubricText : ''}
+                      onChange={(e) => {
+                        setElaRubricText(e.target.value);
+                        setElaRubricSource('paste');
+                        setElaRubricFileName(null);
+                      }}
+                      className="min-h-[200px] text-sm resize-y"
+                      disabled={elaRubricSource === 'file' && elaRubricFileName !== null}
+                    />
+                    {elaRubricSource === 'paste' && elaRubricText.length > 0 && (
+                      <div className="absolute bottom-2 right-2 text-xs text-muted-foreground bg-background/90 px-2 py-0.5 rounded border">
+                        {elaRubricText.length} characters
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Lightbulb className="w-3 h-3" />
+                    For best results, include point values for each criterion (e.g., "Ideas: 25 pts")
+                  </p>
+                </TabsContent>
+                
+                {/* Tab 2: Upload File */}
+                <TabsContent value="upload" className="space-y-3 mt-4">
+                  <input
+                    ref={elaRubricFileInputRef}
+                    type="file"
+                    accept=".txt,.doc,.docx,.pdf"
+                    onChange={handleElaRubricFileSelect}
+                    className="hidden"
+                    id="ela-rubric-file-upload"
+                  />
+                  
+                  {/* Show upload button or file info */}
+                  {!elaRubricFileName ? (
+                    <label
+                      htmlFor="ela-rubric-file-upload"
+                      className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-lg cursor-pointer hover:border-purple-400 dark:hover:border-purple-600 transition-colors bg-purple-50/50 dark:bg-purple-900/20"
+                    >
+                      <Upload className="w-8 h-8 text-purple-400 mb-2" />
+                      <span className="text-sm font-medium text-foreground">Upload Rubric File</span>
+                      <span className="text-xs text-muted-foreground mt-1">
+                        Accepts .txt, .doc, .docx, .pdf
+                      </span>
+                    </label>
+                  ) : (
+                    <div className="p-4 border border-purple-200 dark:border-purple-800 rounded-lg bg-purple-50/50 dark:bg-purple-900/20">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {elaRubricFileLoading ? (
+                            <Loader2 className="w-5 h-5 text-purple-500 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-5 h-5 text-purple-500" />
+                          )}
+                          <div>
+                            <p className="text-sm font-medium">{elaRubricFileName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {elaRubricFileLoading 
+                                ? 'Extracting text...' 
+                                : `${elaRubricText.length} characters extracted`
+                              }
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={clearElaRubricFile}
+                          className="text-muted-foreground hover:text-destructive"
+                          disabled={elaRubricFileLoading}
+                        >
+                          <X className="w-4 h-4" />
+                          Clear
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Upload your rubric as a text or document file
+                  </p>
+                </TabsContent>
+              </Tabs>
+              
+              {/* Rubric Tips - Collapsible */}
+              <Collapsible open={elaRubricTipsOpen} onOpenChange={setElaRubricTipsOpen}>
+                <CollapsibleTrigger asChild>
+                  <button className="flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors w-full justify-start py-2">
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span className="font-medium">📋 Rubric Tips</span>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${elaRubricTipsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-2">
+                  <div className="p-3 rounded-lg bg-purple-100/50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 text-xs text-purple-800 dark:text-purple-200 space-y-2">
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>Include specific criteria like <strong>Ideas & Content</strong>, <strong>Organization</strong>, <strong>Language & Style</strong>, <strong>Conventions</strong>.</li>
+                      <li>For scored grading, include point values (e.g., "Ideas: 25 pts").</li>
+                      <li>Leave blank for <strong>feedback-only mode</strong> — qualitative feedback without numeric scores.</li>
+                    </ul>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ===== GRADING CRITERIA (OPTIONAL - MATH ONLY) - COLLAPSED ACCORDION ===== */}
+        {gradingSubject === "math" && (
         <Collapsible open={gradingCriteriaOpen} onOpenChange={setGradingCriteriaOpen}>
           <Card className={`border shadow-sm transition-colors ${
             hasGradingCriteria 
@@ -2266,10 +2474,11 @@ export default function GradePapers() {
             </CollapsibleContent>
           </Card>
         </Collapsible>
+        )}
 
-        {/* ===== GRADING STATUS BANNERS ===== */}
+        {/* ===== GRADING STATUS BANNERS (MATH ONLY) ===== */}
         {/* Answer Key Detected Banner */}
-        {answerKeyDetected && !rubricLocked && (
+        {gradingSubject === "math" && answerKeyDetected && !rubricLocked && (
           <Card className="border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -2290,7 +2499,7 @@ export default function GradePapers() {
         )}
 
         {/* Rubric + Answer Key: Enhanced Scoring */}
-        {rubricLocked && answerKeyDetected && (
+        {gradingSubject === "math" && rubricLocked && answerKeyDetected && (
           <Card className="border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
             <CardContent className="p-4">
               <div className="flex items-center justify-between gap-3">
@@ -2333,7 +2542,7 @@ export default function GradePapers() {
         )}
 
         {/* Rubric Only: Locked for Scoring - GREEN status card with parsed points info */}
-        {rubricLocked && !answerKeyDetected && (
+        {gradingSubject === "math" && rubricLocked && !answerKeyDetected && (
           <Card className="border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
             <CardContent className="p-4">
               <div className="flex items-center justify-between gap-3">
@@ -2378,7 +2587,7 @@ export default function GradePapers() {
         )}
 
         {/* Total Points Editor - NON-BLOCKING warning when points are inferred (defaulted to 20) */}
-        {rubricLocked && totalPointsInferred && (
+        {gradingSubject === "math" && rubricLocked && totalPointsInferred && (
           <Card className="border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
             <CardContent className="p-4 space-y-3">
               <div className="flex items-start gap-3">
@@ -2414,7 +2623,7 @@ export default function GradePapers() {
         )}
 
         {/* Scoring validation message when not locked but has criteria */}
-        {!rubricLocked && hasGradingCriteria && scoringValidation.message && (
+        {gradingSubject === "math" && !rubricLocked && hasGradingCriteria && scoringValidation.message && (
           <Card className={`border ${scoringValidation.isValid ? 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20' : 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20'}`}>
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
@@ -2429,7 +2638,7 @@ export default function GradePapers() {
 
         {/* ===== SCORING OPTIONS (HIDDEN when rubric is locked) ===== */}
         {/* Only show when grading criteria exists BUT rubric is NOT locked */}
-        {hasGradingCriteria && !rubricLocked && (
+        {gradingSubject === "math" && hasGradingCriteria && !rubricLocked && (
           <ScoringOptionsSection
             scoringMode={scoringMode}
             onScoringModeChange={setScoringMode}
@@ -2443,7 +2652,7 @@ export default function GradePapers() {
         )}
 
         {/* ===== MODE INDICATOR ===== */}
-        {!rubricDetected && studentUpload.files.length > 0 && (
+        {gradingSubject === "math" && !rubricDetected && studentUpload.files.length > 0 && (
           <Card className="border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
@@ -2456,7 +2665,34 @@ export default function GradePapers() {
           </Card>
         )}
 
-        {/* ===== GENERATE BUTTON ===== */}
+        {/* ELA: Feedback-only mode indicator */}
+        {gradingSubject === "ela" && studentUpload.files.length > 0 && elaRubricText.trim().length === 0 && (
+          <Card className="border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <p className="text-sm text-purple-700 dark:text-purple-300">
+                  <span className="font-medium">Feedback only mode</span> — add an ELA rubric above to unlock scored grading.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ELA: Rubric provided indicator */}
+        {gradingSubject === "ela" && studentUpload.files.length > 0 && elaRubricText.trim().length > 0 && (
+          <Card className="border border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-900/20">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <p className="text-sm text-purple-700 dark:text-purple-300">
+                  <span className="font-medium">ELA rubric provided</span> — scored grading enabled ({elaRubricText.length} characters).
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="sticky bottom-4 z-10 bg-background/95 backdrop-blur-sm p-4 -mx-4 rounded-lg shadow-lg border space-y-2">
           {/* Show info about processing state */}
           {shouldWaitForProcessing && (
@@ -2489,15 +2725,26 @@ export default function GradePapers() {
                     ) : (
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
-                    {studentGroups.length > 1
-                      ? rubricDetected 
-                        ? `Generate Grade + Feedback (${studentGroups.length})`
-                        : `Generate Feedback (${studentGroups.length})`
-                      : hasFailedFiles && studentUpload.hasReadyFiles
-                        ? "Proceed with Ready Files"
-                        : rubricDetected
-                          ? "Generate Grade + Feedback"
-                          : "Generate Feedback"}
+                    {(() => {
+                      // ELA: check if ELA rubric is provided
+                      const elaHasRubric = gradingSubject === "ela" && elaRubricText.trim().length > 0;
+                      // Math: check existing rubric detection
+                      const hasRubricForGrading = gradingSubject === "math" ? rubricDetected : elaHasRubric;
+                      
+                      if (hasFailedFiles && studentUpload.hasReadyFiles) {
+                        return "Proceed with Ready Files";
+                      }
+                      
+                      if (studentGroups.length > 1) {
+                        return hasRubricForGrading 
+                          ? `Generate Grade + Feedback (${studentGroups.length})`
+                          : `Generate Feedback (${studentGroups.length})`;
+                      }
+                      
+                      return hasRubricForGrading
+                        ? "Generate Grade + Feedback"
+                        : "Generate Feedback";
+                    })()}
                   </Button>
                 </div>
               </TooltipTrigger>
