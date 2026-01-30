@@ -470,6 +470,49 @@ const METADATA_LINE_PREFIXES = [
 ];
 
 /**
+ * Assignment title keywords - text containing these is NOT a student name
+ * These answer "WHAT is this about?" not "WHO wrote this?"
+ */
+const ASSIGNMENT_TITLE_KEYWORDS = [
+  // Subject names
+  'english', 'math', 'mathematics', 'science', 'history', 'reading', 'writing',
+  'algebra', 'geometry', 'biology', 'chemistry', 'physics', 'geography',
+  'literature', 'spelling', 'vocabulary', 'grammar', 'social studies',
+  // Assignment types
+  'essay', 'test', 'quiz', 'exam', 'report', 'review', 'worksheet',
+  'homework', 'classwork', 'project', 'lab', 'exercise', 'practice',
+  'assessment', 'evaluation', 'final', 'midterm', 'chapter', 'unit',
+  'lesson', 'activity', 'journal', 'reflection', 'response', 'analysis',
+  // Document indicators
+  'page', 'part', 'section', 'directions', 'instructions', 'rubric',
+  // Generic headers
+  'book', 'persuasive', 'narrative', 'argumentative', 'expository',
+  'creative', 'research', 'summary', 'outline', 'draft', 'revision'
+];
+
+/**
+ * Check if text looks like an assignment title rather than a student name
+ * @returns true if text is an assignment title (NOT a name)
+ */
+function isAssignmentTitle(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  
+  // Check for assignment keywords
+  for (const keyword of ASSIGNMENT_TITLE_KEYWORDS) {
+    if (lower.includes(keyword)) return true;
+  }
+  
+  // Check for numbered patterns like "Chapter 5", "Unit 3", "Page 1"
+  if (/\b(chapter|unit|page|part|section|lesson)\s*\d+/i.test(text)) return true;
+  
+  // Check for grade level patterns like "5th Grade", "Grade 5"
+  if (/\b(grade|gr\.?)\s*\d+|(\d+)(st|nd|rd|th)\s*grade/i.test(text)) return true;
+  
+  return false;
+}
+
+/**
  * Clean a detected name by removing trailing stop-word labels
  * Allows apostrophes and hyphens as valid name characters (e.g., O'Connor, Mary-Jane, D'Andre)
  * @returns cleaned name and confidence level
@@ -570,8 +613,13 @@ function extractNameAfterLabel(text: string): string | null {
 
 /**
  * Detect student name from extracted document text (OCR)
- * Priority: Explicit labels (Name:, Student Name:) > Filename fallback
- * Now includes stop-word filtering and confidence scoring
+ * Priority: Explicit labels (Name:, Student Name:) > Pattern matching
+ * 
+ * DETECTION PHILOSOPHY:
+ * - A student name answers "WHO wrote this?" not "WHAT is this about?"
+ * - Names are personal identifiers (2-4 words, typically capitalized)
+ * - Names usually appear at TOP of pages (first third of document)
+ * - Assignment titles, subject names, and headers are NOT student names
  */
 function detectStudentNameFromText(text: string): { 
   name: string; 
@@ -599,6 +647,11 @@ function detectStudentNameFromText(text: string): {
   for (const line of lines) {
     const nameValue = extractNameAfterLabel(line);
     if (nameValue) {
+      // CRITICAL: Check if this is actually an assignment title, not a name
+      if (isAssignmentTitle(nameValue)) {
+        continue; // Skip this - it's a title like "English Essay"
+      }
+      
       const { name: cleanedName, confidence } = cleanStudentName(nameValue);
       const words = cleanedName.split(/\s+/);
       if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
@@ -611,12 +664,19 @@ function detectStudentNameFromText(text: string): {
   // Allow apostrophes and hyphens in names (e.g., O'Connor, Mary-Jane)
   const firstContentLine = relevantLines.find(l => l.trim().length > 0);
   if (firstContentLine) {
-    const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
-    if (startMatch && startMatch[1]) {
-      const { name: cleanedName, confidence } = cleanStudentName(startMatch[1]);
-      const words = cleanedName.split(/\s+/);
-      if (words.length >= 2 && words.length <= 4) {
-        return { name: cleanedName, source: 'document', confidence };
+    // CRITICAL: Skip if first line looks like an assignment title
+    if (!isAssignmentTitle(firstContentLine)) {
+      const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
+      if (startMatch && startMatch[1]) {
+        const potentialName = startMatch[1];
+        // Double-check this isn't a title
+        if (!isAssignmentTitle(potentialName)) {
+          const { name: cleanedName, confidence } = cleanStudentName(potentialName);
+          const words = cleanedName.split(/\s+/);
+          if (words.length >= 2 && words.length <= 4) {
+            return { name: cleanedName, source: 'document', confidence };
+          }
+        }
       }
     }
   }
@@ -631,7 +691,13 @@ function detectStudentNameFromText(text: string): {
   for (const pattern of byPatterns) {
     const match = filteredText.match(pattern);
     if (match && match[1]) {
-      const { name: cleanedName, confidence } = cleanStudentName(match[1].trim());
+      const potentialName = match[1].trim();
+      // CRITICAL: Skip if this looks like an assignment title
+      if (isAssignmentTitle(potentialName)) {
+        continue;
+      }
+      
+      const { name: cleanedName, confidence } = cleanStudentName(potentialName);
       const words = cleanedName.split(/\s+/);
       if (words.length >= 2 && words.length <= 4 && cleanedName.length >= 3 && cleanedName.length <= 50) {
         return { name: cleanedName, source: 'document', confidence };
