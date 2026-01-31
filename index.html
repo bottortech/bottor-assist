@@ -1,26 +1,269 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- TODO: Set the document title to the name of your application -->
-    <title>Lovable App</title>
-    <meta name="description" content="Lovable Generated Project" />
-    <meta name="author" content="Lovable" />
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wigglewoo Flip & Match</title>
 
-    <!-- TODO: Update og:title to match your application name -->
-    <meta property="og:title" content="Lovable App" />
-    <meta property="og:description" content="Lovable Generated Project" />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+<style>
+:root{
+  --mint:#E9F7F1;
+  --gold:#FFD700;
+  --shadow:0 10px 25px rgba(0,0,0,.15);
+  --radius:18px;
+}
 
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@Lovable" />
-    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
-  </head>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, Arial, sans-serif;
+  background:#f6fbf9;
+  display:flex;
+  justify-content:center;
+  padding:20px;
+}
 
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+.container{
+  width:100%;
+  max-width:1000px;
+}
+
+header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:14px;
+}
+
+header h1{
+  margin:0;
+  font-size:22px;
+}
+
+.stats{
+  display:flex;
+  gap:10px;
+}
+
+.stat{
+  background:#fff;
+  padding:8px 14px;
+  border-radius:999px;
+  box-shadow:var(--shadow);
+  font-weight:600;
+}
+
+.board{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:14px;
+}
+
+@media(max-width:720px){
+  .board{grid-template-columns:repeat(3,1fr)}
+}
+
+.card{
+  aspect-ratio:3/4;
+  perspective:1000px;
+  cursor:pointer;
+}
+
+.card-inner{
+  width:100%;
+  height:100%;
+  position:relative;
+  transform-style:preserve-3d;
+  transition:transform .55s ease;
+}
+
+.card.flipped .card-inner{
+  transform:rotateY(180deg);
+}
+
+.face{
+  position:absolute;
+  inset:0;
+  border-radius:var(--radius);
+  backface-visibility:hidden;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  box-shadow:var(--shadow);
+}
+
+.front{
+  background:var(--mint);
+  position:relative;
+}
+
+.front img{
+  width:70%;
+}
+
+.gear{
+  position:absolute;
+  width:26px;
+  opacity:.5;
+}
+
+.tl{top:10px;left:10px}
+.tr{top:10px;right:10px}
+.bl{bottom:10px;left:10px}
+.br{bottom:10px;right:10px}
+
+.back{
+  transform:rotateY(180deg);
+  background:#fff;
+}
+
+.back img{
+  width:90%;
+  height:90%;
+  object-fit:contain;
+}
+
+.matched{
+  animation:glow .9s infinite alternate;
+}
+
+@keyframes glow{
+  from{box-shadow:0 0 8px rgba(255,215,0,.5)}
+  to{box-shadow:0 0 24px rgba(255,215,0,.9)}
+}
+
+/* WIN OVERLAY */
+.overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.35);
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+
+.overlay.show{display:flex}
+
+.modal{
+  background:#fff;
+  padding:24px;
+  border-radius:20px;
+  text-align:center;
+  box-shadow:0 25px 60px rgba(0,0,0,.35);
+}
+
+.modal button{
+  margin-top:12px;
+  padding:10px 18px;
+  border:none;
+  border-radius:14px;
+  background:var(--mint);
+  font-size:16px;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+  <header>
+    <h1>Wigglewoo Flip & Match</h1>
+    <div class="stats">
+      <div class="stat">Moves: <span id="moves">0</span></div>
+      <div class="stat">Matches: <span id="matches">0</span>/6</div>
+    </div>
+  </header>
+
+  <div class="board" id="board"></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2>🎉 Great job!</h2>
+    <p>You matched all the Wigglewoo cards!</p>
+    <button onclick="startGame()">Play Again</button>
+  </div>
+</div>
+
+<script>
+const poses=[
+ "pose1.png","pose2.png","pose3.png",
+ "pose4.png","pose5.png","pose6.png"
+];
+
+const board=document.getElementById("board");
+const movesEl=document.getElementById("moves");
+const matchesEl=document.getElementById("matches");
+const overlay=document.getElementById("overlay");
+
+let first=null, second=null, lock=false, moves=0, matches=0;
+
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+}
+
+function startGame(){
+  board.innerHTML="";
+  overlay.classList.remove("show");
+  moves=0;matches=0;
+  movesEl.textContent=0;
+  matchesEl.textContent=0;
+  first=second=null;lock=false;
+
+  const deck=[...poses,...poses];
+  shuffle(deck);
+
+  deck.forEach(src=>{
+    const card=document.createElement("div");
+    card.className="card";
+    card.dataset.id=src;
+
+    card.innerHTML=`
+      <div class="card-inner">
+        <div class="face front">
+          <img src="logo.png">
+          <img class="gear tl" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%23163a33' d='M36.9 4.4l1.7 7.4c2 .6 3.9 1.4 5.6 2.4l6.8-3.3 6.2 10.8-5.9 4.8c.3 1.1.5 2.3.6 3.5l7.3 2.2v12.5l-7.3 2.2c-.1 1.2-.3 2.4-.6 3.5l5.9 4.8-6.2 10.8-6.8-3.3c-1.7 1-3.6 1.8-5.6 2.4l-1.7 7.4H24.1l-1.7-7.4c-2-.6-3.9-1.4-5.6-2.4l-6.8 3.3L3.8 53.5l5.9-4.8c-.3-1.1-.5-2.3-.6-3.5L1.8 43V30.5l7.3-2.2c.1-1.2.3-2.4.6-3.5l-5.9-4.8L10 9.2l6.8 3.3c1.7-1 3.6-1.8 5.6-2.4l1.7-7.4h12.8z'/></svg>">
+        </div>
+        <div class="face back">
+          <img src="${src}">
+        </div>
+      </div>`;
+
+    card.onclick=()=>flip(card);
+    board.appendChild(card);
+  });
+}
+
+function flip(card){
+  if(lock||card.classList.contains("flipped"))return;
+  card.classList.add("flipped");
+
+  if(!first){first=card;return;}
+  second=card;lock=true;moves++;movesEl.textContent=moves;
+
+  if(first.dataset.id===second.dataset.id){
+    first.classList.add("matched");
+    second.classList.add("matched");
+    matches++;matchesEl.textContent=matches;
+    resetTurn();
+    if(matches===6)setTimeout(()=>overlay.classList.add("show"),600);
+  }else{
+    setTimeout(()=>{
+      first.classList.remove("flipped");
+      second.classList.remove("flipped");
+      resetTurn();
+    },900);
+  }
+}
+
+function resetTurn(){
+  [first,second,lock]=[null,null,false];
+}
+
+startGame();
+</script>
+</body>
 </html>
