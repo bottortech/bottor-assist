@@ -26,7 +26,6 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
@@ -49,9 +48,8 @@ import {
   FileText,
   ChevronDown,
   BookOpen,
-  Calculator,
-  PenLine,
   Lightbulb,
+  PenLine,
 } from "lucide-react";
 import {
   Collapsible,
@@ -79,6 +77,7 @@ import type { ELAGradeResponse } from "@/types/elaGrading";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { detectSubjectFromRubric, getGradingPipeline, type DetectedSubject, type SubjectDetectionResult } from "@/lib/subjectDetector";
 
 // Subject type for routing to correct grading pipeline
 type GradingSubject = "math" | "ela";
@@ -909,8 +908,11 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
-  // Subject selection state (Math vs ELA/Writing)
-  const [gradingSubject, setGradingSubject] = useState<GradingSubject>("math");
+  // Auto-detected subject state (replaces manual selection)
+  const [detectedSubjectResult, setDetectedSubjectResult] = useState<SubjectDetectionResult | null>(null);
+  const gradingSubject: GradingSubject = detectedSubjectResult 
+    ? getGradingPipeline(detectedSubjectResult.subject) 
+    : "math";
   
   // ELA-specific state
   const [elaRubricText, setElaRubricText] = useState("");
@@ -1292,6 +1294,29 @@ export default function GradePapers() {
       setDetectedRubricSource("");
     }
   }, [rubricFinalText, rubricExtractedText, form.rubric]);
+
+  // Auto-detect subject from rubric content
+  useEffect(() => {
+    // Combine all rubric sources for detection
+    const allRubricText = [
+      rubricFinalText,
+      elaRubricText,
+    ].filter(Boolean).join('\n');
+    
+    if (allRubricText.trim().length > 0) {
+      const result = detectSubjectFromRubric(allRubricText);
+      setDetectedSubjectResult(result);
+      console.log('Detected subject:', result.subject, {
+        confidence: result.confidence,
+        matchCount: result.matchCount,
+        matchedKeywords: result.matchedKeywords.slice(0, 5), // First 5 for brevity
+        pipeline: getGradingPipeline(result.subject)
+      });
+    } else {
+      // Reset to default when no rubric
+      setDetectedSubjectResult(null);
+    }
+  }, [rubricFinalText, elaRubricText]);
 
   // Detect answer key from uploaded files or text content
   useEffect(() => {
@@ -1958,42 +1983,18 @@ export default function GradePapers() {
       )}
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* ===== SUBJECT SELECTION ===== */}
-        <Card className="border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              Subject Type
-              <Badge variant={gradingSubject === "math" ? "default" : "secondary"} className="ml-auto">
-                {gradingSubject === "math" ? "Math" : "ELA/Writing"}
-              </Badge>
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Select the subject to use the appropriate grading pipeline
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <RadioGroup
-              value={gradingSubject}
-              onValueChange={(value) => setGradingSubject(value as GradingSubject)}
-              className="flex gap-4"
-            >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="math" id="subject-math" />
-                <Label htmlFor="subject-math" className="flex items-center gap-2 cursor-pointer">
-                  <Calculator className="w-4 h-4 text-blue-500" />
-                  <span>Math</span>
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="ela" id="subject-ela" />
-                <Label htmlFor="subject-ela" className="flex items-center gap-2 cursor-pointer">
-                  <PenLine className="w-4 h-4 text-purple-500" />
-                  <span>ELA/Writing</span>
-                </Label>
-              </div>
-            </RadioGroup>
-          </CardContent>
-        </Card>
+        {/* Detected Subject Badge (shown when subject auto-detected) */}
+        {detectedSubjectResult && detectedSubjectResult.subject !== 'General' && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>Detected subject:</span>
+            <Badge variant="outline" className="font-medium">
+              {detectedSubjectResult.subject}
+            </Badge>
+            {detectedSubjectResult.confidence === 'high' && (
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            )}
+          </div>
+        )}
 
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
         <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
