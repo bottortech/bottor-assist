@@ -417,7 +417,10 @@
             const isMatch = firstCard.dataset.pose === secondCard.dataset.pose;
 
             if (isMatch) {
-                disableCards();
+                // Wait for flip animation to complete (600ms) before glowing
+                setTimeout(() => {
+                    disableCards();
+                }, 600);
             } else {
                 unflipCards();
             }
