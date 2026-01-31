@@ -70,7 +70,18 @@ export interface GroupingResult {
 }
 
 /**
- * Analyze files and group by student with interleaving detection
+ * SEQUENTIAL GROUPING LOGIC
+ * 
+ * Simple rules:
+ * 1. Scan first image for a student name → Start Group 1
+ * 2. Keep assigning subsequent pages to Group 1 UNTIL a NEW name is found
+ * 3. When NEW name found → Start Group 2
+ * 4. Repeat pattern
+ * 
+ * CRITICAL:
+ * - Only look for names to START new groups
+ * - Pages following a named page automatically belong to that student
+ * - Don't scan every page for names (that causes false detections)
  */
 export function analyzeAndGroupFiles(
   files: UploadedFileItem[],
@@ -86,91 +97,107 @@ export function analyzeAndGroupFiles(
     };
   }
 
-  const pages: PageItem[] = files.map((file, idx) => {
-    const detection = detectName(file.extractedText);
-    return {
-      fileId: file.id,
-      fileName: file.fileName,
-      displayName: file.displayName,
-      thumbnailUrl: file.thumbnailUrl,
-      hasDetectedName: detection.name.length > 0 && detection.source === 'document',
-      detectedName: detection.name || undefined,
-      pageIndex: idx,
-    };
-  });
+  // Build page items (without detection yet - we'll do sequential detection)
+  const pages: PageItem[] = files.map((file, idx) => ({
+    fileId: file.id,
+    fileName: file.fileName,
+    displayName: file.displayName,
+    thumbnailUrl: file.thumbnailUrl,
+    hasDetectedName: false, // Will be set during sequential processing
+    detectedName: undefined,
+    pageIndex: idx,
+  }));
 
   const groups: StudentGroupPreview[] = [];
-  let currentStudentName: string | null = null;
   let currentGroup: StudentGroupPreview | null = null;
-  let studentsDetectedSoFar = 0;
-  let unnamedAfterMultipleStudents = false;
-
-  for (const page of pages) {
-    if (page.hasDetectedName && page.detectedName) {
-      // Page has a detected name
-      if (page.detectedName !== currentStudentName) {
-        // New student detected
-        studentsDetectedSoFar++;
-        currentStudentName = page.detectedName;
-        
-        // Check if this student already has a group (interleaving)
-        const existingGroup = groups.find(g => g.studentName === page.detectedName);
-        if (existingGroup) {
-          // Interleaving detected - add to existing group
-          currentGroup = existingGroup;
-          currentGroup.pages.push(page);
-        } else {
-          // Create new group
-          const detection = detectName(files.find(f => f.id === page.fileId)?.extractedText || '');
-          currentGroup = {
-            studentName: page.detectedName,
-            isEditing: false,
-            pages: [page],
-            nameSource: detection.source,
-            nameConfidence: detection.confidence,
-          };
-          groups.push(currentGroup);
-        }
-      } else {
-        // Same student, add to current group
-        currentGroup?.pages.push(page);
-      }
+  let knownStudentNames = new Set<string>();
+  
+  // Process pages SEQUENTIALLY
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const file = files[i];
+    
+    // Determine if we should look for a name on this page
+    // Rule: Only look for names if:
+    //   1. It's the first page (i === 0), OR
+    //   2. We're starting a potential new student's work
+    //      (but be conservative - only start new group if we see a CLEAR name)
+    
+    const shouldDetectName = 
+      i === 0 || // Always check first page
+      !currentGroup || // No current group yet
+      currentGroup.nameSource === 'unknown'; // Current group has no confirmed name
+    
+    let detection: { name: string; source: 'document' | 'unknown'; confidence: 'high' | 'low' } = { 
+      name: '', 
+      source: 'unknown', 
+      confidence: 'low' 
+    };
+    
+    if (shouldDetectName) {
+      detection = detectName(file.extractedText);
     } else {
-      // Unnamed page
-      if (studentsDetectedSoFar > 1) {
-        // Unnamed page after multiple students - potential interleaving
-        unnamedAfterMultipleStudents = true;
-      }
+      // For subsequent pages, ONLY detect if there's a very clear name indicator
+      // (explicit "Name:" label in header area)
+      const hasExplicitNameLabel = /^(name|student\s*name)\s*[:=]/im.test(
+        file.extractedText.split('\n').slice(0, 3).join('\n')
+      );
       
-      if (currentGroup) {
-        // Attach to most recent student
-        currentGroup.pages.push(page);
-      } else {
-        // No student detected yet - create "Unknown Student" group
-        currentGroup = {
-          studentName: 'Unknown Student',
-          isEditing: false,
-          pages: [page],
-          nameSource: 'unknown',
-          nameConfidence: 'low',
-        };
-        groups.push(currentGroup);
+      if (hasExplicitNameLabel) {
+        detection = detectName(file.extractedText);
       }
+    }
+    
+    const foundNewName = detection.name.length > 0 && 
+                          detection.source === 'document' &&
+                          !knownStudentNames.has(detection.name.toLowerCase());
+    
+    if (foundNewName) {
+      // NEW STUDENT DETECTED - Start a new group
+      page.hasDetectedName = true;
+      page.detectedName = detection.name;
+      knownStudentNames.add(detection.name.toLowerCase());
+      
+      currentGroup = {
+        studentName: detection.name,
+        isEditing: false,
+        pages: [page],
+        nameSource: detection.source,
+        nameConfidence: detection.confidence,
+      };
+      groups.push(currentGroup);
+      
+    } else if (currentGroup) {
+      // NO NEW NAME - Add to current student's group (sequential assumption)
+      page.hasDetectedName = false;
+      currentGroup.pages.push(page);
+      
+    } else {
+      // First page has no name - create "Unknown Student" group
+      page.hasDetectedName = false;
+      currentGroup = {
+        studentName: 'Unknown Student',
+        isEditing: false,
+        pages: [page],
+        nameSource: 'unknown',
+        nameConfidence: 'low',
+      };
+      groups.push(currentGroup);
     }
   }
 
+  // Calculate confidence
   const unnamedPageCount = pages.filter(p => !p.hasDetectedName).length;
-  const hasMultipleStudents = groups.length > 1;
+  const hasUnknownStudent = groups.some(g => g.studentName === 'Unknown Student');
   
-  // Determine confidence
-  // Low if: multiple students AND unnamed pages after more than one student detected
-  const hasInterleaving = unnamedAfterMultipleStudents && hasMultipleStudents;
-  const confidence: 'high' | 'low' = hasInterleaving ? 'low' : 'high';
+  // Low confidence if: first page has no name (Unknown Student group exists)
+  // High confidence if: at least one clear name detected on first page of each group
+  const confidence: 'high' | 'low' = hasUnknownStudent ? 'low' : 'high';
 
   return {
     groups,
     confidence,
-    hasInterleaving,
+    hasInterleaving: false, // Sequential logic doesn't produce interleaving
     unnamedPageCount,
     totalPageCount: pages.length,
   };
