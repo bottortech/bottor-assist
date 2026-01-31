@@ -491,53 +491,64 @@ const ASSIGNMENT_TITLE_KEYWORDS = [
 ];
 
 /**
- * Essay text patterns - phrases that look like essay content, NOT student names
- * These typically start with common essay opener words/phrases
+ * LOCATION-BASED NAME DETECTION
+ * 
+ * Philosophy: Names appear at the VERY TOP of pages in specific header areas.
+ * Essay content appears in the body. We detect based on LOCATION, not content.
+ * 
+ * NAME LOCATIONS (✓):
+ * - First 1-3 lines of text (header area)
+ * - Lines with explicit "Name:" or "Student:" labels
+ * - Typically right-aligned or standalone at top
+ * 
+ * BODY/ESSAY LOCATIONS (✗):
+ * - Lines 4+ (essay body starts)
+ * - Text that flows as paragraphs
+ * - Continuation text without header formatting
  */
-const ESSAY_TEXT_START_WORDS = [
-  // Common essay starters (not names)
-  'that', 'the', 'my', 'when', 'a', 'an', 'it', 'this', 'one', 'in',
-  'on', 'at', 'to', 'for', 'of', 'from', 'with', 'as', 'by', 'about',
-  'how', 'why', 'what', 'where', 'who', 'if', 'so', 'but', 'and', 'or',
-  'there', 'here', 'i', 'we', 'they', 'you', 'he', 'she', 'our', 'your',
-  'once', 'after', 'before', 'during', 'while', 'because', 'since',
-  'every', 'some', 'all', 'many', 'most', 'first', 'last', 'never',
-  'always', 'sometimes', 'today', 'yesterday', 'tomorrow', 'now', 'then'
-];
+
+// Maximum lines to check for name (header area only)
+const NAME_DETECTION_LINE_LIMIT = 5;
 
 /**
- * Check if text looks like essay content rather than a student name
- * Essay content typically starts with common words like "That", "My", "The", "When"
- * @returns true if text is essay content (NOT a name)
+ * Check if a line looks like it's in "header format" vs "body text"
+ * Header lines are typically short, may have labels, and don't flow as paragraphs
  */
-function isEssayContent(text: string): boolean {
-  if (!text) return false;
-  const words = text.trim().split(/\s+/);
-  if (words.length === 0) return false;
+function isHeaderLine(line: string): boolean {
+  if (!line) return false;
+  const trimmed = line.trim();
   
-  // Check if first word is a common essay starter (case-insensitive)
-  const firstWord = words[0].toLowerCase().replace(/[^a-z]/g, '');
-  if (ESSAY_TEXT_START_WORDS.includes(firstWord)) {
-    return true;
-  }
+  // Short lines are more likely to be headers (name fields are usually short)
+  if (trimmed.length < 40) return true;
   
-  // Check for phrase patterns that are clearly essay text
-  const lower = text.toLowerCase();
-  const essayPhrasePatterns = [
-    /^that (day|time|moment|night|morning|summer|winter|one|was)/i,
-    /^the (day|time|moment|night|morning|best|worst|first|last)/i,
-    /^my (favorite|best|worst|first|last|most|life|family|friend)/i,
-    /^when (i|we|it|the|my|a)/i,
-    /^a (time|day|moment|memory|story|place)/i,
-    /^one (day|time|moment|night|morning|summer)/i,
-    /^it (was|all|started|happened|began)/i,
-    /^i (was|am|have|had|remember|think|believe)/i,
-    /^once (upon|there|when|i)/i,
-  ];
+  // Lines with explicit name labels are header lines
+  if (/^(name|student|by)\s*[:=]/i.test(trimmed)) return true;
   
-  for (const pattern of essayPhrasePatterns) {
-    if (pattern.test(lower)) return true;
-  }
+  // Lines that look like metadata/header format
+  if (/^(date|class|period|grade|teacher)\s*[:=]/i.test(trimmed)) return true;
+  
+  // Long flowing text is body content, not headers
+  if (trimmed.length > 60 && !trimmed.includes(':')) return false;
+  
+  return true;
+}
+
+/**
+ * Check if line appears to be body/essay content based on structure
+ * Body content is typically longer, flows as sentences, and lacks header formatting
+ */
+function isBodyContent(line: string, lineIndex: number): boolean {
+  if (!line) return false;
+  const trimmed = line.trim();
+  
+  // Lines after the header area (line 5+) are body content
+  if (lineIndex >= NAME_DETECTION_LINE_LIMIT) return true;
+  
+  // Long lines without labels are likely body text
+  if (trimmed.length > 50 && !/:/.test(trimmed)) return true;
+  
+  // Lines that look like sentences (start with lowercase after first word, have punctuation)
+  if (/^[A-Z][a-z]+\s+[a-z]/.test(trimmed) && /[,.!?]/.test(trimmed)) return true;
   
   return false;
 }
@@ -682,26 +693,28 @@ function detectStudentNameFromText(text: string): {
     return { name: '', source: 'unknown', confidence: 'low' };
   }
 
-  // Look at first ~25 lines for name patterns, filtering out metadata lines
-  const lines = text.split('\n').slice(0, 25);
-  const relevantLines: string[] = [];
+  // LOCATION-BASED: Only look at first few lines (header area) for names
+  // Names appear at TOP of pages, not in body content
+  const allLines = text.split('\n');
+  const headerLines = allLines.slice(0, NAME_DETECTION_LINE_LIMIT);
   
-  for (const line of lines) {
-    // Skip metadata lines (lines starting with Date:, Class:, etc.)
-    if (!isMetadataLine(line)) {
-      relevantLines.push(line);
+  // Filter out metadata lines from header
+  const relevantHeaderLines: string[] = [];
+  for (let i = 0; i < headerLines.length; i++) {
+    const line = headerLines[i];
+    if (!isMetadataLine(line) && isHeaderLine(line)) {
+      relevantHeaderLines.push(line);
     }
   }
-  
-  const filteredText = relevantLines.join('\n');
 
-  // First priority: Look for explicit "Name:" or "Student Name:" labels
-  for (const line of lines) {
+  // First priority: Look for explicit "Name:" or "Student Name:" labels in header area
+  for (let i = 0; i < headerLines.length; i++) {
+    const line = headerLines[i];
     const nameValue = extractNameAfterLabel(line);
     if (nameValue) {
-      // CRITICAL: Check if this is actually an assignment title or essay content, not a name
-      if (isAssignmentTitle(nameValue) || isEssayContent(nameValue)) {
-        continue; // Skip this - it's a title like "English Essay" or essay text like "That Day I"
+      // Check if this is an assignment title (not a name)
+      if (isAssignmentTitle(nameValue)) {
+        continue;
       }
       
       const { name: cleanedName, confidence } = cleanStudentName(nameValue);
@@ -712,17 +725,18 @@ function detectStudentNameFromText(text: string): {
     }
   }
 
-  // Second priority: Look for name at start of first non-metadata line
-  // Allow apostrophes and hyphens in names (e.g., O'Connor, Mary-Jane)
-  const firstContentLine = relevantLines.find(l => l.trim().length > 0);
-  if (firstContentLine) {
-    // CRITICAL: Skip if first line looks like an assignment title or essay content
-    if (!isAssignmentTitle(firstContentLine) && !isEssayContent(firstContentLine)) {
-      const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
+  // Second priority: Look for name at start of first header line
+  // CRITICAL: Only check header-formatted lines, not body content
+  const firstHeaderLine = relevantHeaderLines.find(l => l.trim().length > 0);
+  if (firstHeaderLine && !isBodyContent(firstHeaderLine, 0)) {
+    // Skip if first line looks like an assignment title
+    if (!isAssignmentTitle(firstHeaderLine)) {
+      // Name pattern: Capitalized words (allow apostrophes/hyphens like O'Connor, Mary-Jane)
+      const startMatch = firstHeaderLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
       if (startMatch && startMatch[1]) {
         const potentialName = startMatch[1];
-        // Double-check this isn't a title or essay content
-        if (!isAssignmentTitle(potentialName) && !isEssayContent(potentialName)) {
+        // Double-check this isn't a title
+        if (!isAssignmentTitle(potentialName)) {
           const { name: cleanedName, confidence } = cleanStudentName(potentialName);
           const words = cleanedName.split(/\s+/);
           if (words.length >= 2 && words.length <= 4) {
@@ -733,19 +747,19 @@ function detectStudentNameFromText(text: string): {
     }
   }
 
-  // Third priority: Look for "By: Name" or "Student: Name" patterns
-  // Allow apostrophes and hyphens in names
+  // Third priority: Look for "By: Name" or "Student: Name" patterns in header area only
+  const headerText = relevantHeaderLines.join('\n');
   const byPatterns = [
     /student\s*[:=]\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
     /by\s*[:=]?\s*([A-Za-z][a-z'-]*(?:\s+[A-Za-z][a-z'-]*)+)/i,
   ];
   
   for (const pattern of byPatterns) {
-    const match = filteredText.match(pattern);
+    const match = headerText.match(pattern);
     if (match && match[1]) {
       const potentialName = match[1].trim();
-      // CRITICAL: Skip if this looks like an assignment title or essay content
-      if (isAssignmentTitle(potentialName) || isEssayContent(potentialName)) {
+      // Skip if this looks like an assignment title
+      if (isAssignmentTitle(potentialName)) {
         continue;
       }
       
@@ -757,6 +771,7 @@ function detectStudentNameFromText(text: string): {
     }
   }
 
+  // No name found in header area - this is likely a continuation page
   return { name: '', source: 'unknown', confidence: 'low' };
 }
 
