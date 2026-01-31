@@ -57,56 +57,42 @@ header h1{
   font-weight:600;
 }
 
-/* ✅ GRID + CARD SIZE FIXES */
-.board,
-.grid{
+.board{
   display:grid;
-  grid-template-columns:repeat(3, 1fr);
+  grid-template-columns:repeat(4, minmax(120px, 1fr));
   gap:14px;
-  padding:16px;
+
+  /* Prevent layout jumps/overlaps when cards flip */
+  align-items:stretch;
+  justify-items:stretch;
 }
 
-/* Desktop / larger screens */
-@media(min-width:721px){
-  .board,
-  .grid{
-    grid-template-columns:repeat(4, minmax(120px, 1fr));
-    padding:0;
-  }
-}
-
-/* Mobile stays 3 columns */
 @media(max-width:720px){
-  .board,
-  .grid{
-    grid-template-columns:repeat(3,1fr);
-  }
+  .board{grid-template-columns:repeat(3,1fr)}
 }
 
-/* ✅ TALLER CARDS */
 .card{
   width:100%;
-  aspect-ratio:3 / 4;   /* 👈 taller cards */
+  aspect-ratio:3/4;
   perspective:1000px;
   cursor:pointer;
   -webkit-tap-highlight-color: transparent;
-}
 
-/* Keeps images filling correctly */
-.card img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
-  display:block;
-}
-
-/* FLIP MECHANIC */
-.card-inner{
-  width:100%;
-  height:100%;
+  /* Critical: keep the 3D flip and images inside the grid cell */
   position:relative;
+  overflow:hidden;
+  border-radius:var(--radius);
+  isolation:isolate;
+  touch-action:manipulation;
+}
+
+.card-inner{
+  position:absolute;
+  inset:0;
   transform-style:preserve-3d;
+  -webkit-transform-style:preserve-3d;
   transition:transform .55s ease;
+  will-change:transform;
 }
 
 .card.flipped .card-inner{
@@ -118,6 +104,7 @@ header h1{
   inset:0;
   border-radius:var(--radius);
   backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -283,11 +270,11 @@ function startGame(){
     card.innerHTML=`
       <div class="card-inner">
         <div class="face front">
-          <img src="logo.png">
-          <img class="gear tl" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%23163a33' d='M36.9 4.4l1.7 7.4c2 .6 3.9 1.4 5.6 2.4l6.8-3.3 6.2 10.8-5.9 4.8c.3 1.1.5 2.3.6 3.5l7.3 2.2v12.5l-7.3 2.2c-.1 1.2-.3 2.4-.6 3.5l5.9 4.8-6.2 10.8-6.8-3.3c-1.7 1-3.6 1.8-5.6 2.4l-1.7 7.4H24.1l-1.7-7.4c-2-.6-3.9-1.4-5.6-2.4l-6.8 3.3L3.8 53.5l5.9-4.8c-.3-1.1-.5-2.3-.6-3.5L1.8 43V30.5l7.3-2.2c.1-1.2.3-2.4.6-3.5l-5.9-4.8L10 9.2l6.8 3.3c1.7-1 3.6-1.8 5.6-2.4l1.7-7.4h12.8z'/></svg>">
+          <img src="logo.png" alt="Wigglewoo Flip & Match">
+          <img class="gear tl" alt="" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%23163a33' d='M36.9 4.4l1.7 7.4c2 .6 3.9 1.4 5.6 2.4l6.8-3.3 6.2 10.8-5.9 4.8c.3 1.1.5 2.3.6 3.5l7.3 2.2v12.5l-7.3 2.2c-.1 1.2-.3 2.4-.6 3.5l5.9 4.8-6.2 10.8-6.8-3.3c-1.7 1-3.6 1.8-5.6 2.4l-1.7 7.4H24.1l-1.7-7.4c-2-.6-3.9-1.4-5.6-2.4l-6.8 3.3L3.8 53.5l5.9-4.8c-.3-1.1-.5-2.3-.6-3.5L1.8 43V30.5l7.3-2.2c.1-1.2.3-2.4.6-3.5l-5.9-4.8L10 9.2l6.8 3.3c1.7-1 3.6-1.8 5.6-2.4l1.7-7.4h12.8z'/></svg>">
         </div>
         <div class="face back">
-          <img src="${src}">
+          <img src="${src}" alt="Wigglewoo card">
         </div>
       </div>`;
 
