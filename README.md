@@ -1,73 +1,25 @@
-# Welcome to your Lovable project
+# Bottor Assist
 
-## Project info
+Bottor Assist is an AI-assisted grading tool designed to help educators evaluate student work faster and more consistently using rubric-based scoring.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## What it does
+- Automatically detects subject context from uploaded rubrics
+- Routes assignments to the correct grading pipeline (ELA, Math, Science, History, or General fallback)
+- Applies rubric-aligned scoring with transparent reasoning
+- Reduces manual grading time while preserving teacher control
 
-## How can I edit this code?
+## Built with
+- Lovable (AI-assisted development)
+- React + TypeScript
+- Node.js
+- Supabase
 
-There are several ways of editing your application.
+## Project status
+This project is currently in **pilot / active development**.  
+Features and workflows are evolving based on real educator feedback.
 
-**Use Lovable**
+## Development workflow
+Changes are primarily made through **Lovable** and are automatically committed to this repository.  
+Local development and manual commits are also supported.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+---
