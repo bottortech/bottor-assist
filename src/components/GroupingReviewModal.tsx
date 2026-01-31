@@ -70,22 +70,59 @@ export interface GroupingResult {
 }
 
 /**
- * SEQUENTIAL GROUPING LOGIC
+ * DATE DETECTION
  * 
- * CRITICAL: Must check EVERY page for potential new student names.
- * Multiple students in one batch is NORMAL and EXPECTED.
+ * Detects if text contains a date in various formats.
+ * Only looks at the top portion of the text (first 5 lines).
+ */
+function detectDateInText(text: string): boolean {
+  if (!text) return false;
+  
+  // Only check top 5 lines
+  const topLines = text.split('\n').slice(0, 5).join('\n');
+  
+  // Date patterns to match:
+  // - January 30, 2026 / Jan 30, 2026 / January 30 2026
+  // - 1/30/2026 / 01/30/2026 / 1-30-2026
+  // - 2026-01-30
+  // - 30 January 2026
+  const datePatterns = [
+    // Month name patterns: "January 30, 2026" or "Jan 30 2026"
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/i,
+    // Day month year: "30 January 2026"
+    /\b\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b/i,
+    // Numeric: "1/30/2026" or "01-30-2026"
+    /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/,
+    // ISO format: "2026-01-30"
+    /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/,
+    // Date label: "Date:" followed by anything
+    /\bdate\s*[:=]/i,
+  ];
+  
+  for (const pattern of datePatterns) {
+    if (pattern.test(topLines)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * SEQUENTIAL GROUPING LOGIC WITH NAME + DATE RULE
  * 
- * Rules:
- * 1. Process EVERY single image
- * 2. If name found → Check if it's a NEW student (not already known)
- * 3. If NEW name → Start new group
- * 4. If no name OR same name as current → Add to current group
+ * SIMPLE RULE: A page starts a NEW student group ONLY if it has BOTH:
+ * 1. A student name (detected by the name detector)
+ * 2. A date (detected by date patterns)
+ * 
+ * Pages without BOTH name + date belong to the previous student.
+ * This prevents essay content from being detected as student names.
  */
 export function analyzeAndGroupFiles(
   files: UploadedFileItem[],
   detectName: (text: string) => { name: string; source: 'document' | 'unknown'; confidence: 'high' | 'low' }
 ): GroupingResult {
-  console.log('=== GROUPING ANALYSIS START ===');
+  console.log('=== GROUPING ANALYSIS START (NAME + DATE RULE) ===');
   console.log('Processing', files.length, 'images');
   
   if (files.length === 0) {
@@ -113,32 +150,34 @@ export function analyzeAndGroupFiles(
   let currentGroup: StudentGroupPreview | null = null;
   const knownStudentNames = new Set<string>();
   
-  // Process EVERY page SEQUENTIALLY - check each one for names
+  // Process EVERY page - check each one for NAME + DATE
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
     const file = files[i];
     
     console.log(`--- Processing image ${i + 1}/${pages.length}: ${file.fileName} ---`);
     
-    // ALWAYS try to detect a name on every page
+    // Check for BOTH name AND date
     const detection = detectName(file.extractedText);
+    const hasDate = detectDateInText(file.extractedText);
     
-    console.log(`  Detection result:`, {
+    console.log(`  Name detection:`, {
       name: detection.name || '(none)',
       source: detection.source,
       confidence: detection.confidence
     });
+    console.log(`  Date detected: ${hasDate}`);
     
-    // Check if this is a NEW student name (not already in a group)
+    // RULE: Must have BOTH name AND date to start a new group
+    const hasValidName = detection.name.length > 0 && detection.source === 'document';
     const normalizedName = detection.name.toLowerCase().trim();
-    const isValidName = detection.name.length > 0 && detection.source === 'document';
-    const isNewStudent = isValidName && !knownStudentNames.has(normalizedName);
+    const isNewStudent = hasValidName && hasDate && !knownStudentNames.has(normalizedName);
     
-    console.log(`  Is valid name: ${isValidName}, Is new student: ${isNewStudent}`);
+    console.log(`  Has valid name: ${hasValidName}, Has date: ${hasDate}, Is new student: ${isNewStudent}`);
     
     if (isNewStudent) {
-      // NEW STUDENT DETECTED - Start a new group
-      console.log(`  >>> Starting NEW group for: ${detection.name}`);
+      // NEW STUDENT DETECTED (has both name + date) - Start a new group
+      console.log(`  >>> Starting NEW group for: ${detection.name} (has name + date)`);
       
       page.hasDetectedName = true;
       page.detectedName = detection.name;
@@ -154,14 +193,14 @@ export function analyzeAndGroupFiles(
       groups.push(currentGroup);
       
     } else if (currentGroup) {
-      // NO NEW NAME - Add to current student's group
-      console.log(`  Adding to current group: ${currentGroup.studentName}`);
+      // NO NAME+DATE combo - Add to current student's group
+      console.log(`  Adding to current group: ${currentGroup.studentName} (missing name or date)`);
       page.hasDetectedName = false;
       currentGroup.pages.push(page);
       
     } else {
-      // First page has no name - create "Unknown Student" group
-      console.log(`  No name found on first page, creating Unknown Student group`);
+      // First page has no name+date combo - create "Unknown Student" group
+      console.log(`  First page missing name+date, creating Unknown Student group`);
       page.hasDetectedName = false;
       currentGroup = {
         studentName: 'Unknown Student',
