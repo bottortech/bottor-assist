@@ -72,21 +72,22 @@ export interface GroupingResult {
 /**
  * SEQUENTIAL GROUPING LOGIC
  * 
- * Simple rules:
- * 1. Scan first image for a student name → Start Group 1
- * 2. Keep assigning subsequent pages to Group 1 UNTIL a NEW name is found
- * 3. When NEW name found → Start Group 2
- * 4. Repeat pattern
+ * CRITICAL: Must check EVERY page for potential new student names.
+ * Multiple students in one batch is NORMAL and EXPECTED.
  * 
- * CRITICAL:
- * - Only look for names to START new groups
- * - Pages following a named page automatically belong to that student
- * - Don't scan every page for names (that causes false detections)
+ * Rules:
+ * 1. Process EVERY single image
+ * 2. If name found → Check if it's a NEW student (not already known)
+ * 3. If NEW name → Start new group
+ * 4. If no name OR same name as current → Add to current group
  */
 export function analyzeAndGroupFiles(
   files: UploadedFileItem[],
   detectName: (text: string) => { name: string; source: 'document' | 'unknown'; confidence: 'high' | 'low' }
 ): GroupingResult {
+  console.log('=== GROUPING ANALYSIS START ===');
+  console.log('Processing', files.length, 'images');
+  
   if (files.length === 0) {
     return {
       groups: [],
@@ -97,66 +98,51 @@ export function analyzeAndGroupFiles(
     };
   }
 
-  // Build page items (without detection yet - we'll do sequential detection)
+  // Build page items
   const pages: PageItem[] = files.map((file, idx) => ({
     fileId: file.id,
     fileName: file.fileName,
     displayName: file.displayName,
     thumbnailUrl: file.thumbnailUrl,
-    hasDetectedName: false, // Will be set during sequential processing
+    hasDetectedName: false,
     detectedName: undefined,
     pageIndex: idx,
   }));
 
   const groups: StudentGroupPreview[] = [];
   let currentGroup: StudentGroupPreview | null = null;
-  let knownStudentNames = new Set<string>();
+  const knownStudentNames = new Set<string>();
   
-  // Process pages SEQUENTIALLY
+  // Process EVERY page SEQUENTIALLY - check each one for names
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
     const file = files[i];
     
-    // Determine if we should look for a name on this page
-    // Rule: Only look for names if:
-    //   1. It's the first page (i === 0), OR
-    //   2. We're starting a potential new student's work
-    //      (but be conservative - only start new group if we see a CLEAR name)
+    console.log(`--- Processing image ${i + 1}/${pages.length}: ${file.fileName} ---`);
     
-    const shouldDetectName = 
-      i === 0 || // Always check first page
-      !currentGroup || // No current group yet
-      currentGroup.nameSource === 'unknown'; // Current group has no confirmed name
+    // ALWAYS try to detect a name on every page
+    const detection = detectName(file.extractedText);
     
-    let detection: { name: string; source: 'document' | 'unknown'; confidence: 'high' | 'low' } = { 
-      name: '', 
-      source: 'unknown', 
-      confidence: 'low' 
-    };
+    console.log(`  Detection result:`, {
+      name: detection.name || '(none)',
+      source: detection.source,
+      confidence: detection.confidence
+    });
     
-    if (shouldDetectName) {
-      detection = detectName(file.extractedText);
-    } else {
-      // For subsequent pages, ONLY detect if there's a very clear name indicator
-      // (explicit "Name:" label in header area)
-      const hasExplicitNameLabel = /^(name|student\s*name)\s*[:=]/im.test(
-        file.extractedText.split('\n').slice(0, 3).join('\n')
-      );
-      
-      if (hasExplicitNameLabel) {
-        detection = detectName(file.extractedText);
-      }
-    }
+    // Check if this is a NEW student name (not already in a group)
+    const normalizedName = detection.name.toLowerCase().trim();
+    const isValidName = detection.name.length > 0 && detection.source === 'document';
+    const isNewStudent = isValidName && !knownStudentNames.has(normalizedName);
     
-    const foundNewName = detection.name.length > 0 && 
-                          detection.source === 'document' &&
-                          !knownStudentNames.has(detection.name.toLowerCase());
+    console.log(`  Is valid name: ${isValidName}, Is new student: ${isNewStudent}`);
     
-    if (foundNewName) {
+    if (isNewStudent) {
       // NEW STUDENT DETECTED - Start a new group
+      console.log(`  >>> Starting NEW group for: ${detection.name}`);
+      
       page.hasDetectedName = true;
       page.detectedName = detection.name;
-      knownStudentNames.add(detection.name.toLowerCase());
+      knownStudentNames.add(normalizedName);
       
       currentGroup = {
         studentName: detection.name,
@@ -168,12 +154,14 @@ export function analyzeAndGroupFiles(
       groups.push(currentGroup);
       
     } else if (currentGroup) {
-      // NO NEW NAME - Add to current student's group (sequential assumption)
+      // NO NEW NAME - Add to current student's group
+      console.log(`  Adding to current group: ${currentGroup.studentName}`);
       page.hasDetectedName = false;
       currentGroup.pages.push(page);
       
     } else {
       // First page has no name - create "Unknown Student" group
+      console.log(`  No name found on first page, creating Unknown Student group`);
       page.hasDetectedName = false;
       currentGroup = {
         studentName: 'Unknown Student',
@@ -189,15 +177,17 @@ export function analyzeAndGroupFiles(
   // Calculate confidence
   const unnamedPageCount = pages.filter(p => !p.hasDetectedName).length;
   const hasUnknownStudent = groups.some(g => g.studentName === 'Unknown Student');
-  
-  // Low confidence if: first page has no name (Unknown Student group exists)
-  // High confidence if: at least one clear name detected on first page of each group
   const confidence: 'high' | 'low' = hasUnknownStudent ? 'low' : 'high';
+
+  console.log('=== GROUPING ANALYSIS COMPLETE ===');
+  console.log('Packets detected:', groups.length);
+  console.log('Student names found:', groups.map(g => g.studentName));
+  console.log('Pages per student:', groups.map(g => `${g.studentName}: ${g.pages.length} pages`));
 
   return {
     groups,
     confidence,
-    hasInterleaving: false, // Sequential logic doesn't produce interleaving
+    hasInterleaving: false,
     unnamedPageCount,
     totalPageCount: pages.length,
   };
