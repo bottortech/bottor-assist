@@ -491,6 +491,58 @@ const ASSIGNMENT_TITLE_KEYWORDS = [
 ];
 
 /**
+ * Essay text patterns - phrases that look like essay content, NOT student names
+ * These typically start with common essay opener words/phrases
+ */
+const ESSAY_TEXT_START_WORDS = [
+  // Common essay starters (not names)
+  'that', 'the', 'my', 'when', 'a', 'an', 'it', 'this', 'one', 'in',
+  'on', 'at', 'to', 'for', 'of', 'from', 'with', 'as', 'by', 'about',
+  'how', 'why', 'what', 'where', 'who', 'if', 'so', 'but', 'and', 'or',
+  'there', 'here', 'i', 'we', 'they', 'you', 'he', 'she', 'our', 'your',
+  'once', 'after', 'before', 'during', 'while', 'because', 'since',
+  'every', 'some', 'all', 'many', 'most', 'first', 'last', 'never',
+  'always', 'sometimes', 'today', 'yesterday', 'tomorrow', 'now', 'then'
+];
+
+/**
+ * Check if text looks like essay content rather than a student name
+ * Essay content typically starts with common words like "That", "My", "The", "When"
+ * @returns true if text is essay content (NOT a name)
+ */
+function isEssayContent(text: string): boolean {
+  if (!text) return false;
+  const words = text.trim().split(/\s+/);
+  if (words.length === 0) return false;
+  
+  // Check if first word is a common essay starter (case-insensitive)
+  const firstWord = words[0].toLowerCase().replace(/[^a-z]/g, '');
+  if (ESSAY_TEXT_START_WORDS.includes(firstWord)) {
+    return true;
+  }
+  
+  // Check for phrase patterns that are clearly essay text
+  const lower = text.toLowerCase();
+  const essayPhrasePatterns = [
+    /^that (day|time|moment|night|morning|summer|winter|one|was)/i,
+    /^the (day|time|moment|night|morning|best|worst|first|last)/i,
+    /^my (favorite|best|worst|first|last|most|life|family|friend)/i,
+    /^when (i|we|it|the|my|a)/i,
+    /^a (time|day|moment|memory|story|place)/i,
+    /^one (day|time|moment|night|morning|summer)/i,
+    /^it (was|all|started|happened|began)/i,
+    /^i (was|am|have|had|remember|think|believe)/i,
+    /^once (upon|there|when|i)/i,
+  ];
+  
+  for (const pattern of essayPhrasePatterns) {
+    if (pattern.test(lower)) return true;
+  }
+  
+  return false;
+}
+
+/**
  * Check if text looks like an assignment title rather than a student name
  * @returns true if text is an assignment title (NOT a name)
  */
@@ -647,9 +699,9 @@ function detectStudentNameFromText(text: string): {
   for (const line of lines) {
     const nameValue = extractNameAfterLabel(line);
     if (nameValue) {
-      // CRITICAL: Check if this is actually an assignment title, not a name
-      if (isAssignmentTitle(nameValue)) {
-        continue; // Skip this - it's a title like "English Essay"
+      // CRITICAL: Check if this is actually an assignment title or essay content, not a name
+      if (isAssignmentTitle(nameValue) || isEssayContent(nameValue)) {
+        continue; // Skip this - it's a title like "English Essay" or essay text like "That Day I"
       }
       
       const { name: cleanedName, confidence } = cleanStudentName(nameValue);
@@ -664,13 +716,13 @@ function detectStudentNameFromText(text: string): {
   // Allow apostrophes and hyphens in names (e.g., O'Connor, Mary-Jane)
   const firstContentLine = relevantLines.find(l => l.trim().length > 0);
   if (firstContentLine) {
-    // CRITICAL: Skip if first line looks like an assignment title
-    if (!isAssignmentTitle(firstContentLine)) {
+    // CRITICAL: Skip if first line looks like an assignment title or essay content
+    if (!isAssignmentTitle(firstContentLine) && !isEssayContent(firstContentLine)) {
       const startMatch = firstContentLine.match(/^([A-Z][a-z'-]*\s+[A-Z][a-z'-]*(?:\s+[A-Z][a-z'-]*)?)(?:\s|$)/);
       if (startMatch && startMatch[1]) {
         const potentialName = startMatch[1];
-        // Double-check this isn't a title
-        if (!isAssignmentTitle(potentialName)) {
+        // Double-check this isn't a title or essay content
+        if (!isAssignmentTitle(potentialName) && !isEssayContent(potentialName)) {
           const { name: cleanedName, confidence } = cleanStudentName(potentialName);
           const words = cleanedName.split(/\s+/);
           if (words.length >= 2 && words.length <= 4) {
@@ -692,8 +744,8 @@ function detectStudentNameFromText(text: string): {
     const match = filteredText.match(pattern);
     if (match && match[1]) {
       const potentialName = match[1].trim();
-      // CRITICAL: Skip if this looks like an assignment title
-      if (isAssignmentTitle(potentialName)) {
+      // CRITICAL: Skip if this looks like an assignment title or essay content
+      if (isAssignmentTitle(potentialName) || isEssayContent(potentialName)) {
         continue;
       }
       
