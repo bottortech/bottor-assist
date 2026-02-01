@@ -3,12 +3,6 @@
  * SESSION DATA TYPES
  * =============================================================================
  * 
- * NEXT.JS MIGRATION NOTE:
- * These types define the canonical data structure for sessions.
- * When migrating to Next.js, these types should be moved to:
- * - /types/session.ts (for shared types)
- * - Use with tRPC or API routes for type safety
- * 
  * FIELD NAMING CONVENTION:
  * All fields use snake_case to match database schema exactly.
  * Do NOT use camelCase in form state - convert at the UI boundary only.
@@ -17,11 +11,11 @@
 
 /**
  * Input mode determines how the session was created
- * - quick_notes: Manual text entry via Quick Notes form
- * - transcript: Future: text-based transcript input
+ * - transcript: Text-based transcript input
  * - audio: Audio recording that was transcribed
+ * - grading: Paper grading workflow
  */
-export type InputMode = 'quick_notes' | 'transcript' | 'audio';
+export type InputMode = 'transcript' | 'audio' | 'grading';
 
 /**
  * Session status lifecycle:
@@ -31,20 +25,6 @@ export type InputMode = 'quick_notes' | 'transcript' | 'audio';
  * - failed: Processing failed, can retry
  */
 export type SessionStatus = 'recording' | 'processing' | 'completed' | 'failed';
-
-/**
- * Quick Notes form input structure
- * Used for manual entry via /quick-notes route
- */
-export interface QuickNotesInput {
-  subject: string;
-  grade: string;
-  topic: string;
-  activities: string;      // "What we did today"
-  struggles: string;       // "What students struggled with"
-  attention_needed: string; // "Names/groups needing attention"
-  next_steps: string;      // "Homework/assessment/next steps"
-}
 
 /**
  * Structured summary output from AI
@@ -69,10 +49,6 @@ export interface SummaryJson {
  * Complete session record as stored in database
  * 
  * DATABASE TABLE: public.sessions
- * 
- * NEXT.JS MIGRATION NOTE:
- * This maps 1:1 with the Supabase `sessions` table.
- * In Next.js, use Prisma or Drizzle for type-safe queries.
  */
 export interface Session {
   id: string;
@@ -82,7 +58,6 @@ export interface Session {
   
   // Input data
   input_mode?: InputMode;
-  notes_json?: QuickNotesInput;     // Structured quick notes input
   audio_path?: string | null;       // Storage path for audio file
   
   // AI-generated content
@@ -141,24 +116,5 @@ export function parseSummaryJson(raw: unknown): SummaryJson | null {
     next_steps: Array.isArray(data.next_steps) ? data.next_steps : [],
     brief_recording: data.brief_recording,
     brief_reason: data.brief_reason,
-  };
-}
-
-/**
- * Convert QuickNotesInput to the format expected by edge functions
- * 
- * NEXT.JS MIGRATION NOTE:
- * This conversion happens at the API boundary in Next.js.
- * Move to /lib/transforms.ts or keep in API route.
- */
-export function formatNotesForAI(notes: QuickNotesInput): Record<string, string> {
-  return {
-    subject: notes.subject || 'Not provided',
-    grade: notes.grade || 'Not provided',
-    topic: notes.topic || 'Not provided',
-    whatWeDid: notes.activities || 'Not provided',
-    struggles: notes.struggles || 'Not provided',
-    attentionNeeded: notes.attention_needed || 'Not provided',
-    nextSteps: notes.next_steps || 'Not provided',
   };
 }

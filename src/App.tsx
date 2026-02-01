@@ -3,22 +3,9 @@
  * APPLICATION ROUTER
  * =============================================================================
  * 
- * NEXT.JS MIGRATION NOTE:
- * Routes are defined here and map to Next.js file-based routing:
- * - / → app/page.tsx
- * - /auth → app/auth/page.tsx
- * - /grade → app/grade/page.tsx
- * - /quick-notes → app/quick-notes/page.tsx
- * - /listen → app/listen/page.tsx
- * - /processing/:sessionId → app/processing/[sessionId]/page.tsx
- * - /session/:sessionId → app/session/[sessionId]/page.tsx
- * - /history → app/history/page.tsx
- * 
- * ROUTE STRUCTURE (STABLE):
+ * ROUTE STRUCTURE:
  * - / (Home) - Entry point with navigation
  * - /grade - Grade papers with AI feedback
- * - /quick-notes - Manual lesson notes entry
- * - /listen - Audio recording (beta)
  * - /processing/:sessionId - Audio processing status
  * - /session/:sessionId - View session details
  * - /history - Session list/search
@@ -41,9 +28,6 @@ import Auth from "./pages/Auth";
 
 // [ROUTE: /grade] Grade papers with AI feedback
 import GradePapers from "./pages/GradePapers";
-
-// [ROUTE: /quick-notes] Manual lesson notes entry
-import QuickNotes from "./pages/QuickNotes";
 
 // [ROUTE: /listen] Audio recording (beta feature)
 import Listen from "./pages/Listen";
@@ -75,7 +59,6 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/grade" element={<GradePapers />} />
-            <Route path="/quick-notes" element={<QuickNotes />} />
             <Route path="/history" element={<History />} />
             <Route path="/session/:sessionId" element={<Session />} />
             
@@ -83,8 +66,7 @@ const App = () => (
             <Route path="/listen" element={<Listen />} />
             <Route path="/processing/:sessionId" element={<Processing />} />
             
-            {/* Legacy Route Redirects - maintain backward compatibility */}
-            {/* NEXT.JS MIGRATION: Handle these in middleware.ts */}
+            {/* Legacy Route Redirects */}
             <Route path="/summaries" element={<History />} />
             <Route path="/summary/:sessionId" element={<Session />} />
             

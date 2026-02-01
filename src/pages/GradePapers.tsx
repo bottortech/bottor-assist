@@ -1990,7 +1990,7 @@ export default function GradePapers() {
             <Badge variant="outline" className="font-medium">
               {detectedSubjectResult.subject}
             </Badge>
-            {detectedSubjectResult.confidence === 'high' && (
+            {detectedSubjectResult.confidence.level === 'high' && (
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
             )}
           </div>
