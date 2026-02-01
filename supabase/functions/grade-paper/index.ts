@@ -131,6 +131,7 @@ serve(async (req) => {
     console.log(`[grade-paper] Enhanced mode (rubric + answer key): ${enhancedMode}`);
 
     // Build the prompt - always scoring mode now
+    // Pass raw rubric text for work requirement detection
     const { systemPrompt, userPrompt } = buildScoringPrompts({
       studentWork: student_work,
       subject,
@@ -140,6 +141,7 @@ serve(async (req) => {
       answerKey: answer_key,
       assignmentDocText: assignment_doc_text,
       enhancedMode,
+      rubricRawText: rubric, // Pass original rubric for work requirement analysis
     });
 
     console.log(`[grade-paper] System prompt length: ${systemPrompt.length}`);
@@ -553,8 +555,68 @@ function parseRubricText(text: string): ParsedRubric | null {
 }
 
 /**
+ * Analyze rubric text to determine if "show your work" is required
+ * Returns true ONLY if the rubric explicitly mentions work/steps/process requirements
+ */
+function doesRubricRequireWork(rubricText?: string, parsedRubric?: ParsedRubric): boolean {
+  if (!rubricText && !parsedRubric) return false;
+  
+  const textToAnalyze = rubricText || "";
+  const criteriaNames = parsedRubric?.criteria?.map(c => c.name.toLowerCase()).join(" ") || "";
+  const combinedText = (textToAnalyze + " " + criteriaNames).toLowerCase();
+  
+  // Explicit indicators that work is REQUIRED
+  const workRequiredPatterns = [
+    /show\s*(?:your|the|all)?\s*work/i,           // "show your work", "show work"
+    /work\s*(?:must\s*be\s*)?shown/i,             // "work shown", "work must be shown"
+    /steps?\s*(?:must\s*be\s*)?shown/i,           // "steps shown", "steps must be shown"
+    /solving\s*steps?\s*(?:shown)?/i,             // "solving steps", "solving steps shown"
+    /correct\s*(?:equation\s*)?setup/i,           // "correct setup", "correct equation setup"
+    /no\s*(?:credit|points?)\s*(?:without|for\s*no)\s*work/i,  // "no credit without work"
+    /(?:partial|full)\s*credit\s*(?:for|requires?)\s*(?:process|steps|work)/i,
+    /work\s*(?:for|worth|valued?\s*at)\s*\d+\s*(?:pts?|points?)/i,  // "work: X points", "work for 2 pts"
+    /(?:correct|accurate)\s*process/i,            // "correct process"
+    /(?:equation|problem)\s*setup\s*[:=\-–]\s*\d+/i,  // "equation setup: 2 points"
+    /no\s*work\s*(?:=|:|\-|–)?\s*(?:max(?:imum)?|only|partial)/i,  // "no work = maximum 3 points"
+    /(?:max(?:imum)?|only)\s*\d+\s*(?:pts?|points?)?\s*(?:for|with|if)\s*no\s*work/i,
+    /work\s*shown\s*[:=\-–]\s*\d+/i,              // "work shown: 2 points"
+    /process\s*[:=\-–]\s*\d+\s*(?:pts?|points?)/i,  // "process: 10 points"
+  ];
+  
+  for (const pattern of workRequiredPatterns) {
+    if (pattern.test(combinedText)) {
+      console.log(`[grade-paper] Work requirement detected via pattern: ${pattern}`);
+      return true;
+    }
+  }
+  
+  // Check criteria names for work-related scoring
+  const workCriteriaNames = [
+    /work\s*shown/i,
+    /solving\s*steps/i,
+    /equation\s*setup/i,
+    /problem\s*setup/i,
+    /process/i,
+    /methodology/i,
+  ];
+  
+  for (const criterion of parsedRubric?.criteria || []) {
+    for (const namePattern of workCriteriaNames) {
+      if (namePattern.test(criterion.name)) {
+        console.log(`[grade-paper] Work requirement detected in criterion: ${criterion.name}`);
+        return true;
+      }
+    }
+  }
+  
+  console.log(`[grade-paper] No work requirement detected in rubric - using answer-only mode`);
+  return false;
+}
+
+/**
  * Build scoring prompts - always produces numeric score
  * Enhanced mode when both rubric AND answer key are present
+ * NOW RUBRIC-AWARE for "show your work" requirements
  */
 function buildScoringPrompts(params: {
   studentWork: string;
@@ -565,6 +627,7 @@ function buildScoringPrompts(params: {
   answerKey?: string;
   assignmentDocText?: string;
   enhancedMode?: boolean;
+  rubricRawText?: string; // Original rubric text for work requirement detection
 }): { systemPrompt: string; userPrompt: string } {
   const rubricText = params.parsedRubric.criteria
     .map((c) => `- ${c.name}: ${c.points} points (${c.guidance})`)
@@ -581,6 +644,12 @@ function buildScoringPrompts(params: {
   const isMathAssignment = /math|algebra|equation|solve|variable|linear|calculation/i.test(
     (params.subject || "") + (params.assignmentType || "") + (params.studentWork || "")
   );
+
+  // KEY CHANGE: Check if rubric EXPLICITLY requires showing work
+  const rubricRequiresWork = doesRubricRequireWork(params.rubricRawText, params.parsedRubric);
+  const shouldEnforceWorkShown = isMathAssignment && rubricRequiresWork;
+  
+  console.log(`[grade-paper] Math assignment: ${isMathAssignment}, Rubric requires work: ${rubricRequiresWork}, Enforcing work shown: ${shouldEnforceWorkShown}`);
 
   // Build enhanced system prompt when both rubric and answer key are present
   const systemPrompt = `You are Bottor Assist, a teacher-facing grading assistant. You must be accurate, conservative, and transparent.
@@ -639,8 +708,12 @@ If student gets: Proficient, Excellent, Proficient, Excellent
 Expected output: 30/40, 30/30, 15/20, 10/10 = 85/100 total
 ${is100PointScale ? `- This rubric uses a 100-point scale. Output the final score out of 100 points.` : ""}
 
-${isMathAssignment ? `
-===== CRITICAL: MATH "SHOW YOUR WORK" ENFORCEMENT =====
+${shouldEnforceWorkShown ? `
+===== CRITICAL: RUBRIC REQUIRES "SHOW YOUR WORK" - ENFORCING =====
+GRADING MODE: WORK-REQUIRED GRADING
+
+The teacher's rubric EXPLICITLY requires students to show their work/steps/process.
+You MUST check for visible work and apply penalties when work is missing.
 
 For EACH math problem, you MUST perform a two-step analysis:
 
@@ -665,33 +738,41 @@ What does NOT count as "work shown":
 
 STEP B: APPLY RUBRIC-BASED SCORING PER QUESTION
 
-For each question, award points based on this breakdown (if total is 5 points per question):
-IF work IS shown:
-- Equation setup: 2 points (if correct)
-- Solving steps shown: 2 points (if correct process)
-- Final answer: 1 point (if correct)
-- MAXIMUM: 5/5 points
+Follow the EXACT point breakdown from the rubric. If the rubric says:
+- "Correct equation setup: 2 points" → Award 2 points ONLY if setup is visible
+- "Correct solving steps shown: 2 points" → Award ONLY if steps are visible
+- "Correct final answer: 1 point" → Award if answer is correct
 
 IF work is NOT shown but answer is correct:
-- Equation setup: 0 points (no evidence of setup visible)
-- Solving steps shown: 0 points (no steps visible)
-- Final answer: 1 point (answer is correct)
-- Partial credit for having correct answer: +2 points
-- MAXIMUM: 3/5 points (or 60% of question value if different scale)
-
-IF work is partially shown (some steps but incomplete):
-- Award points proportionally (e.g., 4/5)
-
-CRITICAL SCORING RULE:
-A CORRECT ANSWER WITHOUT VISIBLE WORK = MAXIMUM 60% of that question's points.
-This rule MUST be applied even if the final answer is correct.
+- Award 0 points for "setup" and "steps shown" criteria (no evidence visible)
+- Award full points for "correct answer" criterion
+- Apply any partial credit rules from rubric (e.g., "max 3/5 for correct answer, no work")
+- MAXIMUM: Follow rubric's explicit "no work shown" penalty (typically 60% of question value)
 
 WORD PROBLEMS REQUIRE EQUATION:
-- Word problems need a written equation to get full credit
-- Just writing the numerical answer is not enough
-- Example: "Sarah started with $35" without "x - 12 = 23" = max 60% of points
+- Word problems need a written equation to get full credit for "setup" criterion
+- Just writing the numerical answer earns only "correct answer" points
+- Example: "Sarah started with $35" without "x - 12 = 23" = only 1/5 (answer point only)
 
-===== END MATH WORK ENFORCEMENT =====
+INCLUDE IN FEEDBACK:
+- When work is missing, state: "Remember to show your work on problems [X, Y]. The rubric requires visible solving steps for full credit."
+
+===== END RUBRIC-AWARE WORK ENFORCEMENT =====
+` : isMathAssignment ? `
+===== GRADING MODE: ANSWER-ONLY (Rubric does NOT require showing work) =====
+
+This rubric does NOT explicitly require students to show their work.
+Grade based on ANSWER CORRECTNESS only.
+
+For each problem:
+1. Check if the final answer is correct
+2. Award full points if correct, zero/partial if incorrect
+3. DO NOT penalize for missing work (rubric doesn't require it)
+4. DO NOT mention "show your work" in feedback (not relevant to this rubric)
+
+Focus feedback on: answer accuracy, conceptual understanding, common mistakes to avoid.
+
+===== END ANSWER-ONLY MODE =====
 ` : ""}
 
 6. If something is unclear or illegible, award 0 points for that criterion and note it.
@@ -709,6 +790,11 @@ RUBRIC (${isAutoGenerated ? "Auto-Generated - Default Template" : "Teacher-Provi
 Total Points: ${params.parsedRubric.totalPoints}
 Criteria:
 ${rubricText}
+${shouldEnforceWorkShown ? `
+⚠️ WORK REQUIREMENT DETECTED: This rubric requires students to show their work.
+Apply "no work shown" penalties as specified in the rubric.` : isMathAssignment ? `
+ℹ️ ANSWER-ONLY MODE: This rubric does NOT require showing work.
+Grade based on answer correctness only.` : ""}
 
 ${
   params.answerKey
@@ -734,13 +820,14 @@ ${hasAnswerKey ? "2. Cross-reference answers against the ANSWER KEY for correctn
 3. Calculate total earned points (sum of all criterion scores)
 4. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
 5. Determine confidence level based on clarity of student work and rubric alignment
-${isMathAssignment ? `6. FOR EACH MATH QUESTION: Check if work is shown and cap at 60% of points if no work visible but answer is correct` : ""}
+${shouldEnforceWorkShown ? `6. FOR EACH MATH QUESTION: Check if work is shown. If no work visible but answer correct, apply rubric's "no work" penalty (typically max 60% of question points)` : ""}
 
 OUTPUT FORMAT (STRICT JSON):
 {
   "mode": "scoring",
   "rubric_source": "${params.parsedRubric.source}",
-  "grading_mode": "${enhancedMode ? "enhanced" : hasAnswerKey ? "answer_key_assisted" : "rubric_only"}",
+  "grading_mode": "${shouldEnforceWorkShown ? "work_required" : isMathAssignment ? "answer_only" : enhancedMode ? "enhanced" : hasAnswerKey ? "answer_key_assisted" : "rubric_only"}",
+  "work_requirement_enforced": ${shouldEnforceWorkShown},
   "suggested_score": {
     "earned_points": <number>,
     "possible_points": ${params.parsedRubric.totalPoints},
@@ -766,19 +853,25 @@ OUTPUT FORMAT (STRICT JSON):
       "answer_correct": <boolean>,
       "work_shown": <boolean - true if visible work/steps, false if only final answer>,
       "work_shown_details": "<what work was shown OR 'Only final answer visible'>",
-      "scoring_reason": "<e.g., 'Full credit - work shown and correct' OR 'Reduced credit - correct answer but no work shown'>"
+      "scoring_reason": "<e.g., 'Full credit - work shown and correct' OR 'Reduced credit - correct answer but no work shown (rubric requires work)' OR 'Full credit - answer correct (rubric does not require work)'>"
     }
   ],` : ""}
   "strengths": ["<3-6 bullets>"],
-  "areas_for_improvement": ["<3-6 bullets>"],
+  "areas_for_improvement": ["<3-6 bullets>${shouldEnforceWorkShown ? " - include note about showing work if applicable" : ""}"],
   "draft_feedback": "<1 paragraph written to the student>",
   "teacher_notes": ["<1-3 bullets about grading decisions, unclear areas, or recommendations>"]
-}${isMathAssignment ? `
+}${shouldEnforceWorkShown ? `
 
-IMPORTANT FOR MATH: The question_breakdown array must include EVERY question graded.
-- If a student got a correct answer but showed no work, work_shown must be false and earned_points must be capped at 60% of possible_points.
-- Include specific feedback about missing work in areas_for_improvement.
-- Example: For a 5-point question with correct answer but no work → earned_points = 3, work_shown = false` : ""}`;
+IMPORTANT FOR WORK-REQUIRED GRADING: 
+- The question_breakdown must show work_shown=false for any question without visible steps
+- If correct answer but no work: earned_points should follow rubric penalty (e.g., max 60% or 3/5)
+- Include specific feedback in areas_for_improvement about missing work` : isMathAssignment ? `
+
+IMPORTANT FOR ANSWER-ONLY GRADING:
+- DO NOT penalize for missing work
+- DO NOT mention "show your work" in feedback
+- Award full points for correct answers regardless of whether work is shown
+- Focus feedback on accuracy and understanding` : ""}`;
 
   return { systemPrompt, userPrompt };
 }

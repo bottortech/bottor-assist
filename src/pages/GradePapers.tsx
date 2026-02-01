@@ -439,6 +439,8 @@ interface GradingResult {
   letter_grade?: string;
   confidence?: 'high' | 'medium' | 'low';
   rubric_source?: 'teacher' | 'auto-generated';
+  grading_mode?: 'work_required' | 'answer_only' | 'enhanced' | 'answer_key_assisted' | 'rubric_only';
+  work_requirement_enforced?: boolean;
   strengths: string;
   areas_for_improvement: string;
   feedback_paragraph: string;
@@ -3061,13 +3063,28 @@ export default function GradePapers() {
                         ))}
                       </div>
                       
-                      {/* Work shown summary */}
-                      {currentGroup.result.question_breakdown.some(q => q.answer_correct && !q.work_shown) && (
+                      {/* Work shown summary - only show if work requirement was enforced */}
+                      {currentGroup.result.work_requirement_enforced && currentGroup.result.question_breakdown.some(q => q.answer_correct && !q.work_shown) && (
                         <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-md border border-amber-200 dark:border-amber-800">
                           <p className="text-xs text-amber-700 dark:text-amber-300">
                             <strong>Note:</strong> Some questions received reduced credit because no work was shown. 
                             According to the rubric, showing work is required for full credit even when the answer is correct.
                           </p>
+                        </div>
+                      )}
+                      
+                      {/* Grading mode indicator */}
+                      {currentGroup.result.grading_mode && (
+                        <div className={`mt-3 p-2 rounded-md text-xs flex items-center gap-2 ${
+                          currentGroup.result.work_requirement_enforced
+                            ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                            : 'bg-muted/50 text-muted-foreground border border-border'
+                        }`}>
+                          <Info className="w-3 h-3" />
+                          {currentGroup.result.work_requirement_enforced 
+                            ? 'Grading Mode: Work Required — rubric explicitly requires showing work'
+                            : 'Grading Mode: Answer Only — rubric does not require showing work'
+                          }
                         </div>
                       )}
                     </div>
