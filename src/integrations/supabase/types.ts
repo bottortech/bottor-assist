@@ -95,6 +95,124 @@ export type Database = {
         }
         Relationships: []
       }
+      submission_batches: {
+        Row: {
+          answer_key_text: string | null
+          assignment_title: string | null
+          completed_at: string | null
+          created_at: string
+          grade_level: string | null
+          graded_count: number
+          id: string
+          rubric_id: string | null
+          status: string
+          subject: string | null
+          total_count: number
+          user_id: string
+        }
+        Insert: {
+          answer_key_text?: string | null
+          assignment_title?: string | null
+          completed_at?: string | null
+          created_at?: string
+          grade_level?: string | null
+          graded_count?: number
+          id?: string
+          rubric_id?: string | null
+          status?: string
+          subject?: string | null
+          total_count?: number
+          user_id: string
+        }
+        Update: {
+          answer_key_text?: string | null
+          assignment_title?: string | null
+          completed_at?: string | null
+          created_at?: string
+          grade_level?: string | null
+          graded_count?: number
+          id?: string
+          rubric_id?: string | null
+          status?: string
+          subject?: string | null
+          total_count?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "submission_batches_rubric_id_fkey"
+            columns: ["rubric_id"]
+            isOneToOne: false
+            referencedRelation: "saved_rubrics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      submissions: {
+        Row: {
+          batch_id: string | null
+          combined_text: string | null
+          created_at: string
+          date_detection: Json | null
+          grading_result: Json | null
+          id: string
+          name_detection: Json | null
+          pages: Json | null
+          source: Database["public"]["Enums"]["submission_source"]
+          source_metadata: Json | null
+          status: Database["public"]["Enums"]["submission_status"]
+          student_email: string | null
+          student_id: string | null
+          student_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          batch_id?: string | null
+          combined_text?: string | null
+          created_at?: string
+          date_detection?: Json | null
+          grading_result?: Json | null
+          id?: string
+          name_detection?: Json | null
+          pages?: Json | null
+          source?: Database["public"]["Enums"]["submission_source"]
+          source_metadata?: Json | null
+          status?: Database["public"]["Enums"]["submission_status"]
+          student_email?: string | null
+          student_id?: string | null
+          student_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          batch_id?: string | null
+          combined_text?: string | null
+          created_at?: string
+          date_detection?: Json | null
+          grading_result?: Json | null
+          id?: string
+          name_detection?: Json | null
+          pages?: Json | null
+          source?: Database["public"]["Enums"]["submission_source"]
+          source_metadata?: Json | null
+          status?: Database["public"]["Enums"]["submission_status"]
+          student_email?: string | null
+          student_id?: string | null
+          student_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "submissions_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "submission_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -103,7 +221,17 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      submission_source:
+        | "upload"
+        | "google_classroom"
+        | "canvas"
+        | "manual_entry"
+      submission_status:
+        | "pending"
+        | "processing"
+        | "graded"
+        | "review_needed"
+        | "failed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -230,6 +358,20 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      submission_source: [
+        "upload",
+        "google_classroom",
+        "canvas",
+        "manual_entry",
+      ],
+      submission_status: [
+        "pending",
+        "processing",
+        "graded",
+        "review_needed",
+        "failed",
+      ],
+    },
   },
 } as const
