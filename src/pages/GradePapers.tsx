@@ -76,6 +76,7 @@ import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import type { ELAGradeResponse } from "@/types/elaGrading";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
 import { detectSubjectFromRubric, getGradingPipeline, type DetectedSubject, type SubjectDetectionResult } from "@/lib/subjectDetector";
 
@@ -420,6 +421,17 @@ interface GradePapersForm {
   answer_key: string;
 }
 
+interface QuestionBreakdown {
+  question_number: number;
+  question_text: string;
+  possible_points: number;
+  earned_points: number;
+  answer_correct: boolean;
+  work_shown: boolean;
+  work_shown_details?: string;
+  scoring_reason?: string;
+}
+
 interface GradingResult {
   score_suggestion: string;
   score_derivation?: string;
@@ -430,6 +442,7 @@ interface GradingResult {
   strengths: string;
   areas_for_improvement: string;
   feedback_paragraph: string;
+  question_breakdown?: QuestionBreakdown[];
 }
 
 interface StudentGroup {
@@ -1907,17 +1920,19 @@ export default function GradePapers() {
 
     setSaving(true);
     try {
+      const summaryData = {
+        ...currentGroup.result,
+        input_type: "grading",
+        grading_mode: gradingMode,
+        studentName: currentGroup.studentName,
+      };
+      
       const sessionData = {
         user_id: user.id,
         status: "completed",
         title: `${currentGroup.studentName} - ${form.subject || "Grading"}`,
         snippet: `Score: ${currentGroup.result.score_suggestion}`,
-        summary_json: {
-          ...currentGroup.result,
-          input_type: "grading",
-          grading_mode: gradingMode,
-          studentName: currentGroup.studentName,
-        },
+        summary_json: JSON.parse(JSON.stringify(summaryData)) as Json,
         teacher_notes: JSON.stringify(form),
         transcript: currentGroup.extractedText,
       };
@@ -2986,6 +3001,75 @@ export default function GradePapers() {
                     }`}>
                       <Info className="w-3 h-3" />
                       Confidence: {currentGroup.result.confidence} — teacher review recommended
+                    </div>
+                  )}
+                  
+                  {/* Question-by-Question Breakdown */}
+                  {currentGroup.result.question_breakdown && currentGroup.result.question_breakdown.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-border">
+                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                        <FileText className="w-4 h-4" />
+                        Question-by-Question Breakdown
+                      </h3>
+                      <div className="space-y-2">
+                        {currentGroup.result.question_breakdown.map((q, idx) => (
+                          <div 
+                            key={idx} 
+                            className={`flex items-center justify-between p-2 rounded-md border ${
+                              q.earned_points === q.possible_points 
+                                ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' 
+                                : q.answer_correct && !q.work_shown
+                                  ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+                                  : 'bg-muted/30 border-muted'
+                            }`}
+                          >
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-sm font-medium">
+                                Question {q.question_number}
+                                {q.question_text && (
+                                  <span className="text-muted-foreground font-normal ml-2">
+                                    ({q.question_text})
+                                  </span>
+                                )}
+                              </span>
+                              {q.scoring_reason && (
+                                <span className="text-xs text-muted-foreground">
+                                  {q.scoring_reason}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-semibold ${
+                                q.earned_points === q.possible_points 
+                                  ? 'text-emerald-600 dark:text-emerald-400' 
+                                  : q.answer_correct && !q.work_shown
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-foreground'
+                              }`}>
+                                {q.earned_points}/{q.possible_points}
+                              </span>
+                              {q.answer_correct && !q.work_shown && (
+                                <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300">
+                                  No work shown
+                                </Badge>
+                              )}
+                              {q.earned_points === q.possible_points && (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Work shown summary */}
+                      {currentGroup.result.question_breakdown.some(q => q.answer_correct && !q.work_shown) && (
+                        <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-md border border-amber-200 dark:border-amber-800">
+                          <p className="text-xs text-amber-700 dark:text-amber-300">
+                            <strong>Note:</strong> Some questions received reduced credit because no work was shown. 
+                            According to the rubric, showing work is required for full credit even when the answer is correct.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </CardContent>
