@@ -577,6 +577,11 @@ function buildScoringPrompts(params: {
   // Detect if this is a 100-point weighted rubric
   const is100PointScale = params.parsedRubric.totalPoints === 100;
 
+  // Detect if this is a math assignment (look for math-related keywords)
+  const isMathAssignment = /math|algebra|equation|solve|variable|linear|calculation/i.test(
+    (params.subject || "") + (params.assignmentType || "") + (params.studentWork || "")
+  );
+
   // Build enhanced system prompt when both rubric and answer key are present
   const systemPrompt = `You are Bottor Assist, a teacher-facing grading assistant. You must be accurate, conservative, and transparent.
 
@@ -634,6 +639,61 @@ If student gets: Proficient, Excellent, Proficient, Excellent
 Expected output: 30/40, 30/30, 15/20, 10/10 = 85/100 total
 ${is100PointScale ? `- This rubric uses a 100-point scale. Output the final score out of 100 points.` : ""}
 
+${isMathAssignment ? `
+===== CRITICAL: MATH "SHOW YOUR WORK" ENFORCEMENT =====
+
+For EACH math problem, you MUST perform a two-step analysis:
+
+STEP A: VISUAL EVIDENCE CHECK
+Look at the student's work and determine:
+- Is there ANY visible work/steps written between the problem and the final answer?
+- Or is there ONLY a final answer with no intermediate steps?
+
+What counts as "work shown":
+✓ Arithmetic operations written out (e.g., "15 - 8 = 7")
+✓ Intermediate steps (e.g., "2m + 5 = 17" → "2m = 12" → "m = 6")
+✓ Equations written for word problems (e.g., "x - 12 = 23")
+✓ Division/multiplication steps shown (e.g., "2m/2 = 12/2")
+✓ Verbal descriptions of steps (e.g., "subtract 5 from both sides")
+✓ Cross-outs showing trial and error (shows thinking process)
+
+What does NOT count as "work shown":
+✗ Only the final answer written (e.g., just "x = 7" with nothing else)
+✗ Only the variable and answer (e.g., just "λ = 7" below the problem)
+✗ Answer written in the answer blank with no steps
+✗ Circling or underlining the final answer (without showing how they got it)
+
+STEP B: APPLY RUBRIC-BASED SCORING PER QUESTION
+
+For each question, award points based on this breakdown (if total is 5 points per question):
+IF work IS shown:
+- Equation setup: 2 points (if correct)
+- Solving steps shown: 2 points (if correct process)
+- Final answer: 1 point (if correct)
+- MAXIMUM: 5/5 points
+
+IF work is NOT shown but answer is correct:
+- Equation setup: 0 points (no evidence of setup visible)
+- Solving steps shown: 0 points (no steps visible)
+- Final answer: 1 point (answer is correct)
+- Partial credit for having correct answer: +2 points
+- MAXIMUM: 3/5 points (or 60% of question value if different scale)
+
+IF work is partially shown (some steps but incomplete):
+- Award points proportionally (e.g., 4/5)
+
+CRITICAL SCORING RULE:
+A CORRECT ANSWER WITHOUT VISIBLE WORK = MAXIMUM 60% of that question's points.
+This rule MUST be applied even if the final answer is correct.
+
+WORD PROBLEMS REQUIRE EQUATION:
+- Word problems need a written equation to get full credit
+- Just writing the numerical answer is not enough
+- Example: "Sarah started with $35" without "x - 12 = 23" = max 60% of points
+
+===== END MATH WORK ENFORCEMENT =====
+` : ""}
+
 6. If something is unclear or illegible, award 0 points for that criterion and note it.
 7. Include a confidence level: "high" if grading is straightforward, "medium" if some interpretation needed, "low" if significant uncertainty.
 8. Be consistent: total earned points must equal the sum of criterion scores.
@@ -674,6 +734,7 @@ ${hasAnswerKey ? "2. Cross-reference answers against the ANSWER KEY for correctn
 3. Calculate total earned points (sum of all criterion scores)
 4. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
 5. Determine confidence level based on clarity of student work and rubric alignment
+${isMathAssignment ? `6. FOR EACH MATH QUESTION: Check if work is shown and cap at 60% of points if no work visible but answer is correct` : ""}
 
 OUTPUT FORMAT (STRICT JSON):
 {
@@ -696,11 +757,28 @@ OUTPUT FORMAT (STRICT JSON):
       "evidence": "<1-2 sentences citing specific evidence from student work>"
     }
   ],
+  ${isMathAssignment ? `"question_breakdown": [
+    {
+      "question_number": <number>,
+      "question_text": "<brief description of the problem, e.g., 'x + 8 = 15'>",
+      "possible_points": <number - points for this question>,
+      "earned_points": <number - points awarded>,
+      "answer_correct": <boolean>,
+      "work_shown": <boolean - true if visible work/steps, false if only final answer>,
+      "work_shown_details": "<what work was shown OR 'Only final answer visible'>",
+      "scoring_reason": "<e.g., 'Full credit - work shown and correct' OR 'Reduced credit - correct answer but no work shown'>"
+    }
+  ],` : ""}
   "strengths": ["<3-6 bullets>"],
   "areas_for_improvement": ["<3-6 bullets>"],
   "draft_feedback": "<1 paragraph written to the student>",
   "teacher_notes": ["<1-3 bullets about grading decisions, unclear areas, or recommendations>"]
-}`;
+}${isMathAssignment ? `
+
+IMPORTANT FOR MATH: The question_breakdown array must include EVERY question graded.
+- If a student got a correct answer but showed no work, work_shown must be false and earned_points must be capped at 60% of possible_points.
+- Include specific feedback about missing work in areas_for_improvement.
+- Example: For a 5-point question with correct answer but no work → earned_points = 3, work_shown = false` : ""}`;
 
   return { systemPrompt, userPrompt };
 }
