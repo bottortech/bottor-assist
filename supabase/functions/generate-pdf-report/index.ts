@@ -30,8 +30,13 @@ interface GradeReportData {
   generatedAt?: string;
 }
 
-function escapeHtml(text: string): string {
-  return text
+function escapeHtml(text: unknown): string {
+  // Handle non-string values safely
+  if (text === null || text === undefined) {
+    return '';
+  }
+  const str = typeof text === 'string' ? text : String(text);
+  return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
