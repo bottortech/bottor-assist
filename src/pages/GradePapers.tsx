@@ -2046,19 +2046,22 @@ export default function GradePapers() {
               />
               <label
                 htmlFor="student-file-upload"
-                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-muted-foreground/25 rounded-lg cursor-pointer hover:border-primary/50 transition-colors bg-muted/20"
+                className="flex flex-col items-center justify-center w-full border-2 border-dashed border-border rounded-[10px] cursor-pointer hover:border-primary hover:bg-accent-light transition-colors bg-muted/30 p-8 gap-2 text-center"
               >
                 {/* Stacked document icons to indicate multiple files */}
-                <div className="relative mb-2">
+                <div className="relative">
                   <FileText className="w-5 h-5 text-muted-foreground/40 absolute -left-1 -top-1" />
                   <FileText className="w-6 h-6 text-muted-foreground relative z-10" />
                 </div>
                 <span className="text-sm font-medium text-foreground">Upload Student Work</span>
-                <span className="text-sm text-muted-foreground mt-1">
-                  📄 Upload single or multiple student submissions at once
+                <span className="text-sm text-muted-foreground">
+                  Drag files here or click to browse
                 </span>
-                <span className="text-xs text-muted-foreground/70 mt-1">
-                  Any filename works — student names detected from document content
+                <span className="text-xs text-muted-foreground/70">
+                  PDF, JPG, PNG, HEIC • Any filename works
+                </span>
+                <span className="text-xs text-muted-foreground/60">
+                  Student names detected from document content
                 </span>
               </label>
             </div>
