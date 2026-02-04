@@ -63,26 +63,26 @@ export default function Index() {
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
-        <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20">
-          <div className="text-center max-w-md mx-auto animate-fade-in">
+        <main className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 pb-20 min-h-[calc(100vh-120px)] w-full">
+          <div className="flex flex-col items-center justify-center text-center w-full max-w-md mx-auto animate-fade-in">
             {/* Logo */}
             <div className="mb-6">
               <BottorLogo size={88} className="mx-auto" />
             </div>
 
             {/* Title */}
-            <h1 className="text-[40px] font-bold mb-3 text-primary">
+            <h1 className="text-[32px] sm:text-[40px] font-bold mb-3 text-primary">
               Bottor Assist
             </h1>
-            <p className="text-xl text-secondary-foreground font-medium mb-1">
+            <p className="text-lg sm:text-xl text-secondary-foreground font-medium mb-1">
               Grade with your rubric.
             </p>
-            <p className="text-xl text-secondary-foreground font-medium mb-10">
+            <p className="text-lg sm:text-xl text-secondary-foreground font-medium mb-10">
               You review. You decide.
             </p>
 
             {/* Actions */}
-            <div className="space-y-4">
+            <div className="space-y-4 w-full max-w-[320px]">
               <Button
                 variant="hero"
                 size="xl"
@@ -111,26 +111,26 @@ export default function Index() {
       <AppHeader onSignOut={handleSignOut} />
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-12 pb-20">
-        <div className="text-center max-w-md mx-auto animate-fade-in">
+      <main className="flex-1 flex flex-col items-center justify-center px-4 sm:px-12 pb-20 min-h-[calc(100vh-120px)] w-full">
+        <div className="flex flex-col items-center justify-center text-center w-full max-w-md mx-auto animate-fade-in">
           {/* Logo */}
           <div className="mb-6">
             <BottorLogo size={88} className="mx-auto" />
           </div>
 
           {/* Title */}
-          <h1 className="text-[40px] font-bold mb-3 text-primary">
+          <h1 className="text-[32px] sm:text-[40px] font-bold mb-3 text-primary">
             Bottor Assist
           </h1>
-          <p className="text-xl text-secondary-foreground font-medium mb-1">
+          <p className="text-lg sm:text-xl text-secondary-foreground font-medium mb-1">
             Grade with your rubric.
           </p>
-          <p className="text-xl text-secondary-foreground font-medium mb-10">
+          <p className="text-lg sm:text-xl text-secondary-foreground font-medium mb-10">
             You review. You decide.
           </p>
 
           {/* Actions */}
-          <div className="space-y-4">
+          <div className="space-y-4 w-full max-w-[320px]">
             {/* [ROUTE: /grade] Primary action - Start Grading Session */}
             <Button
               variant="hero"
