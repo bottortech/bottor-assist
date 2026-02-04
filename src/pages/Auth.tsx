@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { GraduationCap, UserCircle } from 'lucide-react';
+import { UserCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { z } from 'zod';
+import { BottorLogo } from '@/components/BottorLogo';
 
 const authSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -80,25 +81,25 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen bg-bottor-gradient flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md animate-fade-in">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary text-primary-foreground mb-4 shadow-lg">
-            <GraduationCap className="w-8 h-8" />
+          <div className="mb-4">
+            <BottorLogo size={64} className="mx-auto" />
           </div>
-          <h1 className="text-2xl font-bold text-gradient-primary">Bottor Assist</h1>
-          <p className="text-muted-foreground mt-1">Teach. I'll handle the notes.</p>
+          <h1 className="text-2xl font-bold text-primary">Bottor Assist</h1>
+          <p className="text-muted-foreground mt-1">Grade with your rubric. You review. You decide.</p>
         </div>
 
-        <Card className="border-0 shadow-xl bg-card-gradient">
+        <Card className="border border-border shadow-card">
           <CardHeader className="text-center pb-4">
             <CardTitle className="text-xl">
               {isLogin ? 'Welcome Back' : 'Create Account'}
             </CardTitle>
             <CardDescription>
               {isLogin 
-                ? 'Sign in to access your lesson summaries' 
+                ? 'Sign in to access your grading sessions' 
                 : 'Get started with Bottor Assist'}
             </CardDescription>
           </CardHeader>
@@ -131,7 +132,7 @@ export default function Auth() {
               <Button
                 type="submit"
                 variant="hero"
-                className="w-full"
+                className="w-full h-12"
                 disabled={isSubmitting}
               >
                 {isSubmitting 
@@ -155,7 +156,7 @@ export default function Auth() {
             {/* Guest Mode Section */}
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-muted" />
+                <span className="w-full border-t border-border" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
                 <span className="bg-card px-2 text-muted-foreground">or</span>
@@ -179,11 +180,11 @@ export default function Auth() {
           </CardContent>
         </Card>
 
-        {/* Pilot Badge */}
+        {/* Status Banner */}
         <div className="mt-6 text-center">
-          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
-            Pilot Mode — sample documents only
-          </span>
+          <p className="text-[13px] text-muted-foreground">
+            Early access version — features may evolve based on educator feedback
+          </p>
         </div>
       </div>
     </div>

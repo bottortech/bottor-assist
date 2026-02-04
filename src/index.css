@@ -2,103 +2,126 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Bottor Assist Design System - Calm, focused, teacher-friendly */
+/* Bottor Assist Design System - Clean, professional, teacher-friendly */
 
 @layer base {
   :root {
-    /* Warm cream background for a calm, focused environment */
-    --background: 40 33% 98%;
-    --foreground: 220 20% 20%;
-
-    /* Cards with subtle warmth */
-    --card: 40 25% 99%;
-    --card-foreground: 220 20% 20%;
-
-    --popover: 40 25% 99%;
-    --popover-foreground: 220 20% 20%;
-
-    /* Calming teal - the primary brand color */
-    --primary: 168 76% 36%;
+    /* Brand Colors - Primary Green Palette */
+    --primary: 160 84% 30%;           /* #059669 */
+    --primary-hover: 162 92% 25%;     /* #047857 */
     --primary-foreground: 0 0% 100%;
-
-    /* Soft sage secondary */
-    --secondary: 160 20% 94%;
-    --secondary-foreground: 168 60% 28%;
-
-    /* Muted warm gray */
-    --muted: 40 15% 94%;
-    --muted-foreground: 220 10% 50%;
-
-    /* Accent - soft coral for attention items */
-    --accent: 12 80% 62%;
+    
+    /* Accent greens */
+    --accent-light: 160 84% 39%;      /* #10B981 */
+    --tint: 152 76% 90%;              /* #D1FAE5 */
+    --tint-light: 151 81% 96%;        /* #ECFDF5 */
+    
+    /* Background & Surface */
+    --background: 220 14% 98%;        /* #f9fafb */
+    --foreground: 220 39% 11%;        /* #111827 */
+    
+    --card: 0 0% 100%;                /* white */
+    --card-foreground: 220 39% 11%;   /* #111827 */
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 39% 11%;
+    
+    /* Secondary */
+    --secondary: 0 0% 100%;           /* white */
+    --secondary-foreground: 218 20% 27%;  /* #374151 */
+    
+    /* Muted */
+    --muted: 220 13% 95%;             /* #f3f4f6 */
+    --muted-foreground: 220 9% 46%;   /* #6b7280 */
+    
+    /* Text hierarchy */
+    --text-primary: 220 39% 11%;      /* #111827 */
+    --text-secondary: 218 20% 27%;    /* #374151 */
+    --text-muted: 220 9% 46%;         /* #6b7280 */
+    --text-light: 218 11% 65%;        /* #9ca3af */
+    
+    /* Accent - coral for attention */
+    --accent: 160 84% 39%;            /* #10B981 - using green instead of coral */
     --accent-foreground: 0 0% 100%;
-
-    /* Destructive - muted red */
+    
+    /* Destructive */
     --destructive: 0 65% 55%;
     --destructive-foreground: 0 0% 100%;
-
-    /* Borders and inputs */
-    --border: 40 20% 88%;
-    --input: 40 20% 88%;
-    --ring: 168 76% 36%;
-
-    --radius: 0.75rem;
-
+    
+    /* Borders */
+    --border: 220 13% 91%;            /* #e5e7eb */
+    --border-soft: 220 14% 96%;       /* #f3f4f6 */
+    --input: 220 13% 91%;             /* #e5e7eb */
+    --ring: 160 84% 30%;              /* primary */
+    
+    --radius: 0.625rem;               /* 10px */
+    
     /* Sidebar */
-    --sidebar-background: 40 25% 97%;
-    --sidebar-foreground: 220 20% 25%;
-    --sidebar-primary: 168 76% 36%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 39% 11%;
+    --sidebar-primary: 160 84% 30%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 160 20% 92%;
-    --sidebar-accent-foreground: 168 60% 28%;
-    --sidebar-border: 40 20% 88%;
-    --sidebar-ring: 168 76% 36%;
-
+    --sidebar-accent: 152 76% 90%;
+    --sidebar-accent-foreground: 162 92% 25%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 160 84% 30%;
+    
     /* Custom tokens for Bottor */
-    --bottor-glow: 168 76% 50%;
-    --bottor-pulse: 168 60% 45%;
+    --bottor-glow: 160 84% 50%;
+    --bottor-pulse: 160 60% 45%;
     --bottor-success: 152 60% 45%;
     --bottor-warning: 38 92% 50%;
     --bottor-info: 200 80% 50%;
   }
 
   .dark {
-    --background: 220 20% 10%;
-    --foreground: 40 20% 95%;
-
-    --card: 220 20% 12%;
-    --card-foreground: 40 20% 95%;
-
-    --popover: 220 20% 12%;
-    --popover-foreground: 40 20% 95%;
-
-    --primary: 168 70% 45%;
+    --primary: 160 70% 45%;
+    --primary-hover: 160 70% 38%;
     --primary-foreground: 220 20% 10%;
-
-    --secondary: 168 30% 18%;
-    --secondary-foreground: 168 50% 75%;
-
+    
+    --accent-light: 160 70% 50%;
+    --tint: 160 30% 18%;
+    --tint-light: 160 20% 12%;
+    
+    --background: 220 20% 10%;
+    --foreground: 220 14% 95%;
+    
+    --card: 220 20% 12%;
+    --card-foreground: 220 14% 95%;
+    
+    --popover: 220 20% 12%;
+    --popover-foreground: 220 14% 95%;
+    
+    --secondary: 220 20% 15%;
+    --secondary-foreground: 160 50% 75%;
+    
     --muted: 220 15% 18%;
     --muted-foreground: 220 10% 60%;
-
-    --accent: 12 70% 55%;
+    
+    --text-primary: 220 14% 95%;
+    --text-secondary: 220 10% 80%;
+    --text-muted: 220 10% 60%;
+    --text-light: 220 10% 45%;
+    
+    --accent: 160 70% 50%;
     --accent-foreground: 0 0% 100%;
-
+    
     --destructive: 0 60% 45%;
     --destructive-foreground: 0 0% 100%;
-
+    
     --border: 220 15% 20%;
+    --border-soft: 220 15% 15%;
     --input: 220 15% 20%;
-    --ring: 168 70% 45%;
-
+    --ring: 160 70% 45%;
+    
     --sidebar-background: 220 20% 8%;
-    --sidebar-foreground: 40 20% 90%;
-    --sidebar-primary: 168 70% 45%;
+    --sidebar-foreground: 220 14% 90%;
+    --sidebar-primary: 160 70% 45%;
     --sidebar-primary-foreground: 220 20% 10%;
-    --sidebar-accent: 168 30% 15%;
-    --sidebar-accent-foreground: 168 50% 75%;
+    --sidebar-accent: 160 30% 15%;
+    --sidebar-accent-foreground: 160 50% 75%;
     --sidebar-border: 220 15% 18%;
-    --sidebar-ring: 168 70% 45%;
+    --sidebar-ring: 160 70% 45%;
   }
 }
 
@@ -109,7 +132,12 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold;
   }
 }
 
@@ -158,29 +186,31 @@
     }
   }
 
-  /* Gradient backgrounds */
+  /* Clean gradient background */
   .bg-bottor-gradient {
-    background: linear-gradient(
-      135deg,
-      hsl(var(--background)) 0%,
-      hsl(160 30% 96%) 50%,
-      hsl(var(--background)) 100%
-    );
+    background: hsl(var(--background));
   }
 
   .bg-card-gradient {
-    background: linear-gradient(
-      180deg,
-      hsl(var(--card)) 0%,
-      hsl(40 20% 97%) 100%
-    );
+    background: hsl(var(--card));
   }
 
   /* Text gradient for headings */
   .text-gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(168 60% 42%) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: hsl(var(--primary));
+  }
+  
+  /* Card shadow */
+  .shadow-card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  }
+  
+  /* Tint backgrounds */
+  .bg-tint {
+    background-color: hsl(var(--tint));
+  }
+  
+  .bg-tint-light {
+    background-color: hsl(var(--tint-light));
   }
 }

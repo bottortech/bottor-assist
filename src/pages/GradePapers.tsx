@@ -1955,7 +1955,7 @@ export default function GradePapers() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-bottor-gradient flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
@@ -1971,35 +1971,27 @@ export default function GradePapers() {
   const currentGroup = studentGroups[selectedGroupIndex];
 
   return (
-    <div className="min-h-screen bg-bottor-gradient">
-      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
-        <div className="max-w-2xl mx-auto flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-background border-b border-border">
+        <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-muted-foreground hover:text-foreground">
               <ArrowLeft className="w-4 h-4 mr-2" />
               Home
             </Button>
-            <h1 className="text-xl font-bold text-foreground">Grade Papers</h1>
+            <h1 className="text-xl font-semibold text-foreground">Grade Papers</h1>
           </div>
-          {isGuest && (
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
-              Pilot Mode
-            </span>
-          )}
+        </div>
+        {/* Status Banner */}
+        <div className="w-full bg-background border-t border-border py-2.5 px-4 text-center">
+          <p className="text-[13px] text-muted-foreground">
+            Early access version — features may evolve based on educator feedback
+          </p>
         </div>
       </header>
 
-      {/* Guest Pilot Notice */}
-      {isGuest && (
-        <div className="max-w-2xl mx-auto px-4 pt-4">
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20 text-sm text-muted-foreground">
-            <Info className="w-4 h-4 text-primary flex-shrink-0" />
-            <span>Pilot Mode — sample documents only. Feedback welcome.</span>
-          </div>
-        </div>
-      )}
-
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-2xl mx-auto px-12 py-6 space-y-6">
         {/* Detected Subject Badge (shown when subject auto-detected) */}
         {detectedSubjectResult && detectedSubjectResult.subject !== 'General' && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -2008,19 +2000,25 @@ export default function GradePapers() {
               {detectedSubjectResult.subject}
             </Badge>
             {detectedSubjectResult.confidence.level === 'high' && (
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className="w-4 h-4 text-primary" />
             )}
           </div>
         )}
 
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
-        <Card className="border-2 border-primary/30 shadow-lg bg-primary/5">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-lg">Student Work (Required)</CardTitle>
-              <CardDescription className="text-xs">
-                Bottor automatically detects student names inside each document. No special file naming required.
-              </CardDescription>
+        <Card className="border border-border bg-card">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <div className="flex items-center gap-3">
+              <FileText className="w-5 h-5 text-muted-foreground" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-base">Student Work</CardTitle>
+                  <Badge variant="secondary" className="text-xs bg-muted text-secondary-foreground">Required</Badge>
+                </div>
+                <CardDescription className="text-xs mt-0.5">
+                  Bottor automatically detects student names inside each document.
+                </CardDescription>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               {studentUpload.files.length > 0 && (
@@ -2028,7 +2026,7 @@ export default function GradePapers() {
                   variant="ghost"
                   size="sm"
                   onClick={studentUpload.clearAllFiles}
-                  className="text-muted-foreground hover:text-destructive"
+                  className="text-muted-foreground hover:text-destructive text-xs"
                 >
                   Clear all
                 </Button>
