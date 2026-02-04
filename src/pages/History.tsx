@@ -96,7 +96,7 @@ export default function History() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-bottor-gradient flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -105,16 +105,16 @@ export default function History() {
   // Guest or unauthenticated users see sign-up prompt
   if (isGuest || !user) {
     return (
-      <div className="min-h-screen bg-bottor-gradient">
+      <div className="min-h-screen bg-background">
         {/* Header */}
-        <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
+        <header className="sticky top-0 z-10 bg-background border-b border-border p-4">
           <div className="max-w-2xl mx-auto">
             <div className="flex items-center gap-4">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => navigate('/')}
-                className="text-muted-foreground"
+                className="text-muted-foreground hover:text-foreground"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Home
@@ -124,10 +124,10 @@ export default function History() {
         </header>
 
         {/* Sign Up Prompt */}
-        <main className="max-w-md mx-auto px-4 py-16">
-          <Card className="border-0 shadow-xl bg-card-gradient animate-fade-in">
+        <main className="max-w-md mx-auto px-12 py-16">
+          <Card className="border border-border shadow-card animate-fade-in">
             <CardHeader className="text-center pb-4">
-              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+              <div className="w-16 h-16 rounded-full bg-tint flex items-center justify-center mx-auto mb-4">
                 <Lock className="w-8 h-8 text-primary" />
               </div>
               <CardTitle className="text-xl">Save Your Grading History</CardTitle>
@@ -138,7 +138,7 @@ export default function History() {
             <CardContent className="space-y-4">
               <Button
                 variant="hero"
-                className="w-full"
+                className="w-full h-12"
                 onClick={handleSignUp}
               >
                 <UserCircle className="w-5 h-5 mr-2" />
@@ -155,22 +155,22 @@ export default function History() {
   }
 
   return (
-    <div className="min-h-screen bg-bottor-gradient">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border p-4">
+      <header className="sticky top-0 z-10 bg-background border-b border-border p-4">
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center gap-4 mb-4">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => navigate('/')}
-              className="text-muted-foreground"
+              className="text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Home
             </Button>
           </div>
-          <h1 className="text-xl font-bold text-foreground mb-3">Session History</h1>
+          <h1 className="text-xl font-semibold text-foreground mb-3">Session History</h1>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -184,7 +184,7 @@ export default function History() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-2xl mx-auto px-4 py-6">
+      <main className="max-w-2xl mx-auto px-12 py-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -209,11 +209,11 @@ export default function History() {
             )}
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {filteredSessions.map((session, index) => (
               <Card
                 key={session.id}
-                className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer bg-card-gradient animate-slide-up"
+                className="border border-border shadow-card hover:shadow-md transition-shadow cursor-pointer animate-slide-up"
                 style={{ animationDelay: `${index * 0.05}s` }}
                 onClick={() => navigate(`/session/${session.id}`)}
               >
@@ -228,7 +228,7 @@ export default function History() {
                           <span className={`text-xs px-2 py-0.5 rounded-full ${
                             session.status === 'recording' 
                               ? 'bg-destructive/10 text-destructive' 
-                              : 'bg-primary/10 text-primary'
+                              : 'bg-tint text-primary'
                           }`}>
                             {session.status === 'recording' ? 'Recording' : 'Processing'}
                           </span>

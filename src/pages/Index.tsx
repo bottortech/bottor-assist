@@ -18,7 +18,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LogOut, History, GraduationCap, UserCircle, Link2 } from 'lucide-react';
+import { LogOut, History, UserCircle, Link2, ClipboardList } from 'lucide-react';
+import { BottorLogo } from '@/components/BottorLogo';
+import { AppHeader } from '@/components/AppHeader';
 
 export default function Index() {
   const { user, loading, signOut } = useAuth();
@@ -48,7 +50,7 @@ export default function Index() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-bottor-gradient flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -60,23 +62,23 @@ export default function Index() {
   // If no access, show login prompt instead of redirecting
   if (!hasAccess) {
     return (
-      <div className="min-h-screen bg-bottor-gradient flex flex-col">
+      <div className="min-h-screen bg-background flex flex-col">
         <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20">
           <div className="text-center max-w-md mx-auto animate-fade-in">
             {/* Logo */}
-            <div className="inline-flex items-center justify-center w-24 h-24 rounded-2xl bg-primary text-primary-foreground mb-6 shadow-xl shadow-primary/20">
-              <GraduationCap className="w-12 h-12" />
+            <div className="mb-6">
+              <BottorLogo size={88} className="mx-auto" />
             </div>
 
             {/* Title */}
-            <h1 className="text-4xl font-bold mb-3 text-gradient-primary">
+            <h1 className="text-[40px] font-bold mb-3 text-primary">
               Bottor Assist
             </h1>
-            <p className="text-xl text-muted-foreground mb-2">
-              Teach. I'll handle the notes.
+            <p className="text-xl text-secondary-foreground font-medium mb-1">
+              Grade with your rubric.
             </p>
-            <p className="text-sm text-muted-foreground/70 mb-10">
-              Pilot Version — sample documents only.
+            <p className="text-xl text-secondary-foreground font-medium mb-10">
+              You review. You decide.
             </p>
 
             {/* Actions */}
@@ -85,7 +87,7 @@ export default function Index() {
                 variant="hero"
                 size="xl"
                 onClick={() => navigate('/auth')}
-                className="w-full"
+                className="w-full h-12"
               >
                 <UserCircle className="w-5 h-5 mr-2" />
                 Sign In or Continue as Guest
@@ -94,8 +96,8 @@ export default function Index() {
           </div>
         </main>
 
-        <footer className="p-6 text-center">
-          <p className="text-sm text-muted-foreground">
+        <footer className="py-[18px] text-center border-t border-border">
+          <p className="text-[13px] text-[hsl(218,11%,65%)]">
             Built with teachers to reduce paperwork.
           </p>
         </footer>
@@ -104,65 +106,40 @@ export default function Index() {
   }
 
   return (
-    <div className="min-h-screen bg-bottor-gradient flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="p-4 flex justify-between items-center">
-        {/* Guest Mode Badge */}
-        {isGuest ? (
-          <div className="flex flex-col items-start gap-0.5">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
-              <UserCircle className="w-3.5 h-3.5" />
-              Guest Mode
-            </span>
-            <span className="text-[10px] text-muted-foreground pl-3">
-              No account required
-            </span>
-          </div>
-        ) : (
-          <div />
-        )}
-        
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleSignOut}
-          className="text-muted-foreground"
-        >
-          <LogOut className="w-4 h-4 mr-2" />
-          {isGuest ? 'Exit Guest Mode' : 'Sign Out'}
-        </Button>
-      </header>
+      <AppHeader onSignOut={handleSignOut} />
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 pb-20">
+      <main className="flex-1 flex flex-col items-center justify-center px-12 pb-20">
         <div className="text-center max-w-md mx-auto animate-fade-in">
           {/* Logo */}
-          <div className="inline-flex items-center justify-center w-24 h-24 rounded-2xl bg-primary text-primary-foreground mb-6 shadow-xl shadow-primary/20">
-            <GraduationCap className="w-12 h-12" />
+          <div className="mb-6">
+            <BottorLogo size={88} className="mx-auto" />
           </div>
 
           {/* Title */}
-          <h1 className="text-4xl font-bold mb-3 text-gradient-primary">
+          <h1 className="text-[40px] font-bold mb-3 text-primary">
             Bottor Assist
           </h1>
-          <p className="text-xl text-muted-foreground mb-2">
-            Teach. I'll handle the notes.
+          <p className="text-xl text-secondary-foreground font-medium mb-1">
+            Grade with your rubric.
           </p>
-          <p className="text-sm text-muted-foreground/70 mb-10">
-            {isGuest ? 'Pilot Mode — sample documents only. Feedback welcome.' : 'Pilot Version — sample documents only.'}
+          <p className="text-xl text-secondary-foreground font-medium mb-10">
+            You review. You decide.
           </p>
 
           {/* Actions */}
           <div className="space-y-4">
-            {/* [ROUTE: /grade] Primary action - Grade Papers */}
+            {/* [ROUTE: /grade] Primary action - Start Grading Session */}
             <Button
               variant="hero"
               size="xl"
               onClick={() => navigate('/grade')}
-              className="w-full"
+              className="w-full h-12"
             >
-              <GraduationCap className="w-5 h-5 mr-2" />
-              Grade Papers (Batch Grading)
+              <ClipboardList className="w-5 h-5 mr-2" />
+              Start Grading Session
             </Button>
 
             {/* [FUTURE: Google Classroom Integration] */}
@@ -172,7 +149,7 @@ export default function Index() {
                   variant="outline"
                   size="lg"
                   disabled
-                  className="w-full opacity-60 cursor-not-allowed"
+                  className="w-full opacity-60 cursor-not-allowed h-12"
                 >
                   <Link2 className="w-5 h-5 mr-2" />
                   Connect Google Classroom
@@ -185,25 +162,22 @@ export default function Index() {
             </Tooltip>
 
             {/* [ROUTE: /history] Tertiary action - View History */}
-            <Button
-              variant="subtle"
-              size="lg"
+            <button
               onClick={handleHistoryClick}
-              className="w-full"
+              className="w-full text-sm text-muted-foreground hover:text-foreground hover:underline transition-colors"
             >
-              <History className="w-5 h-5 mr-2" />
-              History
+              View grading history
               {isGuest && (
-                <span className="ml-2 text-xs text-muted-foreground">(requires account)</span>
+                <span className="ml-1 text-xs">(requires account)</span>
               )}
-            </Button>
+            </button>
           </div>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="p-6 text-center">
-        <p className="text-sm text-muted-foreground">
+      <footer className="py-[18px] text-center border-t border-border">
+        <p className="text-[13px] text-[hsl(218,11%,65%)]">
           Built with teachers to reduce paperwork.
         </p>
       </footer>
