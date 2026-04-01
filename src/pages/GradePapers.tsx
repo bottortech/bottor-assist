@@ -2173,18 +2173,39 @@ Students must show their work for full credit.`;
               </label>
             </div>
 
-            {/* Helper + Sample link */}
-            <div className="text-center space-y-1">
+            {/* Helper + Sample options */}
+            <div className="text-center space-y-2">
               <p className="text-xs text-muted-foreground/70">
                 Start with 1–3 assignments to test.
               </p>
-              <button
-                type="button"
-                onClick={handleLoadSample}
-                className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
-              >
-                No files? Try a sample document
-              </button>
+              
+              {!showSampleOptions ? (
+                <button
+                  type="button"
+                  onClick={() => setShowSampleOptions(true)}
+                  className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+                >
+                  No files? Try sample files
+                </button>
+              ) : (
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleLoadSampleFeedbackOnly}
+                    className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+                  >
+                    Feedback Only Sample
+                  </button>
+                  <span className="text-xs text-muted-foreground/50">|</span>
+                  <button
+                    type="button"
+                    onClick={handleLoadSampleWithRubric}
+                    className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+                  >
+                    Rubric Grading Sample
+                  </button>
+                </div>
+              )}
             </div>
 
             {studentUpload.files.length > 0 && (
