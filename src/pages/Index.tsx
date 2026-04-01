@@ -18,13 +18,13 @@ import { useAuth } from '@/hooks/useAuth';
 import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LogOut, History, UserCircle, Link2, ClipboardList } from 'lucide-react';
+import { LogOut, History, Link2, ClipboardList } from 'lucide-react';
 import { BottorLogo } from '@/components/BottorLogo';
 import { AppHeader } from '@/components/AppHeader';
 
 export default function Index() {
   const { user, loading, signOut } = useAuth();
-  const { isGuest, exitGuestMode } = useGuestMode();
+  const { isGuest, enterGuestMode, exitGuestMode } = useGuestMode();
   const navigate = useNavigate();
 
   // [AUTH] Sign out user or exit guest mode
@@ -60,6 +60,11 @@ export default function Index() {
   const hasAccess = user || isGuest;
 
   // If no access, show login prompt instead of redirecting
+  const handleStartGrading = () => {
+    enterGuestMode();
+    navigate('/grade');
+  };
+
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
@@ -86,12 +91,20 @@ export default function Index() {
               <Button
                 variant="hero"
                 size="xl"
-                onClick={() => navigate('/auth')}
+                onClick={handleStartGrading}
                 className="w-full h-12"
               >
-                <UserCircle className="w-5 h-5 mr-2" />
-                Sign In or Continue as Guest
+                <ClipboardList className="w-5 h-5 mr-2" />
+                Start grading (no account needed)
               </Button>
+
+              <button
+                type="button"
+                onClick={() => navigate('/auth')}
+                className="w-full text-sm text-muted-foreground hover:text-foreground hover:underline transition-colors"
+              >
+                Sign in with an account
+              </button>
             </div>
           </div>
         </main>

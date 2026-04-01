@@ -1485,6 +1485,53 @@ export default function GradePapers() {
   };
 
 
+  // Load a sample document for first-time users to try
+  const handleLoadSample = useCallback(async () => {
+    try {
+      // Create a minimal sample PDF blob
+      const sampleContent = `Student Name: Alex Johnson
+Math Quiz - Chapter 5
+
+Problem 1: Solve 3x + 7 = 22
+3x + 7 = 22
+3x = 15
+x = 5
+
+Problem 2: Find the area of a rectangle with length 8cm and width 5cm
+Area = length × width
+Area = 8 × 5
+Area = 40 cm²
+
+Problem 3: Simplify 2(3x + 4) - 5x
+= 6x + 8 - 5x
+= x + 8`;
+
+      const blob = new Blob([sampleContent], { type: 'text/plain' });
+      const sampleFile = new File([blob], 'Alex_Johnson_MathQuiz.txt', { type: 'text/plain' });
+      
+      // Use the student upload handler with a synthetic file list
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(sampleFile);
+      
+      if (studentFileInputRef.current) {
+        studentFileInputRef.current.files = dataTransfer.files;
+        const event = new Event('change', { bubbles: true });
+        studentFileInputRef.current.dispatchEvent(event);
+      }
+      
+      toast({
+        title: "Sample loaded",
+        description: "A sample math quiz has been loaded. Try generating feedback!",
+      });
+    } catch {
+      toast({
+        title: "Could not load sample",
+        description: "Please upload your own file instead.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
       toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
@@ -2034,6 +2081,11 @@ export default function GradePapers() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Micro-guidance */}
+            <p className="text-sm text-muted-foreground text-center">
+              Upload student work to generate rubric-aligned feedback in seconds.
+            </p>
+
             <div className="relative">
               <input
                 ref={studentFileInputRef}
@@ -2058,12 +2110,23 @@ export default function GradePapers() {
                   Drag files here or click to browse
                 </span>
                 <span className="text-xs text-muted-foreground/70">
-                  PDF, JPG, PNG, HEIC • Any filename works
-                </span>
-                <span className="text-xs text-muted-foreground/60">
-                  Student names detected from document content
+                  PDF, JPG, or PNG. Nothing is saved unless you choose to.
                 </span>
               </label>
+            </div>
+
+            {/* Helper + Sample link */}
+            <div className="text-center space-y-1">
+              <p className="text-xs text-muted-foreground/70">
+                Start with 1–3 assignments to test.
+              </p>
+              <button
+                type="button"
+                onClick={handleLoadSample}
+                className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+              >
+                No files? Try a sample document
+              </button>
             </div>
 
             {studentUpload.files.length > 0 && (
@@ -2810,26 +2873,21 @@ export default function GradePapers() {
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
                     {(() => {
-                      // ELA: check if ELA rubric is provided
-                      const elaHasRubric = gradingSubject === "ela" && elaRubricText.trim().length > 0;
-                      // Math: check existing rubric detection
-                      const hasRubricForGrading = gradingSubject === "math" ? rubricDetected : elaHasRubric;
-                      
                       if (hasFailedFiles && studentUpload.hasReadyFiles) {
                         return "Proceed with Ready Files";
                       }
                       
                       if (studentGroups.length > 1) {
-                        return hasRubricForGrading 
-                          ? `Generate Grade + Feedback (${studentGroups.length})`
-                          : `Generate Feedback (${studentGroups.length})`;
+                        return `Grade Papers (${studentGroups.length})`;
                       }
                       
-                      return hasRubricForGrading
-                        ? "Generate Grade + Feedback"
-                        : "Generate Feedback";
+                      return "Grade Papers";
                     })()}
                   </Button>
+                  {/* Sub-label */}
+                  <p className="text-xs text-muted-foreground mt-1.5 text-center">
+                    Applies your rubric automatically · Takes ~10–20 seconds
+                  </p>
                 </div>
               </TooltipTrigger>
               {shouldWaitForProcessing && (
