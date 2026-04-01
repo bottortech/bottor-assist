@@ -2873,26 +2873,21 @@ Problem 3: Simplify 2(3x + 4) - 5x
                       <Sparkles className="w-5 h-5 mr-2" />
                     )}
                     {(() => {
-                      // ELA: check if ELA rubric is provided
-                      const elaHasRubric = gradingSubject === "ela" && elaRubricText.trim().length > 0;
-                      // Math: check existing rubric detection
-                      const hasRubricForGrading = gradingSubject === "math" ? rubricDetected : elaHasRubric;
-                      
                       if (hasFailedFiles && studentUpload.hasReadyFiles) {
                         return "Proceed with Ready Files";
                       }
                       
                       if (studentGroups.length > 1) {
-                        return hasRubricForGrading 
-                          ? `Generate Grade + Feedback (${studentGroups.length})`
-                          : `Generate Feedback (${studentGroups.length})`;
+                        return `Grade Papers (${studentGroups.length})`;
                       }
                       
-                      return hasRubricForGrading
-                        ? "Generate Grade + Feedback"
-                        : "Generate Feedback";
+                      return "Grade Papers";
                     })()}
                   </Button>
+                  {/* Sub-label */}
+                  <p className="text-xs text-muted-foreground mt-1.5 text-center">
+                    Applies your rubric automatically · Takes ~10–20 seconds
+                  </p>
                 </div>
               </TooltipTrigger>
               {shouldWaitForProcessing && (
