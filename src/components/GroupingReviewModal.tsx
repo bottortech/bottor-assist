@@ -109,21 +109,64 @@ function detectDateInText(text: string): boolean {
 }
 
 /**
- * SEQUENTIAL GROUPING LOGIC WITH NAME + DATE RULE
+ * Parse student name from filename (fallback when OCR name detection fails)
+ * Patterns:
+ *  - Lesson4_Functions__AaliyahJohnson__p1.pdf → "Aaliyah Johnson"
+ *  - AaliyahJohnson_Assignment.pdf → "Aaliyah Johnson"
+ *  - Alex_Johnson_MathQuiz.pdf → "Alex Johnson"
+ */
+function parseStudentNameFromFilename(filename: string): { name: string; found: boolean } {
+  const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+
+  // Pattern 1: Double underscore format __Name__
+  const doubleUnderscoreMatch = nameWithoutExt.match(/__([^_]+)__/);
+  if (doubleUnderscoreMatch) {
+    return { name: formatCamelCaseName(doubleUnderscoreMatch[1]), found: true };
+  }
+
+  // Pattern 2: CamelCase/PascalCase (e.g. AaliyahJohnson)
+  const camelCaseMatch = nameWithoutExt.match(/([A-Z][a-z]+[A-Z][a-z]+)/);
+  if (camelCaseMatch) {
+    return { name: formatCamelCaseName(camelCaseMatch[1]), found: true };
+  }
+
+  // Pattern 3: Underscore/space separated first two parts (e.g. Alex_Johnson_MathQuiz)
+  const parts = nameWithoutExt.split(/[_\s]+/);
+  if (parts.length >= 2) {
+    const firstTwo = parts.slice(0, 2).join(" ");
+    if (/^[A-Za-z'-]+ [A-Za-z'-]+$/.test(firstTwo)) {
+      return { name: firstTwo, found: true };
+    }
+  }
+
+  return { name: '', found: false };
+}
+
+function formatCamelCaseName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .trim();
+}
+
+/**
+ * GROUPING LOGIC: 1 FILE = 1 STUDENT (with smart merging)
  * 
- * SIMPLE RULE: A page starts a NEW student group ONLY if it has BOTH:
- * 1. A student name (detected by the name detector)
- * 2. A date (detected by date patterns)
+ * DEFAULT RULE: Each uploaded file is treated as a separate student submission.
+ * Student name is resolved using this priority:
+ *   1. Document text (OCR-detected "Name:" labels)
+ *   2. Filename parsing (e.g., Alex_Johnson_MathQuiz.pdf → Alex Johnson)
+ *   3. Fallback to "Student 1", "Student 2", etc.
  * 
- * Pages without BOTH name + date belong to the previous student.
- * This prevents essay content from being detected as student names.
+ * MERGING: Files are only merged into the same group if they share the
+ * exact same detected student name (case-insensitive).
  */
 export function analyzeAndGroupFiles(
   files: UploadedFileItem[],
   detectName: (text: string) => { name: string; source: 'document' | 'unknown'; confidence: 'high' | 'low' }
 ): GroupingResult {
-  console.log('=== GROUPING ANALYSIS START (NAME + DATE RULE) ===');
-  console.log('Processing', files.length, 'images');
+  console.log('=== GROUPING ANALYSIS START (1 FILE = 1 STUDENT) ===');
+  console.log('Processing', files.length, 'files');
   
   if (files.length === 0) {
     return {
@@ -135,100 +178,92 @@ export function analyzeAndGroupFiles(
     };
   }
 
-  // Build page items
-  const pages: PageItem[] = files.map((file, idx) => ({
-    fileId: file.id,
-    fileName: file.fileName,
-    displayName: file.displayName,
-    thumbnailUrl: file.thumbnailUrl,
-    hasDetectedName: false,
-    detectedName: undefined,
-    pageIndex: idx,
-  }));
+  // Build page items with name detection per file
+  const groupMap = new Map<string, StudentGroupPreview>();
+  let unknownCounter = 0;
 
-  const groups: StudentGroupPreview[] = [];
-  let currentGroup: StudentGroupPreview | null = null;
-  const knownStudentNames = new Set<string>();
-  
-  // Process EVERY page - check each one for NAME + DATE
-  for (let i = 0; i < pages.length; i++) {
-    const page = pages[i];
+  for (let i = 0; i < files.length; i++) {
     const file = files[i];
     
-    console.log(`--- Processing image ${i + 1}/${pages.length}: ${file.fileName} ---`);
-    
-    // Check for BOTH name AND date
-    const detection = detectName(file.extractedText);
-    const hasDate = detectDateInText(file.extractedText);
-    
-    console.log(`  Name detection:`, {
-      name: detection.name || '(none)',
-      source: detection.source,
-      confidence: detection.confidence
-    });
-    console.log(`  Date detected: ${hasDate}`);
-    
-    // RULE: Must have BOTH name AND date to start a new group
-    const hasValidName = detection.name.length > 0 && detection.source === 'document';
-    const normalizedName = detection.name.toLowerCase().trim();
-    const isNewStudent = hasValidName && hasDate && !knownStudentNames.has(normalizedName);
-    
-    console.log(`  Has valid name: ${hasValidName}, Has date: ${hasDate}, Is new student: ${isNewStudent}`);
-    
-    if (isNewStudent) {
-      // NEW STUDENT DETECTED (has both name + date) - Start a new group
-      console.log(`  >>> Starting NEW group for: ${detection.name} (has name + date)`);
-      
+    const page: PageItem = {
+      fileId: file.id,
+      fileName: file.fileName,
+      displayName: file.displayName,
+      thumbnailUrl: file.thumbnailUrl,
+      hasDetectedName: false,
+      detectedName: undefined,
+      pageIndex: i,
+    };
+
+    // Priority 1: Detect name from document text (OCR)
+    const docDetection = detectName(file.extractedText);
+    let studentName = '';
+    let nameSource: 'document' | 'filename' | 'unknown' = 'unknown';
+    let nameConfidence: 'high' | 'low' = 'low';
+
+    if (docDetection.name && docDetection.source === 'document') {
+      studentName = docDetection.name;
+      nameSource = 'document';
+      nameConfidence = docDetection.confidence;
       page.hasDetectedName = true;
-      page.detectedName = detection.name;
-      knownStudentNames.add(normalizedName);
-      
-      currentGroup = {
-        studentName: detection.name,
-        isEditing: false,
-        pages: [page],
-        nameSource: detection.source,
-        nameConfidence: detection.confidence,
-      };
-      groups.push(currentGroup);
-      
-    } else if (currentGroup) {
-      // NO NAME+DATE combo - Add to current student's group
-      console.log(`  Adding to current group: ${currentGroup.studentName} (missing name or date)`);
-      page.hasDetectedName = false;
-      currentGroup.pages.push(page);
-      
+      page.detectedName = docDetection.name;
+      console.log(`  File "${file.fileName}": name from document → "${studentName}" (${nameConfidence})`);
+    }
+
+    // Priority 2: Fallback to filename parsing
+    if (!studentName) {
+      const fileResult = parseStudentNameFromFilename(file.fileName);
+      if (fileResult.found) {
+        studentName = fileResult.name;
+        nameSource = 'filename';
+        nameConfidence = 'low';
+        page.hasDetectedName = true;
+        page.detectedName = fileResult.name;
+        console.log(`  File "${file.fileName}": name from filename → "${studentName}"`);
+      }
+    }
+
+    // Priority 3: Fallback to numbered student
+    if (!studentName) {
+      unknownCounter++;
+      studentName = `Student ${unknownCounter}`;
+      nameSource = 'unknown';
+      nameConfidence = 'low';
+      console.log(`  File "${file.fileName}": no name detected → "${studentName}"`);
+    }
+
+    // Group by normalized name (merge same-name files)
+    const normalizedName = studentName.toLowerCase().trim();
+    const existing = groupMap.get(normalizedName);
+    if (existing) {
+      existing.pages.push(page);
+      console.log(`  Merged into existing group: "${existing.studentName}" (${existing.pages.length} pages)`);
     } else {
-      // First page has no name+date combo - create "Unknown Student" group
-      console.log(`  First page missing name+date, creating Unknown Student group`);
-      page.hasDetectedName = false;
-      currentGroup = {
-        studentName: 'Unknown Student',
+      groupMap.set(normalizedName, {
+        studentName,
         isEditing: false,
         pages: [page],
-        nameSource: 'unknown',
-        nameConfidence: 'low',
-      };
-      groups.push(currentGroup);
+        nameSource,
+        nameConfidence,
+      });
     }
   }
 
-  // Calculate confidence
-  const unnamedPageCount = pages.filter(p => !p.hasDetectedName).length;
-  const hasUnknownStudent = groups.some(g => g.studentName === 'Unknown Student');
+  const groups = Array.from(groupMap.values());
+  const unnamedPageCount = groups.filter(g => g.nameSource === 'unknown').reduce((sum, g) => sum + g.pages.length, 0);
+  const hasUnknownStudent = groups.some(g => g.nameSource === 'unknown');
   const confidence: 'high' | 'low' = hasUnknownStudent ? 'low' : 'high';
 
   console.log('=== GROUPING ANALYSIS COMPLETE ===');
-  console.log('Packets detected:', groups.length);
-  console.log('Student names found:', groups.map(g => g.studentName));
-  console.log('Pages per student:', groups.map(g => `${g.studentName}: ${g.pages.length} pages`));
+  console.log('Students detected:', groups.length);
+  console.log('Student names:', groups.map(g => `${g.studentName} (${g.pages.length} files, source: ${g.nameSource})`));
 
   return {
     groups,
     confidence,
     hasInterleaving: false,
     unnamedPageCount,
-    totalPageCount: pages.length,
+    totalPageCount: files.length,
   };
 }
 
