@@ -1485,6 +1485,53 @@ export default function GradePapers() {
   };
 
 
+  // Load a sample document for first-time users to try
+  const handleLoadSample = useCallback(async () => {
+    try {
+      // Create a minimal sample PDF blob
+      const sampleContent = `Student Name: Alex Johnson
+Math Quiz - Chapter 5
+
+Problem 1: Solve 3x + 7 = 22
+3x + 7 = 22
+3x = 15
+x = 5
+
+Problem 2: Find the area of a rectangle with length 8cm and width 5cm
+Area = length × width
+Area = 8 × 5
+Area = 40 cm²
+
+Problem 3: Simplify 2(3x + 4) - 5x
+= 6x + 8 - 5x
+= x + 8`;
+
+      const blob = new Blob([sampleContent], { type: 'text/plain' });
+      const sampleFile = new File([blob], 'Alex_Johnson_MathQuiz.txt', { type: 'text/plain' });
+      
+      // Use the student upload handler with a synthetic file list
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(sampleFile);
+      
+      if (studentFileInputRef.current) {
+        studentFileInputRef.current.files = dataTransfer.files;
+        const event = new Event('change', { bubbles: true });
+        studentFileInputRef.current.dispatchEvent(event);
+      }
+      
+      toast({
+        title: "Sample loaded",
+        description: "A sample math quiz has been loaded. Try generating feedback!",
+      });
+    } catch {
+      toast({
+        title: "Could not load sample",
+        description: "Please upload your own file instead.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
       toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
