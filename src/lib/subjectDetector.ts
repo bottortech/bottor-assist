@@ -166,7 +166,7 @@ export function detectSubjectFromAnswerKey(answerKeyText: string): SubjectDetect
 
   // Simple heuristics for answer keys
   const mathIndicators = [
-    /^\s*\d+[\.\)]\s*[\d\.\-\+\=\x\/]+/gm,  // Numbered answers with numbers
+    /^\s*\d+[.)]\s*[\d.\-+=*/]+/gm,  // Numbered answers with numbers
     /\b(x|y|z)\s*=\s*\d/i,                    // Variable assignments
     /\d+\s*[+\-×÷=]\s*\d+/,                   // Math operations
   ];

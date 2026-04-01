@@ -2871,16 +2871,21 @@ Problem 3: Simplify 2(3x + 4) - 5x
                         return "Proceed with Ready Files";
                       }
                       
+                      const hasRubric = rubricDetected || (gradingSubject === "ela" && elaRubricText.trim().length > 0);
+                      const label = hasRubric ? "Grade Papers + Feedback" : "Generate Feedback";
+                      
                       if (studentGroups.length > 1) {
-                        return `Grade Papers (${studentGroups.length})`;
+                        return `${label} (${studentGroups.length})`;
                       }
                       
-                      return "Grade Papers";
+                      return label;
                     })()}
                   </Button>
                   {/* Sub-label */}
                   <p className="text-xs text-muted-foreground mt-1.5 text-center">
-                    Applies your rubric automatically · Takes ~10–20 seconds
+                    {rubricDetected || (gradingSubject === "ela" && elaRubricText.trim().length > 0)
+                      ? "Applies your rubric automatically · Takes ~10–20 seconds"
+                      : "Generates qualitative feedback · Takes ~10–20 seconds"}
                   </p>
                 </div>
               </TooltipTrigger>
