@@ -1008,8 +1008,6 @@ export default function GradePapers() {
   const [copied, setCopied] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   
-  // Feedback expansion state - collapsed by default for calm UX
-  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
 
   // Track if grading has completed for any student (for feedback timing)
   const hasGradingResults = studentGroups.some(g => g.result !== null);
