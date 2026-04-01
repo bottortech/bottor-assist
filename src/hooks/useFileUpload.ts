@@ -687,6 +687,41 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
   }, []);
 
   /**
+   * Inject pre-extracted files (e.g. sample documents with known text)
+   * Bypasses upload/extraction pipeline - files are immediately "ready"
+   */
+  const injectReadyFiles = useCallback((
+    items: Array<{ fileName: string; extractedText: string }>
+  ) => {
+    const newFileItems: UploadedFileItem[] = items.map(item => {
+      const blob = new Blob([item.extractedText], { type: 'text/plain' });
+      const file = new File([blob], item.fileName, { type: 'text/plain' });
+      const displayName = getUniqueDisplayName(item.fileName);
+      
+      return {
+        id: `sample_${item.fileName}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        file,
+        fileName: item.fileName,
+        displayName,
+        mimeType: 'text/plain',
+        size: blob.size,
+        status: 'ready' as FileStatus,
+        statusMessage: 'Ready',
+        extractedText: item.extractedText,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        retryCount: 0,
+      };
+    });
+
+    setFiles(prev => {
+      const updated = [...prev, ...newFileItems];
+      updateCombinedText(updated);
+      return updated;
+    });
+  }, [getUniqueDisplayName, updateCombinedText]);
+
+  /**
    * Set combined text manually (for user edits)
    */
   const setCombinedTextManual = useCallback((text: string) => {
@@ -715,6 +750,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     combinedText,
     setCombinedText: setCombinedTextManual,
     addFiles,
+    injectReadyFiles,
     removeFile,
     clearAllFiles,
     retryExtraction,
