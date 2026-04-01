@@ -2034,6 +2034,11 @@ export default function GradePapers() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Micro-guidance */}
+            <p className="text-sm text-muted-foreground text-center">
+              Upload student work to generate rubric-aligned feedback in seconds.
+            </p>
+
             <div className="relative">
               <input
                 ref={studentFileInputRef}
@@ -2058,12 +2063,23 @@ export default function GradePapers() {
                   Drag files here or click to browse
                 </span>
                 <span className="text-xs text-muted-foreground/70">
-                  PDF, JPG, PNG, HEIC • Any filename works
-                </span>
-                <span className="text-xs text-muted-foreground/60">
-                  Student names detected from document content
+                  PDF, JPG, or PNG. Nothing is saved unless you choose to.
                 </span>
               </label>
+            </div>
+
+            {/* Helper + Sample link */}
+            <div className="text-center space-y-1">
+              <p className="text-xs text-muted-foreground/70">
+                Start with 1–3 assignments to test.
+              </p>
+              <button
+                type="button"
+                onClick={handleLoadSample}
+                className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+              >
+                No files? Try a sample document
+              </button>
             </div>
 
             {studentUpload.files.length > 0 && (
