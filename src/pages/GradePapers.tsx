@@ -1485,10 +1485,11 @@ export default function GradePapers() {
   };
 
 
-  // Load a sample document for first-time users to try
-  const handleLoadSample = useCallback(() => {
-    try {
-      const sampleContent = `Student Name: Alex Johnson
+  // ===== SAMPLE DOCUMENTS =====
+  const SAMPLE_STUDENTS = [
+    {
+      fileName: 'Alex_Johnson_MathQuiz.pdf',
+      extractedText: `Student Name: Alex Johnson
 Math Quiz - Chapter 5
 
 Problem 1: Solve 3x + 7 = 22
@@ -1503,28 +1504,91 @@ Area = 40 cm²
 
 Problem 3: Simplify 2(3x + 4) - 5x
 = 6x + 8 - 5x
-= x + 8`;
+= x + 8`,
+    },
+    {
+      fileName: 'Maria_Santos_MathQuiz.pdf',
+      extractedText: `Student Name: Maria Santos
+Math Quiz - Chapter 5
 
-      const blob = new Blob([sampleContent], { type: 'text/plain' });
-      const sampleFile = new File([blob], 'Alex_Johnson_MathQuiz.txt', { type: 'text/plain' });
-      
-      // Directly call addFiles with a FileList-like object
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(sampleFile);
-      studentUpload.addFiles(dataTransfer.files);
-      
-      toast({
-        title: "Sample loaded",
-        description: "A sample math quiz has been loaded. Try grading!",
-      });
-    } catch {
-      toast({
-        title: "Could not load sample",
-        description: "Please upload your own file instead.",
-        variant: "destructive",
-      });
-    }
-  }, [toast, studentUpload]);
+Problem 1: Solve 3x + 7 = 22
+3x = 22 - 7
+3x = 15
+x = 5
+
+Problem 2: Find the area of a rectangle with length 8cm and width 5cm
+Area = 8 × 5 = 40
+Answer: 40 cm²
+
+Problem 3: Simplify 2(3x + 4) - 5x
+= 6x + 8 - 5x
+= x + 8`,
+    },
+    {
+      fileName: 'James_Lee_MathQuiz.pdf',
+      extractedText: `Student Name: James Lee
+Math Quiz - Chapter 5
+
+Problem 1: Solve 3x + 7 = 22
+3x = 22 - 7
+3x = 15
+x = 3
+
+Problem 2: Find the area of a rectangle with length 8cm and width 5cm
+Area = 8 + 5
+Area = 13 cm
+
+Problem 3: Simplify 2(3x + 4) - 5x
+= 6x + 8 - 5x
+= x + 8`,
+    },
+  ];
+
+  const SAMPLE_RUBRIC = `Math Quiz Rubric - Chapter 5
+Total Points: 15 (5 points per problem)
+
+Each problem is graded on:
+- Correct setup/equation: 2 points
+- Work shown with clear steps: 2 points  
+- Final answer correctness: 1 point
+
+Partial credit is awarded for correct reasoning even if the final answer is wrong.
+Students must show their work for full credit.`;
+
+  const [showSampleOptions, setShowSampleOptions] = useState(false);
+
+  const handleLoadSampleFeedbackOnly = useCallback(() => {
+    studentUpload.clearAllFiles();
+    rubricUpload.clearAllFiles();
+    setForm(prev => ({ ...prev, rubric: '' }));
+    
+    // Inject sample student files as ready
+    studentUpload.injectReadyFiles(SAMPLE_STUDENTS);
+    setShowSampleOptions(false);
+    
+    toast({
+      title: "Sample files loaded",
+      description: "3 student papers loaded in feedback-only mode. Click Generate Feedback to try it.",
+    });
+  }, [toast, studentUpload, rubricUpload]);
+
+  const handleLoadSampleWithRubric = useCallback(() => {
+    studentUpload.clearAllFiles();
+    rubricUpload.clearAllFiles();
+    
+    // Inject sample student files
+    studentUpload.injectReadyFiles(SAMPLE_STUDENTS);
+    
+    // Load sample rubric into the rubric textarea
+    setForm(prev => ({ ...prev, rubric: SAMPLE_RUBRIC }));
+    setGradingCriteriaOpen(true);
+    setShowSampleOptions(false);
+    
+    toast({
+      title: "Sample files + rubric loaded",
+      description: "3 student papers and a rubric loaded. Click Grade Papers + Feedback to try it.",
+    });
+  }, [toast, studentUpload, rubricUpload]);
 
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
