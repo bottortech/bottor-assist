@@ -24,7 +24,7 @@ import { AppHeader } from '@/components/AppHeader';
 
 export default function Index() {
   const { user, loading, signOut } = useAuth();
-  const { isGuest, exitGuestMode } = useGuestMode();
+  const { isGuest, enterGuestMode, exitGuestMode } = useGuestMode();
   const navigate = useNavigate();
 
   // [AUTH] Sign out user or exit guest mode
