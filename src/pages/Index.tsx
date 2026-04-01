@@ -18,7 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LogOut, History, UserCircle, Link2, ClipboardList } from 'lucide-react';
+import { LogOut, History, Link2, ClipboardList } from 'lucide-react';
 import { BottorLogo } from '@/components/BottorLogo';
 import { AppHeader } from '@/components/AppHeader';
 
