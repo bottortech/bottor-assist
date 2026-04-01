@@ -1486,9 +1486,8 @@ export default function GradePapers() {
 
 
   // Load a sample document for first-time users to try
-  const handleLoadSample = useCallback(async () => {
+  const handleLoadSample = useCallback(() => {
     try {
-      // Create a minimal sample PDF blob
       const sampleContent = `Student Name: Alex Johnson
 Math Quiz - Chapter 5
 
@@ -1509,19 +1508,14 @@ Problem 3: Simplify 2(3x + 4) - 5x
       const blob = new Blob([sampleContent], { type: 'text/plain' });
       const sampleFile = new File([blob], 'Alex_Johnson_MathQuiz.txt', { type: 'text/plain' });
       
-      // Use the student upload handler with a synthetic file list
+      // Directly call addFiles with a FileList-like object
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(sampleFile);
-      
-      if (studentFileInputRef.current) {
-        studentFileInputRef.current.files = dataTransfer.files;
-        const event = new Event('change', { bubbles: true });
-        studentFileInputRef.current.dispatchEvent(event);
-      }
+      studentUpload.addFiles(dataTransfer.files);
       
       toast({
         title: "Sample loaded",
-        description: "A sample math quiz has been loaded. Try generating feedback!",
+        description: "A sample math quiz has been loaded. Try grading!",
       });
     } catch {
       toast({
@@ -1530,7 +1524,7 @@ Problem 3: Simplify 2(3x + 4) - 5x
         variant: "destructive",
       });
     }
-  }, [toast]);
+  }, [toast, studentUpload]);
 
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
@@ -2877,16 +2871,21 @@ Problem 3: Simplify 2(3x + 4) - 5x
                         return "Proceed with Ready Files";
                       }
                       
+                      const hasRubric = rubricDetected || (gradingSubject === "ela" && elaRubricText.trim().length > 0);
+                      const label = hasRubric ? "Grade Papers + Feedback" : "Generate Feedback";
+                      
                       if (studentGroups.length > 1) {
-                        return `Grade Papers (${studentGroups.length})`;
+                        return `${label} (${studentGroups.length})`;
                       }
                       
-                      return "Grade Papers";
+                      return label;
                     })()}
                   </Button>
                   {/* Sub-label */}
                   <p className="text-xs text-muted-foreground mt-1.5 text-center">
-                    Applies your rubric automatically · Takes ~10–20 seconds
+                    {rubricDetected || (gradingSubject === "ela" && elaRubricText.trim().length > 0)
+                      ? "Applies your rubric automatically · Takes ~10–20 seconds"
+                      : "Generates qualitative feedback · Takes ~10–20 seconds"}
                   </p>
                 </div>
               </TooltipTrigger>
