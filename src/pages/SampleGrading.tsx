@@ -98,6 +98,7 @@ export default function SampleGrading() {
   /* state */
   const [selected, setSelected] = useState<GradingSample | null>(null);
   const [showEvaluation, setShowEvaluation] = useState(false);
+  const [isGrading, setIsGrading] = useState(false);
 
   /* derived assignment types */
   const assignmentTypes = useMemo(
