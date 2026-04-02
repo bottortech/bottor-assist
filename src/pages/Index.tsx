@@ -165,6 +165,17 @@ export default function Index() {
               Start Grading Session
             </Button>
 
+            {/* [ROUTE: /samples] Try Sample Grading */}
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => navigate('/samples')}
+              className="w-full h-12"
+            >
+              <BookOpen className="w-5 h-5 mr-2" />
+              Try Sample Grading
+            </Button>
+
             {/* [FUTURE: Google Classroom Integration] */}
             <Tooltip>
               <TooltipTrigger asChild>
