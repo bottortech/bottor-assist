@@ -62,6 +62,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/grade" element={<GradePapers />} />
+            <Route path="/samples" element={<SampleGrading />} />
             <Route path="/history" element={<History />} />
             <Route path="/session/:sessionId" element={<Session />} />
             
