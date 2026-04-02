@@ -339,10 +339,20 @@ export default function SampleGrading() {
                   <Button
                     size="lg"
                     className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
-                    onClick={() => setShowEvaluation(true)}
+                    onClick={handleRunGrading}
+                    disabled={isGrading}
                   >
-                    <Star className="w-4 h-4 mr-2" />
-                    Run Grading
+                    {isGrading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Grading…
+                      </>
+                    ) : (
+                      <>
+                        <Star className="w-4 h-4 mr-2" />
+                        Run Grading
+                      </>
+                    )}
                   </Button>
                 </div>
               )}
