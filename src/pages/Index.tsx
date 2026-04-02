@@ -98,6 +98,16 @@ export default function Index() {
                 Start grading (no account needed)
               </Button>
 
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => navigate('/samples')}
+                className="w-full h-12"
+              >
+                <BookOpen className="w-5 h-5 mr-2" />
+                Try Sample Grading
+              </Button>
+
               <button
                 type="button"
                 onClick={() => navigate('/auth')}
