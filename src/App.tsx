@@ -29,6 +29,9 @@ import Auth from "./pages/Auth";
 // [ROUTE: /grade] Grade papers with AI feedback
 import GradePapers from "./pages/GradePapers";
 
+// [ROUTE: /samples] Sample grading library
+import SampleGrading from "./pages/SampleGrading";
+
 // [ROUTE: /listen] Audio recording (beta feature)
 import Listen from "./pages/Listen";
 
