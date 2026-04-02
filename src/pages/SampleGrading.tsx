@@ -118,6 +118,24 @@ export default function SampleGrading() {
   const handleSelect = (sample: GradingSample) => {
     setSelected(sample);
     setShowEvaluation(false);
+    setIsGrading(false);
+  };
+
+  /**
+   * Run Grading handler.
+   * Currently uses pre-evaluated data from the sample library.
+   * To swap in the real pipeline, replace the body with an API call
+   * that sends selected.studentSubmission + selected.rubric to the
+   * grading edge function, then sets the returned evaluation.
+   */
+  const handleRunGrading = async () => {
+    if (!selected) return;
+    setIsGrading(true);
+    // Simulate pipeline latency so teachers see a real processing state.
+    // Replace this with: const evaluation = await gradeSubmission(selected);
+    await new Promise((r) => setTimeout(r, 1200));
+    setShowEvaluation(true);
+    setIsGrading(false);
   };
 
   /* ── render ────────────────────────────────────────────────────────── */
