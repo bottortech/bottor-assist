@@ -32,6 +32,7 @@ import {
   ChevronRight,
   CheckCircle2,
   Star,
+  Loader2,
 } from "lucide-react";
 
 /* ── subject icon helper ─────────────────────────────────────────────── */
@@ -98,6 +99,7 @@ export default function SampleGrading() {
   /* state */
   const [selected, setSelected] = useState<GradingSample | null>(null);
   const [showEvaluation, setShowEvaluation] = useState(false);
+  const [isGrading, setIsGrading] = useState(false);
 
   /* derived assignment types */
   const assignmentTypes = useMemo(
@@ -117,6 +119,24 @@ export default function SampleGrading() {
   const handleSelect = (sample: GradingSample) => {
     setSelected(sample);
     setShowEvaluation(false);
+    setIsGrading(false);
+  };
+
+  /**
+   * Run Grading handler.
+   * Currently uses pre-evaluated data from the sample library.
+   * To swap in the real pipeline, replace the body with an API call
+   * that sends selected.studentSubmission + selected.rubric to the
+   * grading edge function, then sets the returned evaluation.
+   */
+  const handleRunGrading = async () => {
+    if (!selected) return;
+    setIsGrading(true);
+    // Simulate pipeline latency so teachers see a real processing state.
+    // Replace this with: const evaluation = await gradeSubmission(selected);
+    await new Promise((r) => setTimeout(r, 1200));
+    setShowEvaluation(true);
+    setIsGrading(false);
   };
 
   /* ── render ────────────────────────────────────────────────────────── */
@@ -320,10 +340,20 @@ export default function SampleGrading() {
                   <Button
                     size="lg"
                     className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
-                    onClick={() => setShowEvaluation(true)}
+                    onClick={handleRunGrading}
+                    disabled={isGrading}
                   >
-                    <Star className="w-4 h-4 mr-2" />
-                    Run Grading
+                    {isGrading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Grading…
+                      </>
+                    ) : (
+                      <>
+                        <Star className="w-4 h-4 mr-2" />
+                        Run Grading
+                      </>
+                    )}
                   </Button>
                 </div>
               )}

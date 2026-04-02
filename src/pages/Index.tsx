@@ -18,7 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useGuestMode } from '@/hooks/useGuestMode';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LogOut, History, Link2, ClipboardList } from 'lucide-react';
+import { LogOut, History, Link2, ClipboardList, BookOpen } from 'lucide-react';
 import { BottorLogo } from '@/components/BottorLogo';
 import { AppHeader } from '@/components/AppHeader';
 
@@ -98,6 +98,16 @@ export default function Index() {
                 Start grading (no account needed)
               </Button>
 
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => navigate('/samples')}
+                className="w-full h-12"
+              >
+                <BookOpen className="w-5 h-5 mr-2" />
+                Try Sample Grading
+              </Button>
+
               <button
                 type="button"
                 onClick={() => navigate('/auth')}
@@ -153,6 +163,17 @@ export default function Index() {
             >
               <ClipboardList className="w-5 h-5 mr-2" />
               Start Grading Session
+            </Button>
+
+            {/* [ROUTE: /samples] Try Sample Grading */}
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => navigate('/samples')}
+              className="w-full h-12"
+            >
+              <BookOpen className="w-5 h-5 mr-2" />
+              Try Sample Grading
             </Button>
 
             {/* [FUTURE: Google Classroom Integration] */}
