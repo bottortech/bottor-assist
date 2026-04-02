@@ -33,7 +33,6 @@ import {
   CheckCircle2,
   Star,
   Loader2,
-  Star,
 } from "lucide-react";
 
 /* ── subject icon helper ─────────────────────────────────────────────── */
