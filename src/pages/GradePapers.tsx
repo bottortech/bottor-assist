@@ -3116,6 +3116,13 @@ Students must show their work for full credit.`;
         onCancel={handleGroupingCancelled}
       />
 
+      {/* Sample selector — Step 1 "Try sample files" entry point */}
+      <SampleSelectorDialog
+        open={sampleDialogOpen}
+        onOpenChange={setSampleDialogOpen}
+        onSelect={handleLoadSampleFromLibrary}
+      />
+
     </div>
   );
 }
