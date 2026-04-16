@@ -62,6 +62,13 @@ import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
 import { StepGuide, type StepKey } from "@/components/StepGuide";
 import { OnboardingHint } from "@/components/OnboardingHint";
+import { SampleSelectorDialog } from "@/components/SampleSelectorDialog";
+import {
+  formatRubricAsText,
+  formatStudentWork,
+  buildSampleFileName,
+  type SampleV2,
+} from "@/data/useSampleLibraryV2";
 import { GroupingReviewModal, analyzeAndGroupFiles, GroupingResult } from "@/components/GroupingReviewModal";
 import type { StudentGroupPreview } from "@/components/GroupingReviewModal";
 import { 
@@ -1556,40 +1563,46 @@ Each problem is graded on:
 Partial credit is awarded for correct reasoning even if the final answer is wrong.
 Students must show their work for full credit.`;
 
-  const [showSampleOptions, setShowSampleOptions] = useState(false);
+  // Sample library selector (subject + grade band)
+  const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
+  const [loadedSample, setLoadedSample] = useState<SampleV2 | null>(null);
 
-  const handleLoadSampleFeedbackOnly = useCallback(() => {
+  // If the user clears uploads or replaces them, drop the "sample loaded" badge
+  useEffect(() => {
+    if (loadedSample && studentUpload.files.length === 0) {
+      setLoadedSample(null);
+    }
+  }, [studentUpload.files.length, loadedSample]);
+
+  const handleLoadSampleFromLibrary = useCallback((sample: SampleV2) => {
+    // Reset existing inputs so the sample is the only source of truth
     studentUpload.clearAllFiles();
     rubricUpload.clearAllFiles();
-    setForm(prev => ({ ...prev, rubric: '' }));
-    
-    // Inject sample student files as ready
-    studentUpload.injectReadyFiles(SAMPLE_STUDENTS);
-    setShowSampleOptions(false);
-    
-    toast({
-      title: "Sample files loaded",
-      description: "3 student papers loaded in feedback-only mode. Click Generate Feedback to try it.",
-    });
-  }, [toast, studentUpload, rubricUpload]);
 
-  const handleLoadSampleWithRubric = useCallback(() => {
-    studentUpload.clearAllFiles();
-    rubricUpload.clearAllFiles();
-    
-    // Inject sample student files
-    studentUpload.injectReadyFiles(SAMPLE_STUDENTS);
-    
-    // Load sample rubric into the rubric textarea
-    setForm(prev => ({ ...prev, rubric: SAMPLE_RUBRIC }));
+    // Inject sample student work as if a real file had been uploaded + extracted
+    studentUpload.injectReadyFiles([
+      {
+        fileName: buildSampleFileName(sample),
+        extractedText: formatStudentWork(sample),
+      },
+    ]);
+
+    // Populate rubric textarea with formatted rubric so the existing pipeline parses it
+    setForm((prev) => ({ ...prev, rubric: formatRubricAsText(sample) }));
     setGradingCriteriaOpen(true);
-    setShowSampleOptions(false);
-    
+    setLoadedSample(sample);
+
     toast({
-      title: "Sample files + rubric loaded",
-      description: "3 student papers and a rubric loaded. Click Grade Papers + Feedback to try it.",
+      title: "Sample data loaded",
+      description: `${sample.subject} · ${sample.gradeBand} — ${sample.assignmentTitle}`,
     });
   }, [toast, studentUpload, rubricUpload]);
+
+  const handleClearSample = useCallback(() => {
+    studentUpload.clearAllFiles();
+    setForm((prev) => ({ ...prev, rubric: "" }));
+    setLoadedSample(null);
+  }, [studentUpload]);
 
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
