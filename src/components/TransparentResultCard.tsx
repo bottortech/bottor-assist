@@ -466,10 +466,11 @@ export function TransparentResultCard({
 
               {/* Strengths */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium flex items-center gap-2">
+                <Label className="text-base font-semibold flex items-center gap-2 text-foreground">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   Strengths
                 </Label>
+                <p className="text-xs text-muted-foreground -mt-1">What the student did well.</p>
                 <Textarea
                   value={result.strengths}
                   onChange={(e) => onUpdateResult("strengths", e.target.value)}
@@ -479,10 +480,11 @@ export function TransparentResultCard({
 
               {/* Areas for Improvement */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium flex items-center gap-2">
+                <Label className="text-base font-semibold flex items-center gap-2 text-foreground">
                   <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                   Areas for Improvement
                 </Label>
+                <p className="text-xs text-muted-foreground -mt-1">Where to focus next.</p>
                 <Textarea
                   value={result.areas_for_improvement}
                   onChange={(e) => onUpdateResult("areas_for_improvement", e.target.value)}
@@ -490,12 +492,13 @@ export function TransparentResultCard({
                 />
               </div>
 
-              {/* Draft Feedback */}
+              {/* Summary Feedback */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium flex items-center gap-2">
+                <Label className="text-base font-semibold flex items-center gap-2 text-foreground">
                   <FileText className="w-4 h-4 text-primary" />
-                  Draft Feedback for Student
+                  Summary Feedback
                 </Label>
+                <p className="text-xs text-muted-foreground -mt-1">Draft message to share with the student — fully editable.</p>
                 <Textarea
                   value={result.feedback_paragraph}
                   onChange={(e) => onUpdateResult("feedback_paragraph", e.target.value)}
