@@ -2205,40 +2205,47 @@ Students must show their work for full credit.`;
               </label>
             </div>
 
-            {/* Helper + Sample options */}
+            {/* Helper + Sample picker */}
             <div className="text-center space-y-2">
               <p className="text-xs text-muted-foreground/70">
                 Start with 1–3 assignments to test.
               </p>
-              
-              {!showSampleOptions ? (
+              <p className="text-xs text-muted-foreground">
+                No files?{" "}
                 <button
                   type="button"
-                  onClick={() => setShowSampleOptions(true)}
-                  className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+                  onClick={() => setSampleDialogOpen(true)}
+                  className="text-primary hover:text-primary/80 underline underline-offset-2 font-medium transition-colors"
                 >
-                  No files? Try sample files
+                  Try sample files
                 </button>
-              ) : (
-                <div className="flex items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleLoadSampleFeedbackOnly}
-                    className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
-                  >
-                    Feedback Only Sample
-                  </button>
-                  <span className="text-xs text-muted-foreground/50">|</span>
-                  <button
-                    type="button"
-                    onClick={handleLoadSampleWithRubric}
-                    className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
-                  >
-                    Rubric Grading Sample
-                  </button>
-                </div>
-              )}
+              </p>
             </div>
+
+            {/* Sample loaded badge */}
+            {loadedSample && (
+              <div className="flex items-center justify-between gap-3 rounded-[10px] border border-primary/30 bg-accent-light px-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-primary truncate">
+                      Sample data loaded · {loadedSample.subject} ({loadedSample.gradeBand.includes("High") ? "HS" : "MS"})
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {loadedSample.assignmentTitle}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearSample}
+                  className="text-xs h-7 px-2 text-muted-foreground hover:text-destructive"
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
 
             {studentUpload.files.length > 0 && (
               <FileUploadList
