@@ -2097,7 +2097,25 @@ Students must show their work for full credit.`;
         </div>
       </header>
 
+      {/* Sticky 3-step workflow guide */}
+      <StepGuide
+        activeStep={
+          (currentGroup?.result
+            ? "review"
+            : studentUpload.files.length > 0
+              ? "generate"
+              : "upload") as StepKey
+        }
+        completed={{
+          upload: studentUpload.files.length > 0,
+          generate: !!currentGroup?.result,
+        }}
+      />
+
       <main className="max-w-2xl mx-auto px-12 py-6 space-y-6">
+        {/* One-time onboarding hint (dismissible) */}
+        <OnboardingHint />
+
         {/* Detected Subject Badge (shown when subject auto-detected) */}
         {detectedSubjectResult && detectedSubjectResult.subject !== 'General' && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -2115,10 +2133,10 @@ Students must show their work for full credit.`;
         <Card className="border border-border bg-card">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <div className="flex items-center gap-3">
-              <FileText className="w-5 h-5 text-muted-foreground" />
+              <FileText className="w-5 h-5 text-primary" />
               <div>
                 <div className="flex items-center gap-2">
-                  <CardTitle className="text-base">Student Work</CardTitle>
+                  <CardTitle className="text-lg font-semibold">Step 1 · Student Work</CardTitle>
                   <Badge variant="secondary" className="text-xs bg-muted text-secondary-foreground">Required</Badge>
                 </div>
                 <CardDescription className="text-xs mt-0.5">
