@@ -62,6 +62,13 @@ import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
 import { StepGuide, type StepKey } from "@/components/StepGuide";
 import { OnboardingHint } from "@/components/OnboardingHint";
+import { SampleSelectorDialog } from "@/components/SampleSelectorDialog";
+import {
+  formatRubricAsText,
+  formatStudentWork,
+  buildSampleFileName,
+  type SampleV2,
+} from "@/data/useSampleLibraryV2";
 import { GroupingReviewModal, analyzeAndGroupFiles, GroupingResult } from "@/components/GroupingReviewModal";
 import type { StudentGroupPreview } from "@/components/GroupingReviewModal";
 import { 
@@ -1556,40 +1563,46 @@ Each problem is graded on:
 Partial credit is awarded for correct reasoning even if the final answer is wrong.
 Students must show their work for full credit.`;
 
-  const [showSampleOptions, setShowSampleOptions] = useState(false);
+  // Sample library selector (subject + grade band)
+  const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
+  const [loadedSample, setLoadedSample] = useState<SampleV2 | null>(null);
 
-  const handleLoadSampleFeedbackOnly = useCallback(() => {
+  // If the user clears uploads or replaces them, drop the "sample loaded" badge
+  useEffect(() => {
+    if (loadedSample && studentUpload.files.length === 0) {
+      setLoadedSample(null);
+    }
+  }, [studentUpload.files.length, loadedSample]);
+
+  const handleLoadSampleFromLibrary = useCallback((sample: SampleV2) => {
+    // Reset existing inputs so the sample is the only source of truth
     studentUpload.clearAllFiles();
     rubricUpload.clearAllFiles();
-    setForm(prev => ({ ...prev, rubric: '' }));
-    
-    // Inject sample student files as ready
-    studentUpload.injectReadyFiles(SAMPLE_STUDENTS);
-    setShowSampleOptions(false);
-    
-    toast({
-      title: "Sample files loaded",
-      description: "3 student papers loaded in feedback-only mode. Click Generate Feedback to try it.",
-    });
-  }, [toast, studentUpload, rubricUpload]);
 
-  const handleLoadSampleWithRubric = useCallback(() => {
-    studentUpload.clearAllFiles();
-    rubricUpload.clearAllFiles();
-    
-    // Inject sample student files
-    studentUpload.injectReadyFiles(SAMPLE_STUDENTS);
-    
-    // Load sample rubric into the rubric textarea
-    setForm(prev => ({ ...prev, rubric: SAMPLE_RUBRIC }));
+    // Inject sample student work as if a real file had been uploaded + extracted
+    studentUpload.injectReadyFiles([
+      {
+        fileName: buildSampleFileName(sample),
+        extractedText: formatStudentWork(sample),
+      },
+    ]);
+
+    // Populate rubric textarea with formatted rubric so the existing pipeline parses it
+    setForm((prev) => ({ ...prev, rubric: formatRubricAsText(sample) }));
     setGradingCriteriaOpen(true);
-    setShowSampleOptions(false);
-    
+    setLoadedSample(sample);
+
     toast({
-      title: "Sample files + rubric loaded",
-      description: "3 student papers and a rubric loaded. Click Grade Papers + Feedback to try it.",
+      title: "Sample data loaded",
+      description: `${sample.subject} · ${sample.gradeBand} — ${sample.assignmentTitle}`,
     });
   }, [toast, studentUpload, rubricUpload]);
+
+  const handleClearSample = useCallback(() => {
+    studentUpload.clearAllFiles();
+    setForm((prev) => ({ ...prev, rubric: "" }));
+    setLoadedSample(null);
+  }, [studentUpload]);
 
   const handleGenerateGrades = async () => {
     if (studentGroups.length === 0) {
@@ -2192,40 +2205,47 @@ Students must show their work for full credit.`;
               </label>
             </div>
 
-            {/* Helper + Sample options */}
+            {/* Helper + Sample picker */}
             <div className="text-center space-y-2">
               <p className="text-xs text-muted-foreground/70">
                 Start with 1–3 assignments to test.
               </p>
-              
-              {!showSampleOptions ? (
+              <p className="text-xs text-muted-foreground">
+                No files?{" "}
                 <button
                   type="button"
-                  onClick={() => setShowSampleOptions(true)}
-                  className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+                  onClick={() => setSampleDialogOpen(true)}
+                  className="text-primary hover:text-primary/80 underline underline-offset-2 font-medium transition-colors"
                 >
-                  No files? Try sample files
+                  Try sample files
                 </button>
-              ) : (
-                <div className="flex items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleLoadSampleFeedbackOnly}
-                    className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
-                  >
-                    Feedback Only Sample
-                  </button>
-                  <span className="text-xs text-muted-foreground/50">|</span>
-                  <button
-                    type="button"
-                    onClick={handleLoadSampleWithRubric}
-                    className="text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
-                  >
-                    Rubric Grading Sample
-                  </button>
-                </div>
-              )}
+              </p>
             </div>
+
+            {/* Sample loaded badge */}
+            {loadedSample && (
+              <div className="flex items-center justify-between gap-3 rounded-[10px] border border-primary/30 bg-accent-light px-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-primary truncate">
+                      Sample data loaded · {loadedSample.subject} ({loadedSample.gradeBand.includes("High") ? "HS" : "MS"})
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {loadedSample.assignmentTitle}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearSample}
+                  className="text-xs h-7 px-2 text-muted-foreground hover:text-destructive"
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
 
             {studentUpload.files.length > 0 && (
               <FileUploadList
@@ -3094,6 +3114,13 @@ Students must show their work for full credit.`;
         groups={pendingGroupsForReview}
         onConfirm={handleGroupingConfirmed}
         onCancel={handleGroupingCancelled}
+      />
+
+      {/* Sample selector — Step 1 "Try sample files" entry point */}
+      <SampleSelectorDialog
+        open={sampleDialogOpen}
+        onOpenChange={setSampleDialogOpen}
+        onSelect={handleLoadSampleFromLibrary}
       />
 
     </div>
