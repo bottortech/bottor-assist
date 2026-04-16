@@ -60,6 +60,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { FileUploadList } from "@/components/FileUploadList";
 import { PilotFeedbackPanel, usePilotFeedback } from "@/components/PilotFeedbackPanel";
+import { StepGuide, type StepKey } from "@/components/StepGuide";
+import { OnboardingHint } from "@/components/OnboardingHint";
 import { GroupingReviewModal, analyzeAndGroupFiles, GroupingResult } from "@/components/GroupingReviewModal";
 import type { StudentGroupPreview } from "@/components/GroupingReviewModal";
 import { 
