@@ -1,0 +1,522 @@
+{
+  "samples": [
+    {
+      "id": "BA-001",
+      "subject": "ELA",
+      "gradeBand": "Middle School (Grade 7)",
+      "assignmentType": "Short Answer / Paragraph Response",
+      "assignmentTitle": "Explain How Theme Develops in The Giver",
+      "assignmentContext": "Unit 3: The Giver by Lois Lowry. Students have finished the novel and spent two class periods discussing theme development. This paragraph response is an in-class assessment completed independently.",
+      "assignmentInstructions": "In one well-developed paragraph (8–12 sentences), explain how one major theme develops across the novel The Giver. Your paragraph must include a clear claim about what the theme is and what it means, at least two specific pieces of evidence from different parts of the novel, and an explanation of how each piece of evidence shows the theme developing over time. Do not just summarize what happens — your job is to show how Lowry builds the theme through specific moments in the story. Write your response in your own words.",
+      "studentName": "Destiny Okafor",
+      "submissionDate": "2025-10-14",
+      "studentSubmission": "Destiny Okafor\nDate: October 14, 2025\nPeriod 4 — Ms. Alvarez\n\nOne of the main themes in The Giver is that a society without pain or choice is not actually safe, it is just controlled. Lois Lowry shows this theme developing across the whole novel through what happens to Jonas. At the beginning, Jonas thinks the Community is good because everyone is taken care of and nothing bad happens. But when he starts receiving memories from the Giver, he learns about things like snow and sunsets which are beautiful but the Community gave them up. This starts to show the reader that something important has been lost. The theme gets stronger when Jonas receives the memory of war and sees real suffering and death. He realizes that the Elders are not protecting people, their hiding the full truth of what life can be. Another piece of evidence is when he finds out what release actually means. He discovers that release is really killing, even for babies like Gabriel. This is the moment where the theme is the most clear because Jonas understands that the Community's version of safety is built on lies and control, not real care. Overall Lowry builds this theme by showing Jonas discovering more and more that what looks like protection is actually a way to control people and take away their freedom to feel things.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Claim / Central Idea",
+            "description": "Student states a clear, specific claim about what the theme is and what it means.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Claim is specific and arguable — student names the theme and articulates its meaning, not just its topic.",
+              "3": "Claim is present and mostly clear but may be slightly broad or state the theme as a topic rather than a meaning.",
+              "2": "Claim is vague or implied; theme is named but not explained as an arguable idea.",
+              "1": "Claim is missing, off-topic, or student only summarizes the plot without stating a theme."
+            }
+          },
+          {
+            "name": "Use of Textual Evidence",
+            "description": "Student cites at least two specific, relevant moments from different parts of the novel.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Two or more specific, well-chosen pieces of evidence are drawn from different parts of the novel and clearly come from the text.",
+              "3": "Two pieces of evidence are present; at least one is specific but one may be vague or both come from the same section.",
+              "2": "Only one piece of evidence is provided, or both are too general to be tied to specific moments.",
+              "1": "No textual evidence is cited, or references cannot be verified from the novel."
+            }
+          },
+          {
+            "name": "Explanation / Analysis",
+            "description": "Student explains how each piece of evidence shows the theme developing over time.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "Student clearly explains how each piece of evidence shows the theme building; analysis addresses development, not just presence.",
+              "3": "Explanation is present but may not address development — student shows the theme exists without showing how it grows.",
+              "2": "Little to no explanation; student lists evidence without connecting it to the theme's development.",
+              "1": "No analysis present; response is primarily plot summary."
+            }
+          },
+          {
+            "name": "Organization and Coherence",
+            "description": "Paragraph is logically organized with a clear opening, developed middle, and closing thought.",
+            "points": { "4": 15, "3": 11, "2": 7, "1": 4 },
+            "descriptors": {
+              "4": "Paragraph flows logically; ideas connect clearly through transitions; response feels complete.",
+              "3": "Mostly organized; minor lapses in transitions or the closing thought restates rather than extends.",
+              "2": "Ideas are present but loosely ordered; paragraph feels disjointed or ends abruptly.",
+              "1": "No clear structure; ideas appear in random order."
+            }
+          },
+          {
+            "name": "Conventions (Grammar, Spelling, Mechanics)",
+            "description": "Writing demonstrates appropriate command of standard English conventions for grade 7.",
+            "points": { "4": 10, "3": 8, "2": 5, "1": 2 },
+            "descriptors": {
+              "4": "Few or no errors; any errors do not interfere with meaning.",
+              "3": "Some errors present but do not significantly interfere with meaning.",
+              "2": "Noticeable errors that occasionally make meaning unclear.",
+              "1": "Frequent errors that consistently interfere with readability."
+            }
+          }
+        ]
+      },
+      "teacherNote": "This rubric evaluates analytical writing at the paragraph level with emphasis on explanation and analysis (30 pts) — the most common underdeveloped skill at this grade. Destiny's submission has a solid claim and two well-chosen pieces of evidence from different parts of the novel (the memory of snow and the discovery of release). The analysis is present but stays close to restating the evidence rather than explaining how Lowry builds the theme progressively. There is also one consistent grammatical error — use of 'their' instead of 'they're' — worth noting for conventions scoring. Expect Bottor Assist to score evidence high but flag the analysis and conventions categories as approaching rather than meeting."
+    },
+    {
+      "id": "BA-002",
+      "subject": "Math",
+      "gradeBand": "Middle School (Grade 8)",
+      "assignmentType": "Constructed Response (Explain Your Reasoning)",
+      "assignmentTitle": "Solve and Justify: Is This Relationship Proportional?",
+      "assignmentContext": "Unit 4: Proportional Relationships and Linear Equations. Students have studied unit rates, constant of proportionality, and the equation y = kx. This constructed response is a checkpoint assessment after two weeks of instruction.",
+      "assignmentInstructions": "A school fundraiser is selling popcorn. The table below shows the number of bags sold and the total money collected:\n\nBags Sold: 3, 6, 9, 15\nMoney Collected ($): 4.50, 9.00, 13.50, 22.50\n\nPart A: Determine whether the relationship between bags sold and money collected is proportional. Show all your work.\nPart B: In 3–5 sentences, explain how you know whether or not this is a proportional relationship. You must use at least two math vocabulary words correctly in your explanation.\nPart C: If the fundraiser sells 40 bags, how much money will be collected? Write an equation and show how you used it to find your answer.",
+      "studentName": "Marcus Thibodeau",
+      "submissionDate": "2025-11-04",
+      "studentSubmission": "Marcus Thibodeau\nDate: November 4, 2025\nMr. Reyes — Period 2\n\nPart A:\n4.50 ÷ 3 = 1.50\n9.00 ÷ 6 = 1.50\n13.50 ÷ 9 = 1.50\n22.50 ÷ 15 = 1.50\nThe unit rate is $1.50 for all four pairs so the relationship is proportional.\n\nPart B: This relationship is proportional because the constant of proportionality is the same for every pair of values, which is 1.50. That means for every bag sold the fundraiser collects $1.50. In a proportional relationship the ratio y/x is always equal to the same number. The graph of this relationship would also pass through the origin because if 0 bags are sold, $0 is collected.\n\nPart C: Equation: y = 1.50x\ny = 1.50 × 40\ny = 60\nThe fundraiser would collect $60.00 from selling 40 bags.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Mathematical Accuracy",
+            "description": "Calculations are correct and support the student's conclusions.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "All calculations are correct across all three parts; answers are clearly labeled.",
+              "3": "Most calculations are correct; minor arithmetic error that does not undermine the overall approach.",
+              "2": "Some correct work present but significant computational errors affect the conclusion.",
+              "1": "Calculations are largely incorrect or missing."
+            }
+          },
+          {
+            "name": "Mathematical Reasoning",
+            "description": "Student demonstrates understanding of proportional relationships and applies correct reasoning.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "Reasoning is sound; student correctly identifies and applies the concept of constant of proportionality and connects it to the definition of a proportional relationship.",
+              "3": "Reasoning is mostly correct; student identifies proportionality but may have a minor gap in explaining why.",
+              "2": "Partial reasoning; student may identify the answer correctly but cannot fully explain the concept.",
+              "1": "Reasoning is missing, circular, or demonstrates a fundamental misunderstanding."
+            }
+          },
+          {
+            "name": "Use of Mathematical Vocabulary",
+            "description": "Student uses appropriate math terms accurately in their written explanation.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Uses three or more accurate math vocabulary terms (e.g., constant of proportionality, unit rate, ratio, origin, equation) correctly in context.",
+              "3": "Uses one or two math vocabulary terms correctly; remaining explanation is informal but not inaccurate.",
+              "2": "Attempts to use vocabulary but uses terms imprecisely or interchangeably.",
+              "1": "No mathematical vocabulary used; explanation is entirely informal or missing."
+            }
+          },
+          {
+            "name": "Completeness",
+            "description": "All three parts of the prompt are addressed with appropriate work shown.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "All three parts are fully addressed; work is shown for Parts A and C; Part B is written in complete sentences.",
+              "3": "All three parts are attempted; one part is underdeveloped or missing a step.",
+              "2": "One part is missing or two parts are significantly incomplete.",
+              "1": "Two or more parts are missing or the response addresses only one part."
+            }
+          }
+        ]
+      },
+      "teacherNote": "This rubric rewards both correct answers and the ability to explain mathematical thinking — a student who gets all the right answers but writes a weak explanation will not score at the top. Marcus's submission is strong across the board: all three parts are complete, vocabulary is used accurately (constant of proportionality, unit rate, ratio, origin), and the reasoning in Part B goes beyond just restating Part A. The response is clean and methodical. Useful as a high-end calibration sample — teachers should expect Bottor Assist to score this near the top range."
+    },
+    {
+      "id": "BA-003",
+      "subject": "Science",
+      "gradeBand": "Middle School (Grade 6)",
+      "assignmentType": "Lab Report / Scientific Analysis",
+      "assignmentTitle": "Write a CER Response: What Affects How Fast Sugar Dissolves?",
+      "assignmentContext": "Unit 2: Properties of Matter and Physical Changes. Students completed a hands-on lab testing dissolving rates at three water temperatures. This CER (Claim, Evidence, Reasoning) written response is due the class period after the lab.",
+      "assignmentInstructions": "Using your lab data and observations from the dissolving rate experiment, write a complete CER response that answers this question: Does water temperature affect how fast sugar dissolves?\n\nYour response must include:\n— Claim: State your answer to the question directly.\n— Evidence: Include at least two specific pieces of data from your lab (use numbers from your results table).\n— Reasoning: Explain why your evidence supports your claim using science vocabulary. You should reference what is happening at the molecular level.\n— Error Analysis: Identify one specific source of error from your experiment and explain how it could have affected your results.\n\nThis should be written in paragraph form, not as a bulleted list.",
+      "studentName": "Priya Vasquez",
+      "submissionDate": "2025-09-22",
+      "studentSubmission": "Priya Vasquez\nDate: September 22, 2025\nMs. Fontenot — 5th Period Science\n\nClaim: Water temperature does affect how fast sugar dissolves. Hot water dissolves sugar faster than cold water.\n\nEvidence: In our experiment, the sugar dissolved in the hot water (about 60°C) in 42 seconds. In the cold water (about 10°C), it took 4 minutes and 18 seconds. The room temperature water was in the middle at around 1 minute and 55 seconds. All of us stirred the cups the same amount.\n\nReasoning: The reason hot water dissolves sugar faster is because the water molecules have more energy when the temperature is higher. This makes them move around faster and bump into the sugar particles more. When more collisions happen, the sugar breaks apart and mixes with the water quicker. Cold water molecules don't move as fast so it takes more time for the sugar to dissolve. This is related to what we learned about kinetic energy — more heat means more kinetic energy, which means more movement.\n\nError Analysis: One source of error is that we might not of stirred each cup in exactly the same way. If we stirred the hot water faster by accident, it could have made it look like the hot water dissolves sugar faster just because of the stirring, not only the temperature. To make the experiment more fair we could use a stir plate that spins at the same speed for every trial.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Claim",
+            "description": "Student states a clear, testable claim that directly answers the research question.",
+            "points": { "4": 15, "3": 11, "2": 7, "1": 4 },
+            "descriptors": {
+              "4": "Claim directly answers the question, is testable, and references both variables (temperature and dissolving rate).",
+              "3": "Claim is mostly clear but may only reference one variable or be phrased too broadly.",
+              "2": "Claim is vague or does not directly answer the question.",
+              "1": "No claim present or claim is unrelated to the experiment."
+            }
+          },
+          {
+            "name": "Evidence",
+            "description": "Student cites at least two specific data values from the lab to support their claim.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Two or more specific numeric data values are included for different conditions; data is clearly from the student's results.",
+              "3": "At least one specific data value is included; one condition may be described without numbers.",
+              "2": "Evidence is present but overly general; no specific numbers cited.",
+              "1": "No data cited; evidence is based on memory or general description only."
+            }
+          },
+          {
+            "name": "Reasoning (Scientific Explanation)",
+            "description": "Student explains the connection between evidence and claim using science vocabulary and molecular-level reasoning.",
+            "points": { "4": 35, "3": 26, "2": 18, "1": 9 },
+            "descriptors": {
+              "4": "Reasoning is scientifically accurate, references molecular behavior (e.g., kinetic energy, particle collision), and clearly connects the data to the claim.",
+              "3": "Reasoning is mostly correct and references science vocabulary; molecular-level explanation may be partial or imprecise.",
+              "2": "Reasoning is present but informal; no reference to molecular behavior or vocabulary is missing.",
+              "1": "Reasoning is absent or simply restates the claim or evidence without explanation."
+            }
+          },
+          {
+            "name": "Error Analysis",
+            "description": "Student identifies a specific, realistic source of error and explains its potential effect on results.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "Source of error is specific and realistic; student clearly explains how it could have affected the results and proposes a feasible improvement.",
+              "3": "Source of error is identified and partially explained; improvement may be missing or vague.",
+              "2": "Source of error is named but explanation of its effect is unclear or very general.",
+              "1": "Error analysis is missing, not realistic, or confused with a procedural step."
+            }
+          }
+        ]
+      },
+      "teacherNote": "CER format puts the most weight on reasoning (35 pts) and error analysis (30 pts) because those are the scientific thinking skills at this grade level — not just observing results but explaining and critiquing them. Priya's submission includes accurate data with specific numbers, good kinetic energy vocabulary in the reasoning, and a strong error analysis with a specific improvement. One notable error: 'might not of stirred' instead of 'might not have stirred' — a common spoken-language transfer error for this age. Reasoning is accurate but could be stronger by naming the solvent-solute relationship. Score should come in as high-B range."
+    },
+    {
+      "id": "BA-004",
+      "subject": "Social Studies",
+      "gradeBand": "Middle School (Grade 7)",
+      "assignmentType": "DBQ / Primary Source Analysis",
+      "assignmentTitle": "Analyze the Silk Road Through a Merchant's Letter",
+      "assignmentContext": "Unit 5: Trade, Culture, and the Ancient World. Students have studied Silk Road geography, goods exchanged, and the cultural encounters that occurred along the route. This primary source analysis is a formative assessment at the end of the unit.",
+      "assignmentInstructions": "Read the letter excerpt below, written by a fictional merchant traveling along the Silk Road during the Tang Dynasty. Then answer all three parts in complete sentences.\n\nSource: 'I write to you from Dunhuang, where I have rested for three days after a difficult crossing through the desert. The prices for silk here are higher than in Chang'an, and I have traded half my bolts for pepper and glass from the western merchants. There is a caravanserai here run by a Sogdian family who speaks four languages and has fed travelers like me for thirty years. The road grows more dangerous past Kashgar — I have heard of bandits and I carry less gold now than when I started. Still, the profits from a full journey more than repay the risk.'\n\nPart 1 (Sourcing): Who wrote this document? What was their purpose in writing it, and how does the type of document (a personal letter) shape what information is included?\n\nPart 2 (Evidence): What does this document tell us about life and trade along the Silk Road? Provide at least two specific details from the source and explain what each one reveals historically.\n\nPart 3 (Limitations): What is one limitation of using this document to understand the Silk Road? Explain why that limitation matters for historians.",
+      "studentName": "Jerome Whitfield",
+      "submissionDate": "2025-12-09",
+      "studentSubmission": "Jerome Whitfield\nDate: December 9, 2025\nMr. Kwan — World History, Block B\n\nPart 1: The document was written by a merchant who was traveling along the Silk Road. His purpose was probably to update someone back home, like a family member or business partner, about his trip and how his trading was going. Because it is a personal letter, the merchant writes about things that were important to him specifically, like the prices of goods and whether the road was safe. He probably left out things that the person reading it already knew, or things he didn't think were interesting. This means the letter gives us a personal view but might be missing a lot of information about what was happening more broadly.\n\nPart 2: The document tells us that the Silk Road involved trading many different kinds of goods from different regions. The merchant says he traded silk for pepper and glass from western merchants, which shows that goods from different parts of the world were moving along the route. This is historically significant because it shows trade was going both directions, not just one way. The document also mentions a caravanserai run by a Sogdian family that speaks four languages and has been there for thirty years. This tells us that there were permanent rest stops along the route and that certain groups, like Sogdian traders, played an important role as middlemen and hosts in making the Silk Road work over long periods of time.\n\nPart 3: One limitation is that this letter only shows us one person's experience on one trip. The merchant can only write about what he saw himself, so we don't know if his experience was typical or unusual. Also this is a fictional source which means we have to be careful about treating it like it is real evidence. A historian using this kind of document would need to compare it to other sources to see if the details match up with what we know from other evidence about the Silk Road.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Sourcing (Author, Purpose, Document Type)",
+            "description": "Student identifies the author and explains the purpose and how the document type shapes its content.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Student identifies the author's role, explains their likely purpose, and connects the document type (personal letter) to what kind of information it includes or omits.",
+              "3": "Student identifies the author and gives a purpose but does not connect document type to content choices.",
+              "2": "Author or purpose is identified but without explanation.",
+              "1": "No sourcing analysis present; student only restates who wrote the letter."
+            }
+          },
+          {
+            "name": "Evidence from the Source",
+            "description": "Student cites at least two specific details and explains their historical significance.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Two or more specific, accurate details are cited and each is connected to a historical claim about Silk Road trade or culture.",
+              "3": "Two details are cited but the historical significance of one is weak or underdeveloped.",
+              "2": "Only one specific detail is cited, or details are paraphrased loosely without historical connection.",
+              "1": "No specific evidence from the source is used."
+            }
+          },
+          {
+            "name": "Historical Significance",
+            "description": "Student explains what the details reveal about the Silk Road beyond restating the source.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Student draws clear historical inferences — explaining what the details mean about trade, culture, or daily life — not just what the source says.",
+              "3": "Student makes some inference but explanation stays close to the source text.",
+              "2": "Student mostly restates the source without historical interpretation.",
+              "1": "Response does not go beyond copying or paraphrasing the source."
+            }
+          },
+          {
+            "name": "Limitations Analysis",
+            "description": "Student identifies a meaningful limitation and explains why it matters for historical understanding.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Student identifies a specific, thoughtful limitation (e.g., single perspective, fictional nature, audience effect) and explains how it affects how historians can use the source.",
+              "3": "Limitation is identified and partially explained; connection to historical use may be missing.",
+              "2": "Limitation is named but explanation is vague or confuses limitation with bias.",
+              "1": "No limitation identified or response is off-topic."
+            }
+          }
+        ]
+      },
+      "teacherNote": "This rubric is built around HAPP-style primary source analysis (Historical context, Author, Purpose, Point of view). All four criteria are equally weighted because each analytical skill is independently important at this level. Jerome's response demonstrates solid sourcing and evidence work — Parts 1 and 2 are well-developed. Notably, Part 3 acknowledges that the source is fictional, which is correct and shows critical thinking, but the limitations paragraph becomes more methodological than historical. A teacher-scorer might award this the top band; a nuanced grader might dock slightly because the student pivots away from the document's perspective limitations toward meta-commentary about the source's fictional status. Good test case for Bottor Assist's handling of partially correct, thoughtful responses."
+    },
+    {
+      "id": "BA-005",
+      "subject": "ELA",
+      "gradeBand": "High School (Grade 10)",
+      "assignmentType": "Essay / Argumentative Writing",
+      "assignmentTitle": "Should Schools Restrict Student Access to Social Media During the School Day?",
+      "assignmentContext": "Unit 2: Argument and Persuasion. Students read two paired articles — one arguing for phone restrictions and one arguing for digital literacy education. This essay is a formal summative assessment written over two class periods with sources available.",
+      "assignmentInstructions": "Write a 4–5 paragraph argumentative essay responding to this question: Should schools restrict students' access to social media during the school day?\n\nRequirements:\n— Take a clear, specific position in your introduction.\n— Support your argument with at least two pieces of evidence. At least one must come from the class readings.\n— Include a counterargument paragraph that fairly represents the opposing view and provides a reasoned rebuttal.\n— End with a conclusion that does more than just repeat your introduction — extend your thinking or offer a broader implication.\n— Write in academic voice. Avoid informal phrases like 'I feel like' or 'in today's society.'\n\nYour essay will be evaluated on the strength of your argument, the quality of your evidence and analysis, how well you handle the opposing view, and the clarity of your writing.",
+      "studentName": "Aaliyah Pemberton",
+      "submissionDate": "2025-10-29",
+      "studentSubmission": "Aaliyah Pemberton\nDate: October 29, 2025\nMs. Osei — AP Language Arts, Period 6\n\nIn recent years, debates over student phone and social media use in schools have moved from teachers' lounges to state legislatures. Schools should implement clear restrictions on social media access during instructional time because unrestricted access undermines both academic focus and student mental health during hours when schools have a duty of care.\n\nThe most pressing issue is the documented impact on academic focus. According to the article by Dr. Restrepo assigned in class, students who use personal devices for non-academic purposes during class take on average 20 percent longer to complete equivalent work after class. This is not simply a matter of individual willpower — the design of social media platforms is intentional. Features like infinite scroll and notification systems are built specifically to interrupt focus and create re-engagement habits. When schools allow unrestricted access, they are effectively allowing a commercial product engineered for distraction to compete with instruction.\n\nBeyond academics, social media poses real-time mental health risks during the school day. Conflicts that begin online — public call-outs, exclusionary group chats, or posts about events students were not invited to — frequently land in classrooms and hallways. A student who arrives to third period having just seen a humiliating post about themselves is not in a position to learn. Restricting access during instructional hours does not resolve these conflicts, but it removes a live trigger from a supervised environment that is supposed to support student wellbeing.\n\nOpponents argue that restricting social media is a form of overreach and that students need to develop self-regulation skills, not have decisions made for them. This argument has merit. Digital citizenship and self-management are real skills students will need as adults. However, the argument assumes students are currently given meaningful support in developing those skills, and most are not. Telling a 15-year-old to regulate their social media use without instruction or scaffolding is not education — it is avoidance. Schools already regulate many behaviors during the day not as punishment but as structure. Social media restrictions during class fit that same model, particularly if paired with explicit digital literacy instruction.\n\nThe goal is not to punish students or pretend that social media does not exist. A reasonable policy would restrict access during instructional time while leaving lunch periods and free periods open. The broader implication is this: schools that refuse to take any stance on student device use in class are not neutrally respecting student autonomy — they are choosing the path of least institutional resistance at the expense of the students they serve.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Thesis and Argument",
+            "description": "Student presents a clear, specific, arguable thesis and maintains it throughout the essay.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Thesis is specific, arguable, and present in the introduction; the essay consistently develops and supports the thesis.",
+              "3": "Thesis is present and mostly clear but may be broad or slightly inconsistent with the body paragraphs.",
+              "2": "Thesis is vague, implied, or partially present; the argument drifts across the essay.",
+              "1": "No clear thesis; essay is primarily opinion without an arguable position."
+            }
+          },
+          {
+            "name": "Evidence and Support",
+            "description": "Student uses relevant evidence — including at least one class source — to support their claims.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Two or more pieces of evidence are used; at least one is from the class readings; each piece is connected to the claim it supports.",
+              "3": "Evidence is present but one piece may be vague or one is not clearly connected to the claim.",
+              "2": "Evidence is minimal or not connected to specific claims; no class source used.",
+              "1": "No evidence used; essay relies entirely on personal opinion."
+            }
+          },
+          {
+            "name": "Counterargument and Rebuttal",
+            "description": "Student acknowledges an opposing viewpoint and provides a reasoned, specific rebuttal.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Counterargument is fairly and accurately represented; rebuttal is specific and logically sound — not dismissive.",
+              "3": "Counterargument is present but weakly represented, or the rebuttal is thin or partially dismissive.",
+              "2": "Counterargument is mentioned but not addressed; rebuttal is a simple denial.",
+              "1": "No counterargument present."
+            }
+          },
+          {
+            "name": "Organization and Structure",
+            "description": "Essay is clearly organized with an introduction, developed body paragraphs, and a conclusion that extends the argument.",
+            "points": { "4": 15, "3": 11, "2": 7, "1": 4 },
+            "descriptors": {
+              "4": "Essay is clearly structured; transitions are effective; conclusion extends beyond the introduction rather than repeating it.",
+              "3": "Organization is mostly clear with minor structural issues or a weak conclusion.",
+              "2": "Some structure is present but paragraphs are underdeveloped or ideas run together.",
+              "1": "Essay lacks clear organization; ideas appear in no logical order."
+            }
+          },
+          {
+            "name": "Style, Voice, and Conventions",
+            "description": "Writing demonstrates consistent academic voice, precise word choice, and minimal errors.",
+            "points": { "4": 15, "3": 11, "2": 7, "1": 4 },
+            "descriptors": {
+              "4": "Academic voice is consistent throughout; word choice is purposeful; few or no errors in grammar, punctuation, or mechanics.",
+              "3": "Academic voice is mostly consistent; some informal phrasing or minor errors that do not affect meaning.",
+              "2": "Voice is inconsistent; noticeable grammatical errors or over-reliance on informal language.",
+              "1": "Voice is largely informal or conversational; frequent errors that affect readability."
+            }
+          }
+        ]
+      },
+      "teacherNote": "This rubric weights thesis and evidence equally at 25 pts each since those are the core skills for this unit. Counterargument (20 pts) is slightly lighter but not negligible — dismissing rather than genuinely engaging the opposing view is common and should be scored accordingly. Aaliyah's essay is a strong performance: thesis is specific and maintained, the class source is cited and integrated well, and the counterargument paragraph is one of the best sections — it acknowledges the merit of the opposing view before rebutting it. The conclusion is also stronger than average, offering a genuine implication rather than a summary. This is a high-end A-range submission. Useful as a ceiling-setter for calibration."
+    },
+    {
+      "id": "BA-006",
+      "subject": "Math",
+      "gradeBand": "High School (Grade 9)",
+      "assignmentType": "Problem Set / Math Work",
+      "assignmentTitle": "Write and Interpret Linear Equations from Real-World Scenarios",
+      "assignmentContext": "Unit 3: Linear Functions and Their Applications. Students have studied slope, y-intercept, and writing equations in slope-intercept form. This problem set is a formative mid-unit assessment designed to check conceptual understanding and real-world application.",
+      "assignmentInstructions": "Complete all three problems. For each problem, show all work step by step. Answer any written questions in complete sentences.\n\nProblem 1: A rideshare company charges a flat booking fee of $2.75 plus $1.90 per mile. Write a linear equation in slope-intercept form (y = mx + b) that represents the total cost (y) for a ride of x miles. Identify what the slope and y-intercept each represent in this situation.\n\nProblem 2: Using your equation from Problem 1, calculate the total cost of a 17-mile ride. Show all steps.\n\nProblem 3: A second rideshare company charges no flat fee but $2.50 per mile. At how many miles do both companies charge the same total amount? Set up and solve an equation. Round your answer to the nearest tenth if needed. Then write one or two sentences explaining what your solution means in the context of the problem.",
+      "studentName": "Trevor Ngozi",
+      "submissionDate": "2025-11-18",
+      "studentSubmission": "Trevor Ngozi\nDate: November 18, 2025\nMrs. Delacroix — Algebra I, Period 3\n\nProblem 1:\ny = 1.90x + 2.75\nThe slope is 1.90, which represents the cost per mile — every mile you travel adds $1.90 to the total. The y-intercept is 2.75, which is the flat booking fee you pay no matter how far you go.\n\nProblem 2:\ny = 1.90(17) + 2.75\ny = 32.30 + 2.75\ny = 35.05\nA 17-mile ride with the first company would cost $35.05.\n\nProblem 3:\n1.90x + 2.75 = 2.50x\n2.75 = 2.50x − 1.90x\n2.75 = 0.60x\nx = 2.75 ÷ 0.60\nx = 4.58...\nx ≈ 4.6 miles\n\nBoth companies charge the same amount at about 4.6 miles. For rides shorter than 4.6 miles the second company is cheaper because it doesn't have a booking fee. But for rides longer than 4.6 miles the first company becomes cheaper because its per-mile rate is lower.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Problem Setup",
+            "description": "Student correctly identifies and sets up the mathematical relationships for each problem.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "All equations are set up correctly; variables and constants are correctly identified for all three problems.",
+              "3": "Setup is mostly correct; minor error in one problem that does not indicate a conceptual misunderstanding.",
+              "2": "Setup is partially correct; at least one equation is structured incorrectly in a way that suggests a conceptual gap.",
+              "1": "Equations are largely incorrect or missing; student cannot set up the relationships."
+            }
+          },
+          {
+            "name": "Computational Accuracy",
+            "description": "All arithmetic is correct and clearly shown.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "All calculations are correct across all three problems; answers are clearly labeled with units.",
+              "3": "Minor arithmetic error in one problem; method is correct.",
+              "2": "Arithmetic errors in two or more problems; some steps are missing.",
+              "1": "Major computational errors throughout; work is not shown or is illegible."
+            }
+          },
+          {
+            "name": "Mathematical Reasoning and Work Shown",
+            "description": "Student demonstrates logical, step-by-step work that can be followed independently.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "All steps are shown in a logical order; a reader can follow the solution without needing to fill in gaps.",
+              "3": "Most steps are shown; one or two steps are skipped but can be inferred from adjacent work.",
+              "2": "Work is partially shown; skipped steps make it difficult to follow the reasoning.",
+              "1": "Only answers are given with no work shown, or work is too disorganized to follow."
+            }
+          },
+          {
+            "name": "Contextual Interpretation",
+            "description": "Student explains what their mathematical answers mean in real-world terms.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Interpretation is accurate, specific, and connects the math to the real-world scenario; goes beyond restating the number (e.g., explains what happens before and after the break-even point).",
+              "3": "Interpretation is present and mostly accurate but stays basic — restates the answer in sentence form without deeper meaning.",
+              "2": "Interpretation is attempted but is vague or contains an inaccuracy.",
+              "1": "No interpretation provided or interpretation is incorrect."
+            }
+          }
+        ]
+      },
+      "teacherNote": "Reasoning and work shown (30 pts) is weighted highest because showing process is as important as the answer in Algebra I. Trevor's submission is strong: all three problems are set up correctly and computed accurately, and the contextual interpretation in Problem 3 goes beyond restating the answer — he explains what the solution means before and after the break-even point, which is a genuine conceptual extension. One small note: Problem 2 answer is labeled with a dollar sign but no units are written next to Problem 3's answer before the context sentence. Minor, but worth checking if the rubric is used to assess precision in labeling. Expect Bottor Assist to score this near the ceiling."
+    },
+    {
+      "id": "BA-007",
+      "subject": "Science",
+      "gradeBand": "High School (Grade 11)",
+      "assignmentType": "Comparative Analysis",
+      "assignmentTitle": "Compare Mitosis and Meiosis: Process, Purpose, and Biological Significance",
+      "assignmentContext": "Unit 4: Cell Division and Genetics. Students completed a two-week unit covering the cell cycle, mitosis, meiosis I and II, genetic variation, and fertilization. This written analysis is a summative assessment — students may use their notes but not their textbooks.",
+      "assignmentInstructions": "Write a 3–4 paragraph comparative analysis of mitosis and meiosis. This is not a definition exercise — do not write a list or a table. Your analysis must be written in connected paragraphs that show your understanding of how and why these processes are different.\n\nYour analysis must address:\n1. The purpose of each process and where in the body each one occurs.\n2. At least two key differences in how each process works (not just what it produces).\n3. The biological significance of each process to the organism and, where relevant, to the species.\n\nUse precise scientific vocabulary. Responses that only demonstrate recall (e.g., 'mitosis makes 2 cells and meiosis makes 4') without explaining the mechanisms or significance will not score at the top level.",
+      "studentName": "Simone Achebe",
+      "submissionDate": "2026-01-27",
+      "studentSubmission": "Simone Achebe\nDate: January 27, 2026\nDr. Yuen — AP Biology, Period 5\n\nMitosis and meiosis are both forms of cell division but they serve entirely different purposes and produce very different outcomes. Mitosis occurs in somatic cells — the everyday body cells — and is responsible for growth, tissue repair, and replacing cells that wear out. It produces two daughter cells that are genetically identical to the parent cell and to each other, each with the full diploid chromosome number. Meiosis, by contrast, occurs only in the reproductive organs — the testes and ovaries — and produces gametes, the sex cells needed for reproduction. The key goal of meiosis is to halve the chromosome number so that when two gametes fuse at fertilization, the resulting zygote ends up with the correct diploid number rather than double it.\n\nOne of the most structurally significant differences between the two processes is that meiosis involves two sequential rounds of division, called meiosis I and meiosis II, while mitosis involves only one. In meiosis I, homologous chromosome pairs are separated, which reduces the cell from diploid to haploid. In meiosis II, sister chromatids are separated, similar to what happens in mitosis. The end result is four haploid cells rather than two diploid ones. A second and arguably more significant difference is the role of genetic recombination. During prophase I of meiosis, homologous chromosomes pair up and exchange segments of DNA through a process called crossing over. This creates new combinations of alleles that did not exist in either parent chromosome. Mitosis has no equivalent process — it is designed for precision copying, not for generating variation.\n\nThe biological significance of each process is distinct and essential. Mitosis is what allows a single fertilized egg to become a multicellular organism with trillions of cells, all carrying the same genetic instructions. Without mitosis, wound healing would be impossible and organs couldn't maintain themselves. Meiosis, on the other hand, is significant at the level of the species rather than just the individual. By generating genetically unique gametes through crossing over and independent assortment, meiosis ensures that every sexually reproducing offspring is genetically distinct. This variation is the raw material that natural selection acts on — without meiosis, populations would have far less genetic diversity, making them more vulnerable to disease or environmental change. In this way, meiosis doesn't just enable reproduction; it is one of the primary engines of evolution.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Accuracy of Scientific Content",
+            "description": "All biological information about mitosis and meiosis is correct and appropriately detailed for grade level.",
+            "points": { "4": 35, "3": 26, "2": 18, "1": 9 },
+            "descriptors": {
+              "4": "All factual claims are accurate; student correctly describes purpose, location, chromosome numbers, division stages, and outcomes of both processes.",
+              "3": "Most content is accurate; one minor factual error or missing detail that does not indicate a fundamental misunderstanding.",
+              "2": "Some accurate content but includes a significant factual error or omits a key distinction (e.g., confuses haploid/diploid or the role of meiosis I vs. II).",
+              "1": "Multiple factual errors or the student conflates the two processes in a way that shows fundamental misunderstanding."
+            }
+          },
+          {
+            "name": "Depth of Comparison",
+            "description": "Student identifies and explains meaningful differences in how each process works, not just what it produces.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "At least two significant differences are identified and explained — including what causes the difference and why it matters mechanistically, not just that it exists.",
+              "3": "Two differences are named but the explanation of one stays at the level of fact rather than mechanism.",
+              "2": "Only one difference is addressed, or both are named without explanation.",
+              "1": "Differences are not identified or the student lists similarities instead."
+            }
+          },
+          {
+            "name": "Significance and Broader Understanding",
+            "description": "Student explains why each process matters to the organism and connects to broader biological concepts.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Student articulates the significance of both processes in a way that connects to broader biological concepts such as evolution, genetic diversity, or organismal development.",
+              "3": "Significance is addressed for both but stays at the surface — restating importance without connecting to a broader concept.",
+              "2": "Significance is addressed for only one process, or explanation is too vague to assess.",
+              "1": "Significance is not addressed."
+            }
+          },
+          {
+            "name": "Writing Quality and Coherence",
+            "description": "Analysis is written in connected paragraphs with clear transitions and accurate scientific vocabulary.",
+            "points": { "4": 15, "3": 11, "2": 7, "1": 4 },
+            "descriptors": {
+              "4": "Writing is clearly organized in paragraph form; transitions connect ideas across paragraphs; scientific vocabulary is used accurately throughout.",
+              "3": "Mostly organized in paragraphs; some lapses in transition or a few informal word choices.",
+              "2": "Paragraphs are present but feel list-like; vocabulary is inconsistent or imprecise.",
+              "1": "Response is formatted as a list or bullets; writing quality significantly impedes clarity."
+            }
+          }
+        ]
+      },
+      "teacherNote": "Scientific accuracy is weighted highest (35 pts) because content mastery is the primary goal of a summative biology assessment. Depth of comparison (30 pts) rewards the analytical dimension the prompt explicitly requires — students who just list facts should not score at the top. Simone's submission is a strong A-range performance: all content is accurate at a level appropriate for AP Biology, both differences (number of divisions and crossing over) are explained mechanistically rather than just stated, and the significance section is the strongest part — it connects meiosis to natural selection and evolution, which goes well beyond basic recall. A useful ceiling-setter. Useful for calibrating whether Bottor Assist correctly identifies depth of analysis vs. simple factual recall."
+    },
+    {
+      "id": "BA-008",
+      "subject": "Social Studies",
+      "gradeBand": "High School (Grade 11)",
+      "assignmentType": "Project / Reflection",
+      "assignmentTitle": "Civic Connections: Analyze a Current Issue and Propose a Response",
+      "assignmentContext": "Unit 6: American Democracy and Civic Participation. Students studied the First Amendment, freedom of the press, and civil rights law. This reflection is a summative project-based assessment — students chose their own current event connected to a course theme.",
+      "assignmentInstructions": "Research a current event from the past twelve months that connects to a topic from this course — this could involve economics, government, civil rights, environmental policy, or free speech. Write a 3–4 paragraph reflection that includes all four of the following:\n\n1. Factual Summary: Summarize the issue accurately and specifically. Reference at least one outside source with enough information that someone could find it (author, publication, or organization name).\n2. Causal Analysis: Identify and explain at least two causes or forces driving this issue. Connect your analysis to a concept from our coursework.\n3. Personal Reflection: Explain how this issue relates to you, your community, or people your age. This section should reflect your actual perspective — not a hypothetical student's.\n4. Civic Action: Propose one specific, realistic action that a high school student could take in response. Explain why you chose it.\n\nWrite in your own voice. This is not a research paper, but it should be grounded in real facts and real reasoning.",
+      "studentName": "Camille Oduya",
+      "submissionDate": "2026-02-11",
+      "studentSubmission": "Camille Oduya\nDate: February 11, 2026\nMr. Hernandez — AP Government & Politics, Period 7\n\nThe issue I chose is the ongoing national debate over book challenges in public school libraries. According to data published by the American Library Association, the number of formal book challenges filed in U.S. schools reached record levels over the past two years, with many challenges targeting books that center on race, LGBTQ+ identity, and mental health. Several states have passed laws that make it easier for parents or community members to formally request the removal of books, and some districts have placed books under review for months at a time, effectively removing access in the meantime.\n\nThe causes of this issue connect to two larger forces we studied this year. The first is the broader culture war over educational content — debates about what students should be exposed to in school settings have intensified in a political environment where curriculum has become a mobilizing issue for both parties. The second cause is structural: new state-level laws have lowered the threshold for initiating a book challenge, which means more challenges get filed even if they don't ultimately succeed. This connects to what we studied about federalism and how state legislatures can significantly shape the day-to-day experience of public school students in ways that federal law doesn't directly address. Together these forces have created a climate where school librarians and administrators often remove or restrict books preemptively just to avoid conflict.\n\nThis issue matters to me personally because I attend a public school and use the school library. I haven't seen books removed from my school yet, but several of the most challenged books are ones I've read or that I know my classmates have found meaningful — particularly books about identity and belonging. The idea that a small number of adults filing formal complaints could determine what books are available to everyone in a school feels like it works against the kind of exposure to different perspectives that school is supposed to provide. I also think about students in other districts who no longer have access to books that reflect their lives, and I don't think it's right that their access to those materials depends on where they happened to grow up.\n\nOne action I could realistically take is to speak during public comment at a local school board meeting. School board meetings are open to the public and students are allowed to address the board. I would want to speak specifically about the importance of keeping a wide range of books available in school libraries and ask the board to clarify what the district's process is for reviewing challenged books. I chose this action because it is direct — it goes to the actual decision-making body — and because learning to engage with local governance is something we've talked about this whole semester as the most accessible form of civic participation for people who can't yet vote.",
+      "rubric": {
+        "scale": ["4", "3", "2", "1"],
+        "criteria": [
+          {
+            "name": "Factual Summary",
+            "description": "Student provides an accurate, specific factual summary with at least one identifiable outside source.",
+            "points": { "4": 20, "3": 15, "2": 10, "1": 5 },
+            "descriptors": {
+              "4": "Summary is accurate and specific; includes relevant details (scope, timeframe, actors); at least one source is identified by name or organization clearly enough to be found.",
+              "3": "Summary is mostly accurate but may be vague on details, or the source is referenced but not named specifically enough.",
+              "2": "Summary is present but too general to demonstrate real research, or contains inaccuracies.",
+              "1": "No factual summary or the event is not based on a verifiable current event."
+            }
+          },
+          {
+            "name": "Causal Analysis",
+            "description": "Student identifies and explains at least two causes or forces and connects analysis to a course concept.",
+            "points": { "4": 30, "3": 23, "2": 15, "1": 8 },
+            "descriptors": {
+              "4": "Two or more causes are identified and explained; student connects the analysis to a concept from coursework and shows how the causes interact.",
+              "3": "One or two causes are identified and partially explained; course connection is present but underdeveloped.",
+              "2": "Causes are named but not explained; no connection to course content.",
+              "1": "No analysis of causes; paragraph summarizes without interpretive thinking."
+            }
+          },
+          {
+            "name": "Personal Reflection and Voice",
+            "description": "Student connects the issue to their own experience or perspective in a specific and genuine way.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Reflection is specific and clearly personal — student expresses their own view and connects the issue to their actual context; voice is present throughout.",
+              "3": "Reflection is attempted but is somewhat general or more hypothetical than personal.",
+              "2": "Reflection is brief or disconnected from the student's actual context.",
+              "1": "No personal reflection; student writes about the issue as an outside observer only."
+            }
+          },
+          {
+            "name": "Civic Action Proposal",
+            "description": "Student proposes a specific, realistic action and explains why they chose it.",
+            "points": { "4": 25, "3": 19, "2": 13, "1": 6 },
+            "descriptors": {
+              "4": "Action is specific, realistic for a high school student, and the student explains their reasoning for choosing it — not just what to do, but why it matters.",
+              "3": "Action is realistic but vague (e.g., 'raise awareness online') or the explanation of why is missing.",
+              "2": "Action is too broad, unrealistic for a teenager, or not connected to the specific issue.",
+              "1": "No civic action proposed."
+            }
+          }
+        ]
+      },
+      "teacherNote": "Causal analysis is weighted highest (30 pts) because it is the core social studies skill this assignment tests — the ability to move from 'what happened' to 'why and how.' Reflection and civic action are weighted equally (25 pts) because this is a project-reflection format where student voice and agency matter as much as analysis. Camille's submission is a strong A-range piece: the summary references the ALA by name, causal analysis correctly connects to federalism and cultural polarization from the unit, and the civic action paragraph closes with a direct link to course learning about local governance. The reflection paragraph is personal and specific without being superficial. Useful as a top-range calibration piece. Bottor Assist should score this consistently high across all four criteria."
+    }
+  ]
+}
