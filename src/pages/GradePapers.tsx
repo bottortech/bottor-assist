@@ -2174,6 +2174,102 @@ Students must show their work for full credit.`;
           </div>
         )}
 
+        {/* ===== STEP 1 · ASSIGNMENT CONTEXT (OPTIONAL) ===== */}
+        <Collapsible open={assignmentContextOpen} onOpenChange={handleAssignmentContextOpenChange}>
+          <Card className="border border-border bg-card">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="flex flex-row items-center justify-between pb-3 cursor-pointer hover:bg-muted/20 transition-colors rounded-t-lg">
+                <div className="flex items-center gap-3">
+                  <BookOpen className="w-5 h-5 text-primary" />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-lg font-semibold">Step 1 · Assignment Context</CardTitle>
+                      <span className="text-xs font-normal text-muted-foreground">Optional</span>
+                      {assignmentContextCombined.trim().length > 0 && (
+                        <Badge variant="secondary" className="text-xs bg-primary/10 text-primary border-primary/20">
+                          <CheckCircle2 className="w-3 h-3 mr-1" />
+                          Loaded
+                        </Badge>
+                      )}
+                    </div>
+                    <CardDescription className="text-xs mt-0.5">
+                      Upload the source material students are responding to — reading passage, article, data set, or handout. Bottor uses this to verify quotes and evaluate evidence against the original text.
+                    </CardDescription>
+                  </div>
+                </div>
+                <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${assignmentContextOpen ? "rotate-180" : ""}`} />
+              </CardHeader>
+            </CollapsibleTrigger>
+
+            <CollapsibleContent>
+              <CardContent className="space-y-4 pt-0">
+                <div className="relative">
+                  <input
+                    ref={assignmentContextFileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                    onChange={handleAssignmentContextFileSelect}
+                    className="hidden"
+                    id="assignment-context-upload"
+                  />
+                  <label
+                    htmlFor="assignment-context-upload"
+                    className="flex flex-col items-center justify-center w-full border-2 border-dashed border-border rounded-[10px] cursor-pointer hover:border-primary hover:bg-accent-light transition-colors bg-muted/30 p-8 gap-2 text-center"
+                  >
+                    <div className="relative">
+                      <FileText className="w-5 h-5 text-muted-foreground/40 absolute -left-1 -top-1" />
+                      <BookOpen className="w-6 h-6 text-muted-foreground relative z-10" />
+                    </div>
+                    <span className="text-sm font-medium text-foreground">Upload Source Material</span>
+                    <span className="text-sm text-muted-foreground">
+                      Drag files here or click to browse
+                    </span>
+                    <span className="text-xs text-muted-foreground/70">
+                      PDF, JPG, or PNG. Supports multiple files (e.g., passage + vocabulary sheet).
+                    </span>
+                  </label>
+                </div>
+
+                <p className="text-xs text-muted-foreground -mt-1">
+                  Used to verify student quotes and catch misreadings of the source.
+                </p>
+
+                {assignmentContextUpload.files.length > 0 && (
+                  <div className="space-y-1">
+                    {assignmentContextUpload.files.map((file) => (
+                      <div key={file.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          <span className="text-sm truncate">{file.fileName}</span>
+                          <Badge variant="outline" className="text-xs flex-shrink-0">
+                            {file.status === "ready" ? "Ready" : file.status}
+                          </Badge>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => assignmentContextUpload.removeFile(file.id)}
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <Textarea
+                  placeholder="Or paste passage / source text here…"
+                  value={assignmentContextText}
+                  onChange={(e) => setAssignmentContextText(e.target.value)}
+                  rows={5}
+                />
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
         {/* ===== STUDENT WORK (REQUIRED) ===== */}
         <Card className="border border-border bg-card">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
