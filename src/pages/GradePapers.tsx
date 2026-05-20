@@ -1416,6 +1416,11 @@ export default function GradePapers() {
     if (answerKeyFileInputRef.current) answerKeyFileInputRef.current.value = "";
   };
 
+  const handleAssignmentContextFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) assignmentContextUpload.addFiles(e.target.files);
+    if (assignmentContextFileInputRef.current) assignmentContextFileInputRef.current.value = "";
+  };
+
   // ELA Rubric file upload handler
   const handleElaRubricFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
