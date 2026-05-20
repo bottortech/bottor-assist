@@ -1065,6 +1065,16 @@ export default function GradePapers() {
     return parts.join("\n\n");
   }, [rubricExtractedText, form.rubric]);
 
+  // Combined assignment context (source material) — file text + pasted text
+  const assignmentContextExtractedText = useMemo(() => {
+    const readyFiles = assignmentContextUpload.files.filter(f => f.status === 'ready');
+    return readyFiles.map(f => f.extractedText?.trim()).filter(Boolean).join('\n\n');
+  }, [assignmentContextUpload.files]);
+
+  const assignmentContextCombined = useMemo(() => {
+    return [assignmentContextExtractedText, assignmentContextText.trim()].filter(Boolean).join('\n\n');
+  }, [assignmentContextExtractedText, assignmentContextText]);
+
   // Extract just the text content from uploaded answer key files
   const answerKeyExtractedText = useMemo(() => {
     const readyFiles = answerKeyUpload.files.filter(f => f.status === 'ready');
