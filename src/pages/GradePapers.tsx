@@ -920,6 +920,7 @@ export default function GradePapers() {
   const studentUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const rubricUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
   const answerKeyUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
+  const assignmentContextUpload = useFileUpload({ maxConcurrentExtractions: 2, maxDimension: 1600 });
 
   const [form, setForm] = useState<GradePapersForm>({
     grade_level: "",
