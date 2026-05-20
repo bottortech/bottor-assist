@@ -1722,6 +1722,7 @@ Students must show their work for full credit.`;
             rubric_text: elaRubricText.trim() || undefined,
             grade_level: form.grade_level || undefined,
             assignment_type: "Writing",
+            assignment_doc_text: assignmentContextCombined || undefined,
           },
         });
 
