@@ -40,6 +40,7 @@ interface ELAGradeRequest {
   rubric_text?: string;
   grade_level?: string;
   assignment_type?: string;
+  assignment_doc_text?: string;
 }
 
 serve(async (req) => {
@@ -55,6 +56,7 @@ serve(async (req) => {
       rubric_text,
       grade_level,
       assignment_type,
+      assignment_doc_text,
     } = body;
 
     if (!student_work?.trim()) {
@@ -72,6 +74,7 @@ serve(async (req) => {
     console.log(`[grade-ela] Starting ELA grading for: ${student_name}`);
     console.log(`[grade-ela] Student work length: ${student_work.length} chars`);
     console.log(`[grade-ela] Rubric provided: ${!!rubric_text}`);
+    console.log(`[grade-ela] Assignment context provided: ${!!assignment_doc_text}`);
     console.log(`[grade-ela] Grade level: ${grade_level || "unspecified"}`);
     console.log(`[grade-ela] Assignment type: ${assignment_type || "unspecified"}`);
 
@@ -82,6 +85,7 @@ serve(async (req) => {
       rubricText: rubric_text,
       gradeLevel: grade_level,
       assignmentType: assignment_type,
+      assignmentDocText: assignment_doc_text,
     });
 
     console.log(`[grade-ela] System prompt length: ${systemPrompt.length}`);
@@ -177,8 +181,9 @@ function buildELAPrompts(params: {
   rubricText?: string;
   gradeLevel?: string;
   assignmentType?: string;
+  assignmentDocText?: string;
 }): { systemPrompt: string; userPrompt: string } {
-  const { studentWork, studentName, rubricText, gradeLevel, assignmentType } = params;
+  const { studentWork, studentName, rubricText, gradeLevel, assignmentType, assignmentDocText } = params;
 
   // Determine rubric to use
   const rubricSection = rubricText?.trim()
@@ -188,6 +193,10 @@ function buildELAPrompts(params: {
   const gradeContext = gradeLevel ? `Grade Level: ${gradeLevel}` : "";
   const assignmentContext = assignmentType ? `Assignment Type: ${assignmentType}` : "";
 
+  const sourceMaterialSection = assignmentDocText?.trim()
+    ? `\nASSIGNMENT CONTEXT / SOURCE MATERIAL (reference text the student was responding to — use to verify quotes and flag misreadings):\n---\n${assignmentDocText}\n---\n`
+    : "";
+
   const systemPrompt = `You are Bottor Assist, an expert ELA/Writing teacher assistant. Your role is to grade student writing fairly and provide constructive, growth-oriented feedback.
 
 GRADING PHILOSOPHY:
@@ -196,6 +205,7 @@ GRADING PHILOSOPHY:
 - Provide actionable feedback that helps students improve
 - Consider grade-level expectations when scoring
 - Award credit for effort and partial success
+${assignmentDocText?.trim() ? "- When source material is provided, verify any quotes against it and call out misinterpretations or unsupported claims" : ""}
 
 ${rubricSection}
 
@@ -247,7 +257,7 @@ CRITICAL RULES:
 - Do NOT invent content that isn't in the student work
 - If writing is too brief to evaluate, note this and lower confidence`;
 
-  const userPrompt = `${gradeContext ? gradeContext + "\n" : ""}${assignmentContext ? assignmentContext + "\n\n" : ""}
+  const userPrompt = `${gradeContext ? gradeContext + "\n" : ""}${assignmentContext ? assignmentContext + "\n\n" : ""}${sourceMaterialSection}
 STUDENT NAME: ${studentName}
 
 STUDENT WRITING:
