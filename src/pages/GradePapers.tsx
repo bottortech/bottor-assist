@@ -2277,7 +2277,7 @@ Students must show their work for full credit.`;
               <FileText className="w-5 h-5 text-primary" />
               <div>
                 <div className="flex items-center gap-2">
-                  <CardTitle className="text-lg font-semibold">Step 1 · Student Work</CardTitle>
+                  <CardTitle className="text-lg font-semibold">Step 2 · Student Work</CardTitle>
                   <Badge variant="secondary" className="text-xs bg-muted text-secondary-foreground">Required</Badge>
                 </div>
                 <CardDescription className="text-xs mt-0.5">
