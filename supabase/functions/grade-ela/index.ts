@@ -40,6 +40,7 @@ interface ELAGradeRequest {
   rubric_text?: string;
   grade_level?: string;
   assignment_type?: string;
+  assignment_doc_text?: string;
 }
 
 serve(async (req) => {
