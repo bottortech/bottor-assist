@@ -912,6 +912,7 @@ export default function GradePapers() {
   const studentFileInputRef = useRef<HTMLInputElement>(null);
   const rubricFileInputRef = useRef<HTMLInputElement>(null);
   const answerKeyFileInputRef = useRef<HTMLInputElement>(null);
+  const assignmentContextFileInputRef = useRef<HTMLInputElement>(null);
 
   const { rubrics: savedRubrics, saveRubric, markRubricAsUsed } = useSavedRubrics();
 
