@@ -1860,6 +1860,7 @@ Students must show their work for full credit.`;
             scoring_mode: isScoring ? scoringMode : 'feedback-only',
             auto_score_settings: isScoring ? effectiveAutoScoreSettings : undefined,
             quick_rubric_categories: isScoring ? quickRubricCategories : '',
+            assignment_doc_text: assignmentContextCombined || undefined,
           },
         });
 
