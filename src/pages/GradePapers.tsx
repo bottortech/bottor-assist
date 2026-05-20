@@ -953,6 +953,19 @@ export default function GradePapers() {
   // Grading Criteria accordion state (collapsed by default)
   const [gradingCriteriaOpen, setGradingCriteriaOpen] = useState(false);
 
+  // Assignment Context state — optional source material (passage, article, handout)
+  const [assignmentContextText, setAssignmentContextText] = useState("");
+  const [assignmentContextOpen, setAssignmentContextOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("bottor.assignmentContextSkipped") !== "1";
+  });
+  const handleAssignmentContextOpenChange = (open: boolean) => {
+    setAssignmentContextOpen(open);
+    if (!open && typeof window !== "undefined") {
+      localStorage.setItem("bottor.assignmentContextSkipped", "1");
+    }
+  };
+
   // Manual total points override (when auto-detection fails or user wants to change)
   const [manualTotalPoints, setManualTotalPoints] = useState<number | null>(null);
   
