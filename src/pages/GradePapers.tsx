@@ -2239,7 +2239,7 @@ Students must show their work for full credit.`;
                     ref={assignmentContextFileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                    accept=".pdf,.txt,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif"
                     onChange={handleAssignmentContextFileSelect}
                     className="hidden"
                     id="assignment-context-upload"
