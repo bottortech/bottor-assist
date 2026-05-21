@@ -1911,7 +1911,7 @@ Students must show their work for full credit.`;
           body: {
             student_work: group.extractedText,
             student_name: group.studentName,
-            rubric_text: elaRubricText.trim() || undefined,
+            rubric_text: elaRubricText.trim() ? formatParsedRubricForGrading(parsedElaRubric) : undefined,
             grade_level: form.grade_level || undefined,
             assignment_type: "Writing",
             assignment_doc_text: assignmentContextCombined || undefined,
@@ -1991,7 +1991,7 @@ Students must show their work for full credit.`;
 
     // Build effective rubric: only use if we're in scoring mode
     const effectiveRubric = isScoring
-      ? (rubricFinalText || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : ""))
+      ? (parsedMathRubric.status === "valid" ? formatParsedRubricForGrading(parsedMathRubric) : "")
       : "";
     
     console.log('[GradePapers] Grading with mode:', gradingMode, 'isScoring:', isScoring, {
