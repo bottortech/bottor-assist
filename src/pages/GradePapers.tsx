@@ -2871,6 +2871,11 @@ Students must show their work for full credit.`;
                   </p>
                 </TabsContent>
               </Tabs>
+              <ParsedRubricPreview
+                parsed={parsedElaRubric}
+                confirmed={elaRubricConfirmed}
+                onConfirm={() => setConfirmedElaRubricSignature(elaRubricSig)}
+              />
               
               {/* Rubric Tips - Collapsible */}
               <Collapsible open={elaRubricTipsOpen} onOpenChange={setElaRubricTipsOpen}>
@@ -3026,6 +3031,12 @@ Students must show their work for full credit.`;
                       </p>
                     </div>
                   )}
+
+                  <ParsedRubricPreview
+                    parsed={parsedMathRubric}
+                    confirmed={mathRubricConfirmed}
+                    onConfirm={() => setConfirmedMathRubricSignature(mathRubricSig)}
+                  />
 
                   {/* DEV DEBUG: Rubric Detection Panel */}
                   {process.env.NODE_ENV === 'development' && (rubricUpload.files.length > 0 || rubricFinalText.length > 0) && (
