@@ -247,6 +247,11 @@ export function TransparentResultCard({
         </Card>
       )}
 
+      {/* ===== Rubric Compliance (audit of which criteria the AI actually used) ===== */}
+      {result.rubric_compliance && (
+        <RubricComplianceCard compliance={result.rubric_compliance} />
+      )}
+
       {/* ===== Document Preview Toggle ===== */}
       <Card className="border shadow-sm">
         <CardContent className="p-0">
