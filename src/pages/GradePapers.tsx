@@ -483,22 +483,10 @@ function buildElaCompliance(
 
   const teacherProvided = !!rubricText && rubricText.trim().length > 0;
 
-  // Parse criterion names from the rubric text. We look for lines that
-  // appear to name a criterion (bullet, dash, numbered, or "Name:" forms).
-  const expectedCriteria: string[] = [];
-  if (teacherProvided) {
-    const lines = rubricText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    for (const line of lines) {
-      const m =
-        line.match(/^\s*[-*•]\s+([^:–-]{2,80})(?:\s*[:–-].*)?$/) ||
-        line.match(/^\s*\d+[.)]\s+([^:–-]{2,80})(?:\s*[:–-].*)?$/) ||
-        line.match(/^([A-Z][A-Za-z &/]{2,60})\s*[:–-]\s+/);
-      if (m && m[1]) {
-        const name = m[1].trim();
-        if (name.length >= 2 && name.length <= 80) expectedCriteria.push(name);
-      }
-    }
-  }
+  const parsedRubric = parseRubricCriteria(rubricText);
+  const expectedCriteria = teacherProvided && parsedRubric.status === "valid"
+    ? parsedRubric.criteria.map((criterion) => criterion.name)
+    : [];
 
   const normalize = (s: string) =>
     String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -509,9 +497,7 @@ function buildElaCompliance(
   if (!teacherProvided) {
     status = "default";
   } else if (expectedCriteria.length === 0) {
-    // Teacher provided rubric text we couldn't parse into criteria — treat
-    // as custom if AI returned breakdown, otherwise mixed.
-    status = actualCriteria.length > 0 ? "custom" : "mixed";
+    status = "mixed";
   } else {
     const extra = actualNorm.filter((n) => !expectedNorm.includes(n));
     const missing = expectedNorm.filter((n) => !actualNorm.includes(n));
