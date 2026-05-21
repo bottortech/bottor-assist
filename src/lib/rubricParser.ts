@@ -35,6 +35,16 @@ const METADATA_LABELS = [
   "standard",
   "objective",
   "materials",
+  "total",
+  "total points",
+  "total score",
+  "score",
+  "points",
+  "points possible",
+  "possible points",
+  "out of",
+  "grade",
+  "overall",
 ];
 
 const RUBRIC_SECTION_MARKERS = [
