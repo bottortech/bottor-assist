@@ -529,6 +529,65 @@ function buildElaCompliance(
   };
 }
 
+function ParsedRubricPreview({
+  parsed,
+  confirmed,
+  onConfirm,
+}: {
+  parsed: ReturnType<typeof parseRubricCriteria>;
+  confirmed: boolean;
+  onConfirm: () => void;
+}) {
+  if (parsed.status === "empty") return null;
+
+  const valid = parsed.status === "valid";
+  return (
+    <Card className={`border ${valid ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5"}`}>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            {valid ? <CheckCircle2 className="w-4 h-4 text-primary mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-destructive mt-0.5" />}
+            <div>
+              <p className="text-sm font-medium">
+                {valid ? `We extracted ${parsed.criteria.length} rubric criteria` : "We couldn't read your rubric"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {valid ? "Confirm these criteria before grading." : "Please paste the criteria directly, or upload a file with a clearly structured rubric table."}
+              </p>
+            </div>
+          </div>
+          {valid && (
+            <Button size="sm" variant={confirmed ? "secondary" : "default"} onClick={onConfirm}>
+              {confirmed ? <Check className="w-4 h-4 mr-1" /> : null}
+              {confirmed ? "Confirmed" : "Confirm rubric"}
+            </Button>
+          )}
+        </div>
+        {parsed.issues.length > 0 && (
+          <div className="text-xs text-muted-foreground space-y-1">
+            {parsed.issues.map((issue, index) => <p key={index}>{issue}</p>)}
+          </div>
+        )}
+        {valid && (
+          <div className="rounded-md border bg-background overflow-hidden">
+            {parsed.criteria.map((criterion, index) => (
+              <div key={`${criterion.name}-${index}`} className="grid grid-cols-[1fr_auto] gap-3 p-3 text-sm border-b last:border-b-0">
+                <div>
+                  <p className="font-medium">{criterion.name}</p>
+                  {criterion.description && <p className="text-xs text-muted-foreground mt-0.5">{criterion.description}</p>}
+                </div>
+                <Badge variant="outline" className="h-fit">
+                  {criterion.points ? `${criterion.points} pts` : `${criterion.weight}%`}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 
 
 interface StudentGroup {
