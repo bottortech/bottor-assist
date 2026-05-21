@@ -2257,7 +2257,7 @@ Students must show their work for full credit.`;
                       Drag files here or click to browse
                     </span>
                     <span className="text-xs text-muted-foreground/70">
-                      PDF, JPG, or PNG. Supports multiple files (e.g., passage + vocabulary sheet).
+                      PDF (text-based), .txt, .docx, or images. Supports multiple files (e.g., passage + vocabulary sheet).
                     </span>
                   </label>
                 </div>
