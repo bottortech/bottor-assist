@@ -254,27 +254,54 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
    */
   const extractTextFromFile = useCallback(async (file: File): Promise<string> => {
     const base64 = await fileToBase64(file);
-    
+
     // Create AbortController for timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
-    
+
+    // Browser-supplied MIME is often empty for .docx and sometimes for .txt
+    // copied from cloud sources. Fall back to extension so the edge function
+    // can route correctly.
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const extMime =
+      ext === 'pdf' ? 'application/pdf' :
+      ext === 'txt' || ext === 'md' ? 'text/plain' :
+      ext === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+      ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
+      ext === 'png' ? 'image/png' :
+      ext === 'webp' ? 'image/webp' :
+      ext === 'heic' ? 'image/heic' :
+      ext === 'heif' ? 'image/heif' : '';
+    const effectiveType =
+      file.type && file.type !== 'application/octet-stream' ? file.type : extMime;
+
     try {
       const { data, error } = await supabase.functions.invoke('extract-text', {
         body: {
           file_data: base64,
-          file_type: file.type,
+          file_type: effectiveType,
           file_name: file.name,
         },
       });
-      
+
       clearTimeout(timeoutId);
-      
-      if (error) throw error;
-      return data.text || '';
+
+      if (error) {
+        // Surface the edge function's specific error message + code.
+        const ctx = (error as any).context;
+        let serverMessage = error.message;
+        try {
+          if (ctx && typeof ctx.json === 'function') {
+            const body = await ctx.json();
+            if (body?.error) serverMessage = body.error;
+          }
+        } catch { /* ignore */ }
+        throw new Error(serverMessage);
+      }
+      return data?.text || '';
     } catch (err) {
       clearTimeout(timeoutId);
-      
+
       if (err instanceof Error && err.name === 'AbortError') {
         throw new Error('Request timeout — try again');
       }
@@ -488,7 +515,10 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
       'image/webp',
       'image/heic',
       'image/heif',
+      'text/plain',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ];
+    const allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'txt', 'md', 'docx'];
 
     const newFileItems: UploadedFileItem[] = [];
     const errors: string[] = [];
@@ -496,7 +526,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     for (const selectedFile of Array.from(selectedFiles)) {
       const fileType = (selectedFile.type || '').toLowerCase();
       const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-      const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
+      const okByExt = !!ext && allowedExts.includes(ext);
       const okByMime = allowedMimes.includes(fileType);
 
       if (!okByExt && !okByMime) {

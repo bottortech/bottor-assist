@@ -1443,82 +1443,104 @@ export default function GradePapers() {
   const handleElaRubricFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     if (elaRubricFileInputRef.current) elaRubricFileInputRef.current.value = "";
-    
-    // Validate file type
-    const allowedTypes = ['.txt', '.doc', '.docx', '.pdf'];
-    const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
-    if (!allowedTypes.includes(fileExt)) {
-      toast({ 
-        title: "Invalid file type", 
-        description: "Please upload a .txt, .doc, .docx, or .pdf file",
+
+    // Validate by extension (browser-supplied MIME is often missing for .docx)
+    const allowedExts = ['.txt', '.docx', '.pdf'];
+    const fileExt = '.' + (file.name.split('.').pop()?.toLowerCase() ?? '');
+    if (!allowedExts.includes(fileExt)) {
+      toast({
+        title: "Unsupported file type",
+        description: fileExt === '.doc'
+          ? "Legacy .doc isn't supported. Save as .docx or .pdf and try again."
+          : "Please upload a .txt, .docx, or .pdf file.",
         variant: "destructive"
       });
       return;
     }
-    
+
     setElaRubricFileLoading(true);
     setElaRubricFileName(file.name);
-    
+
     try {
-      // Handle text files directly
+      // Handle plain text directly on the client
       if (fileExt === '.txt') {
         const text = await file.text();
+        if (!text.trim()) {
+          throw new Error("This .txt file is empty.");
+        }
         setElaRubricText(text);
         setElaRubricSource('file');
-        toast({ title: "Rubric loaded!", description: `${file.name} (${text.length} characters)` });
+        toast({ title: "Rubric loaded", description: `${file.name} (${text.length} characters)` });
         setElaRubricFileLoading(false);
-      } 
-      // For PDF/DOC files, we need to extract text via edge function
-      else if (fileExt === '.pdf' || fileExt === '.doc' || fileExt === '.docx') {
-        // Convert file to base64 for processing
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          try {
-            const base64 = (event.target?.result as string)?.split(',')[1];
-            if (!base64) throw new Error('Failed to read file');
-            
-            // Call extract-text edge function
-            const { data, error } = await supabase.functions.invoke("extract-text", {
-              body: {
-                file_data: base64,
-                file_name: file.name,
-                mime_type: file.type || 'application/octet-stream',
-              },
-            });
-            
-            if (error) throw error;
-            
-            if (data?.text) {
-              setElaRubricText(data.text);
-              setElaRubricSource('file');
-              toast({ title: "Rubric extracted!", description: `${file.name} (${data.text.length} characters)` });
-            } else {
-              throw new Error('No text extracted from file');
-            }
-          } catch (err) {
-            console.error('ELA rubric extraction error:', err);
-            toast({ 
-              title: "Extraction failed", 
-              description: "Could not extract text from file. Try pasting the rubric instead.",
-              variant: "destructive"
-            });
-            setElaRubricFileName(null);
-          } finally {
-            setElaRubricFileLoading(false);
-          }
-        };
-        reader.readAsDataURL(file);
+        return;
       }
+
+      // PDF / DOCX → extract via edge function
+      const arrayBuffer = await file.arrayBuffer();
+      // Browser-safe base64 encode for arbitrary binary
+      let binary = '';
+      const bytes = new Uint8Array(arrayBuffer);
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(
+          null,
+          Array.from(bytes.subarray(i, i + chunk))
+        );
+      }
+      const base64 = btoa(binary);
+
+      const inferredType =
+        fileExt === '.pdf' ? 'application/pdf' :
+        fileExt === '.docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+        (file.type || '');
+
+      const { data, error } = await supabase.functions.invoke("extract-text", {
+        body: {
+          file_data: base64,
+          file_name: file.name,
+          file_type: file.type && file.type !== 'application/octet-stream' ? file.type : inferredType,
+        },
+      });
+
+      if (error) {
+        // supabase-js wraps non-2xx as FunctionsHttpError; the body is in context
+        const ctx = (error as any).context;
+        let serverMessage = error.message;
+        let code: string | undefined;
+        try {
+          if (ctx && typeof ctx.json === 'function') {
+            const body = await ctx.json();
+            serverMessage = body?.error || serverMessage;
+            code = body?.code;
+          }
+        } catch { /* ignore */ }
+        const err = new Error(serverMessage) as Error & { code?: string };
+        err.code = code;
+        throw err;
+      }
+
+      if (!data?.text) {
+        throw new Error("No text could be extracted from this file.");
+      }
+
+      setElaRubricText(data.text);
+      setElaRubricSource('file');
+      toast({
+        title: "Rubric extracted",
+        description: `${file.name} (${data.text.length} characters)`,
+      });
     } catch (err) {
-      console.error('ELA rubric file error:', err);
-      toast({ 
-        title: "File read error", 
-        description: "Could not read the file. Please try again.",
-        variant: "destructive"
+      console.error('ELA rubric extraction error:', err);
+      const message = err instanceof Error ? err.message : "Unknown error";
+      toast({
+        title: "Couldn't read this file",
+        description: message,
+        variant: "destructive",
       });
       setElaRubricFileName(null);
+    } finally {
       setElaRubricFileLoading(false);
     }
   };
@@ -2217,7 +2239,7 @@ Students must show their work for full credit.`;
                     ref={assignmentContextFileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                    accept=".pdf,.txt,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif"
                     onChange={handleAssignmentContextFileSelect}
                     className="hidden"
                     id="assignment-context-upload"
@@ -2235,7 +2257,7 @@ Students must show their work for full credit.`;
                       Drag files here or click to browse
                     </span>
                     <span className="text-xs text-muted-foreground/70">
-                      PDF, JPG, or PNG. Supports multiple files (e.g., passage + vocabulary sheet).
+                      PDF (text-based), .txt, .docx, or images. Supports multiple files (e.g., passage + vocabulary sheet).
                     </span>
                   </label>
                 </div>
@@ -2632,7 +2654,7 @@ Students must show their work for full credit.`;
                   <input
                     ref={elaRubricFileInputRef}
                     type="file"
-                    accept=".txt,.doc,.docx,.pdf"
+                    accept=".txt,.docx,.pdf"
                     onChange={handleElaRubricFileSelect}
                     className="hidden"
                     id="ela-rubric-file-upload"
@@ -2647,7 +2669,7 @@ Students must show their work for full credit.`;
                       <Upload className="w-8 h-8 text-purple-400 mb-2" />
                       <span className="text-sm font-medium text-foreground">Upload Rubric File</span>
                       <span className="text-xs text-muted-foreground mt-1">
-                        Accepts .txt, .doc, .docx, .pdf
+                        Accepts .txt, .docx, .pdf (text-based)
                       </span>
                     </label>
                   ) : (
@@ -2777,7 +2799,7 @@ Students must show their work for full credit.`;
                       ref={rubricFileInputRef}
                       type="file"
                       multiple
-                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      accept=".pdf,.txt,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif"
                       onChange={handleRubricFileSelect}
                       className="hidden"
                       id="rubric-file-upload"
