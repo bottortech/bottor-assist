@@ -539,6 +539,9 @@ function buildElaCompliance(
       missing: expectedCriteria.filter((c) => !actualNorm.includes(normalize(c))),
     },
   };
+}
+
+
 
 interface StudentGroup {
   studentName: string;
