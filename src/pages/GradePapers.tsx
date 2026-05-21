@@ -85,6 +85,7 @@ import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import { TransparentResultCard } from "@/components/TransparentResultCard";
 import { RubricComplianceCard, type RubricComplianceData } from "@/components/RubricComplianceCard";
 import type { ELAGradeResponse } from "@/types/elaGrading";
+import { formatParsedRubricForGrading, parseRubricCriteria, rubricSignature } from "@/lib/rubricParser";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
@@ -1034,6 +1035,8 @@ export default function GradePapers() {
   const [elaRubricFileLoading, setElaRubricFileLoading] = useState(false);
   const [elaRubricTipsOpen, setElaRubricTipsOpen] = useState(false);
   const [elaResults, setElaResults] = useState<Map<string, ELAGradeResponse>>(new Map());
+  const [confirmedElaRubricSignature, setConfirmedElaRubricSignature] = useState("");
+  const [confirmedMathRubricSignature, setConfirmedMathRubricSignature] = useState("");
   const elaRubricFileInputRef = useRef<HTMLInputElement>(null);
 
   // Grading Criteria accordion state (collapsed by default)
@@ -1181,6 +1184,13 @@ export default function GradePapers() {
     return parts.join("\n\n");
   }, [answerKeyExtractedText, form.answer_key]);
 
+  const parsedMathRubric = useMemo(() => parseRubricCriteria(rubricFinalText), [rubricFinalText]);
+  const parsedElaRubric = useMemo(() => parseRubricCriteria(elaRubricText), [elaRubricText]);
+  const mathRubricSig = useMemo(() => rubricSignature(parsedMathRubric), [parsedMathRubric]);
+  const elaRubricSig = useMemo(() => rubricSignature(parsedElaRubric), [parsedElaRubric]);
+  const mathRubricConfirmed = parsedMathRubric.status === "valid" && confirmedMathRubricSignature === mathRubricSig;
+  const elaRubricConfirmed = parsedElaRubric.status === "valid" && confirmedElaRubricSignature === elaRubricSig;
+
   // Warning: Rubric file uploaded but no text extracted
   const rubricExtractionWarning = useMemo(() => {
     const hasRubricFiles = rubricUpload.files.some(f => f.status === 'ready');
@@ -1196,24 +1206,22 @@ export default function GradePapers() {
       ? studentGroups.map(g => g.extractedText).join('\n\n')
       : studentUpload.combinedText;
     
-    return parseRubricForPoints(rubricFinalText, answerKeyTextCombined, studentWorkText);
-  }, [rubricFinalText, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
+    const validatedRubricText = parsedMathRubric.status === "valid" ? formatParsedRubricForGrading(parsedMathRubric) : rubricFinalText;
+    return parseRubricForPoints(validatedRubricText, answerKeyTextCombined, studentWorkText);
+  }, [rubricFinalText, parsedMathRubric, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
 
   // Effective total points: manual override > parsed > default to 20 (never null when rubric detected)
   const effectiveTotalPoints = useMemo(() => {
     if (manualTotalPoints && manualTotalPoints > 0) return manualTotalPoints;
     if (parsedRubricMeta.totalPoints) return parsedRubricMeta.totalPoints;
-    // Default to 20 when rubric is detected but points couldn't be parsed
-    // This prevents blocking the grading flow
-    if (rubricDetected) return 20;
     return null;
-  }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
+  }, [manualTotalPoints, parsedRubricMeta.totalPoints]);
   
   // Track if total points were inferred vs parsed
   const totalPointsInferred = useMemo(() => {
     if (manualTotalPoints && manualTotalPoints > 0) return false;
     if (parsedRubricMeta.totalPoints) return false;
-    return rubricDetected; // Inferred when rubric exists but no points found
+    return false;
   }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
 
   // Determine if scoring is valid based on parsed rubric or manual settings
