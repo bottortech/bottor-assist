@@ -515,7 +515,10 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
       'image/webp',
       'image/heic',
       'image/heif',
+      'text/plain',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ];
+    const allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'txt', 'md', 'docx'];
 
     const newFileItems: UploadedFileItem[] = [];
     const errors: string[] = [];
@@ -523,7 +526,7 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
     for (const selectedFile of Array.from(selectedFiles)) {
       const fileType = (selectedFile.type || '').toLowerCase();
       const ext = selectedFile.name.split('.').pop()?.toLowerCase();
-      const okByExt = !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(ext);
+      const okByExt = !!ext && allowedExts.includes(ext);
       const okByMime = allowedMimes.includes(fileType);
 
       if (!okByExt && !okByMime) {
