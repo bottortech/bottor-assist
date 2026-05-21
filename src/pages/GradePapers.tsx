@@ -3212,12 +3212,19 @@ Students must show their work for full credit.`;
             )}
 
             {/* ELA-Specific Results Display */}
-            {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (
-              <ELAResultsDisplay
-                result={elaResults.get(currentGroup.studentName)!}
-                onCopy={handleCopy}
-              />
-            )}
+            {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (() => {
+              const elaResult = elaResults.get(currentGroup.studentName)!;
+              const compliance = buildElaCompliance(elaRubricText, elaResult);
+              return (
+                <>
+                  {compliance && <RubricComplianceCard compliance={compliance} />}
+                  <ELAResultsDisplay
+                    result={elaResult}
+                    onCopy={handleCopy}
+                  />
+                </>
+              );
+            })()}
 
             {/* Math Results — Transparent Evidence-Based View */}
             {gradingSubject === "math" && (
