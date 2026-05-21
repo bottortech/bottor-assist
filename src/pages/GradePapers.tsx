@@ -2799,7 +2799,7 @@ Students must show their work for full credit.`;
                       ref={rubricFileInputRef}
                       type="file"
                       multiple
-                      accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      accept=".pdf,.txt,.docx,.jpg,.jpeg,.png,.webp,.heic,.heif"
                       onChange={handleRubricFileSelect}
                       className="hidden"
                       id="rubric-file-upload"
