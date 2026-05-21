@@ -33,6 +33,7 @@ import {
   Lock,
   Search,
 } from "lucide-react";
+import { RubricComplianceCard, RubricComplianceData } from "@/components/RubricComplianceCard";
 
 interface QuestionBreakdown {
   question_number: number;
@@ -58,6 +59,7 @@ interface GradingResult {
   areas_for_improvement: string;
   feedback_paragraph: string;
   question_breakdown?: QuestionBreakdown[];
+  rubric_compliance?: RubricComplianceData;
 }
 
 interface TransparentResultCardProps {
