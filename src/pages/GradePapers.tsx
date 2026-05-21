@@ -83,6 +83,7 @@ import {
 } from "@/components/ScoringOptionsSection";
 import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import { TransparentResultCard } from "@/components/TransparentResultCard";
+import { RubricComplianceCard, type RubricComplianceData } from "@/components/RubricComplianceCard";
 import type { ELAGradeResponse } from "@/types/elaGrading";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
