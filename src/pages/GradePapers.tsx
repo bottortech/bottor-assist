@@ -50,6 +50,7 @@ import {
   BookOpen,
   Lightbulb,
   PenLine,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Collapsible,
@@ -85,6 +86,7 @@ import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import { TransparentResultCard } from "@/components/TransparentResultCard";
 import { RubricComplianceCard, type RubricComplianceData } from "@/components/RubricComplianceCard";
 import type { ELAGradeResponse } from "@/types/elaGrading";
+import { formatParsedRubricForGrading, parseRubricCriteria, rubricSignature } from "@/lib/rubricParser";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
@@ -482,22 +484,10 @@ function buildElaCompliance(
 
   const teacherProvided = !!rubricText && rubricText.trim().length > 0;
 
-  // Parse criterion names from the rubric text. We look for lines that
-  // appear to name a criterion (bullet, dash, numbered, or "Name:" forms).
-  const expectedCriteria: string[] = [];
-  if (teacherProvided) {
-    const lines = rubricText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    for (const line of lines) {
-      const m =
-        line.match(/^\s*[-*•]\s+([^:–-]{2,80})(?:\s*[:–-].*)?$/) ||
-        line.match(/^\s*\d+[.)]\s+([^:–-]{2,80})(?:\s*[:–-].*)?$/) ||
-        line.match(/^([A-Z][A-Za-z &/]{2,60})\s*[:–-]\s+/);
-      if (m && m[1]) {
-        const name = m[1].trim();
-        if (name.length >= 2 && name.length <= 80) expectedCriteria.push(name);
-      }
-    }
-  }
+  const parsedRubric = parseRubricCriteria(rubricText);
+  const expectedCriteria = teacherProvided && parsedRubric.status === "valid"
+    ? parsedRubric.criteria.map((criterion) => criterion.name)
+    : [];
 
   const normalize = (s: string) =>
     String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -508,9 +498,7 @@ function buildElaCompliance(
   if (!teacherProvided) {
     status = "default";
   } else if (expectedCriteria.length === 0) {
-    // Teacher provided rubric text we couldn't parse into criteria — treat
-    // as custom if AI returned breakdown, otherwise mixed.
-    status = actualCriteria.length > 0 ? "custom" : "mixed";
+    status = "mixed";
   } else {
     const extra = actualNorm.filter((n) => !expectedNorm.includes(n));
     const missing = expectedNorm.filter((n) => !actualNorm.includes(n));
@@ -539,6 +527,65 @@ function buildElaCompliance(
       missing: expectedCriteria.filter((c) => !actualNorm.includes(normalize(c))),
     },
   };
+}
+
+function ParsedRubricPreview({
+  parsed,
+  confirmed,
+  onConfirm,
+}: {
+  parsed: ReturnType<typeof parseRubricCriteria>;
+  confirmed: boolean;
+  onConfirm: () => void;
+}) {
+  if (parsed.status === "empty") return null;
+
+  const valid = parsed.status === "valid";
+  return (
+    <Card className={`border ${valid ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5"}`}>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            {valid ? <CheckCircle2 className="w-4 h-4 text-primary mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-destructive mt-0.5" />}
+            <div>
+              <p className="text-sm font-medium">
+                {valid ? `We extracted ${parsed.criteria.length} rubric criteria` : "We couldn't read your rubric"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {valid ? "Confirm these criteria before grading." : "Please paste the criteria directly, or upload a file with a clearly structured rubric table."}
+              </p>
+            </div>
+          </div>
+          {valid && (
+            <Button size="sm" variant={confirmed ? "secondary" : "default"} onClick={onConfirm}>
+              {confirmed ? <Check className="w-4 h-4 mr-1" /> : null}
+              {confirmed ? "Confirmed" : "Confirm rubric"}
+            </Button>
+          )}
+        </div>
+        {parsed.issues.length > 0 && (
+          <div className="text-xs text-muted-foreground space-y-1">
+            {parsed.issues.map((issue, index) => <p key={index}>{issue}</p>)}
+          </div>
+        )}
+        {valid && (
+          <div className="rounded-md border bg-background overflow-hidden">
+            {parsed.criteria.map((criterion, index) => (
+              <div key={`${criterion.name}-${index}`} className="grid grid-cols-[1fr_auto] gap-3 p-3 text-sm border-b last:border-b-0">
+                <div>
+                  <p className="font-medium">{criterion.name}</p>
+                  {criterion.description && <p className="text-xs text-muted-foreground mt-0.5">{criterion.description}</p>}
+                </div>
+                <Badge variant="outline" className="h-fit">
+                  {criterion.points ? `${criterion.points} pts` : `${criterion.weight}%`}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 
@@ -1034,6 +1081,8 @@ export default function GradePapers() {
   const [elaRubricFileLoading, setElaRubricFileLoading] = useState(false);
   const [elaRubricTipsOpen, setElaRubricTipsOpen] = useState(false);
   const [elaResults, setElaResults] = useState<Map<string, ELAGradeResponse>>(new Map());
+  const [confirmedElaRubricSignature, setConfirmedElaRubricSignature] = useState("");
+  const [confirmedMathRubricSignature, setConfirmedMathRubricSignature] = useState("");
   const elaRubricFileInputRef = useRef<HTMLInputElement>(null);
 
   // Grading Criteria accordion state (collapsed by default)
@@ -1181,6 +1230,13 @@ export default function GradePapers() {
     return parts.join("\n\n");
   }, [answerKeyExtractedText, form.answer_key]);
 
+  const parsedMathRubric = useMemo(() => parseRubricCriteria(rubricFinalText), [rubricFinalText]);
+  const parsedElaRubric = useMemo(() => parseRubricCriteria(elaRubricText), [elaRubricText]);
+  const mathRubricSig = useMemo(() => rubricSignature(parsedMathRubric), [parsedMathRubric]);
+  const elaRubricSig = useMemo(() => rubricSignature(parsedElaRubric), [parsedElaRubric]);
+  const mathRubricConfirmed = parsedMathRubric.status === "valid" && confirmedMathRubricSignature === mathRubricSig;
+  const elaRubricConfirmed = parsedElaRubric.status === "valid" && confirmedElaRubricSignature === elaRubricSig;
+
   // Warning: Rubric file uploaded but no text extracted
   const rubricExtractionWarning = useMemo(() => {
     const hasRubricFiles = rubricUpload.files.some(f => f.status === 'ready');
@@ -1196,24 +1252,22 @@ export default function GradePapers() {
       ? studentGroups.map(g => g.extractedText).join('\n\n')
       : studentUpload.combinedText;
     
-    return parseRubricForPoints(rubricFinalText, answerKeyTextCombined, studentWorkText);
-  }, [rubricFinalText, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
+    const validatedRubricText = parsedMathRubric.status === "valid" ? formatParsedRubricForGrading(parsedMathRubric) : rubricFinalText;
+    return parseRubricForPoints(validatedRubricText, answerKeyTextCombined, studentWorkText);
+  }, [rubricFinalText, parsedMathRubric, answerKeyTextCombined, studentGroups, studentUpload.combinedText]);
 
   // Effective total points: manual override > parsed > default to 20 (never null when rubric detected)
   const effectiveTotalPoints = useMemo(() => {
     if (manualTotalPoints && manualTotalPoints > 0) return manualTotalPoints;
     if (parsedRubricMeta.totalPoints) return parsedRubricMeta.totalPoints;
-    // Default to 20 when rubric is detected but points couldn't be parsed
-    // This prevents blocking the grading flow
-    if (rubricDetected) return 20;
     return null;
-  }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
+  }, [manualTotalPoints, parsedRubricMeta.totalPoints]);
   
   // Track if total points were inferred vs parsed
   const totalPointsInferred = useMemo(() => {
     if (manualTotalPoints && manualTotalPoints > 0) return false;
     if (parsedRubricMeta.totalPoints) return false;
-    return rubricDetected; // Inferred when rubric exists but no points found
+    return false;
   }, [manualTotalPoints, parsedRubricMeta.totalPoints, rubricDetected]);
 
   // Determine if scoring is valid based on parsed rubric or manual settings
@@ -1748,6 +1802,36 @@ Students must show their work for full credit.`;
       return;
     }
 
+    if (gradingSubject === "ela" && elaRubricText.trim()) {
+      if (parsedElaRubric.status !== "valid") {
+        toast({
+          title: "We couldn't read your rubric",
+          description: "Please paste the criteria directly, or upload a file with a clearly structured rubric table.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!elaRubricConfirmed) {
+        toast({ title: "Confirm extracted rubric", description: "Review the parsed criteria and click Confirm rubric before grading." });
+        return;
+      }
+    }
+
+    if (gradingSubject === "math" && rubricFinalText.trim()) {
+      if (parsedMathRubric.status !== "valid") {
+        toast({
+          title: "We couldn't read your rubric",
+          description: "Please paste the criteria directly, or upload a file with a clearly structured rubric table.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!mathRubricConfirmed) {
+        toast({ title: "Confirm extracted rubric", description: "Review the parsed criteria and click Confirm rubric before grading." });
+        return;
+      }
+    }
+
     // Check if grouping needs review (low confidence with multiple students)
     if (groupingResult && groupingResult.confidence === 'low' && studentGroups.length > 1) {
       // Show review modal instead of grading directly
@@ -1827,7 +1911,7 @@ Students must show their work for full credit.`;
           body: {
             student_work: group.extractedText,
             student_name: group.studentName,
-            rubric_text: elaRubricText.trim() || undefined,
+            rubric_text: elaRubricText.trim() ? formatParsedRubricForGrading(parsedElaRubric) : undefined,
             grade_level: form.grade_level || undefined,
             assignment_type: "Writing",
             assignment_doc_text: assignmentContextCombined || undefined,
@@ -1907,7 +1991,7 @@ Students must show their work for full credit.`;
 
     // Build effective rubric: only use if we're in scoring mode
     const effectiveRubric = isScoring
-      ? (rubricFinalText || (detectRubricInText(studentUpload.combinedText) ? studentUpload.combinedText : ""))
+      ? (parsedMathRubric.status === "valid" ? formatParsedRubricForGrading(parsedMathRubric) : "")
       : "";
     
     console.log('[GradePapers] Grading with mode:', gradingMode, 'isScoring:', isScoring, {
@@ -2787,6 +2871,11 @@ Students must show their work for full credit.`;
                   </p>
                 </TabsContent>
               </Tabs>
+              <ParsedRubricPreview
+                parsed={parsedElaRubric}
+                confirmed={elaRubricConfirmed}
+                onConfirm={() => setConfirmedElaRubricSignature(elaRubricSig)}
+              />
               
               {/* Rubric Tips - Collapsible */}
               <Collapsible open={elaRubricTipsOpen} onOpenChange={setElaRubricTipsOpen}>
@@ -2942,6 +3031,12 @@ Students must show their work for full credit.`;
                       </p>
                     </div>
                   )}
+
+                  <ParsedRubricPreview
+                    parsed={parsedMathRubric}
+                    confirmed={mathRubricConfirmed}
+                    onConfirm={() => setConfirmedMathRubricSignature(mathRubricSig)}
+                  />
 
                   {/* DEV DEBUG: Rubric Detection Panel */}
                   {process.env.NODE_ENV === 'development' && (rubricUpload.files.length > 0 || rubricFinalText.length > 0) && (
