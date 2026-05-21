@@ -50,6 +50,7 @@ import {
   BookOpen,
   Lightbulb,
   PenLine,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Collapsible,
@@ -1740,6 +1741,36 @@ Students must show their work for full credit.`;
     if (studentGroups.length === 0) {
       toast({ title: "No student work", description: "Upload files first.", variant: "destructive" });
       return;
+    }
+
+    if (gradingSubject === "ela" && elaRubricText.trim()) {
+      if (parsedElaRubric.status !== "valid") {
+        toast({
+          title: "We couldn't read your rubric",
+          description: "Please paste the criteria directly, or upload a file with a clearly structured rubric table.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!elaRubricConfirmed) {
+        toast({ title: "Confirm extracted rubric", description: "Review the parsed criteria and click Confirm rubric before grading." });
+        return;
+      }
+    }
+
+    if (gradingSubject === "math" && rubricFinalText.trim()) {
+      if (parsedMathRubric.status !== "valid") {
+        toast({
+          title: "We couldn't read your rubric",
+          description: "Please paste the criteria directly, or upload a file with a clearly structured rubric table.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!mathRubricConfirmed) {
+        toast({ title: "Confirm extracted rubric", description: "Review the parsed criteria and click Confirm rubric before grading." });
+        return;
+      }
     }
 
     // Check if grouping needs review (low confidence with multiple students)
