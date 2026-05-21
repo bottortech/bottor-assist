@@ -2654,7 +2654,7 @@ Students must show their work for full credit.`;
                   <input
                     ref={elaRubricFileInputRef}
                     type="file"
-                    accept=".txt,.doc,.docx,.pdf"
+                    accept=".txt,.docx,.pdf"
                     onChange={handleElaRubricFileSelect}
                     className="hidden"
                     id="ela-rubric-file-upload"
@@ -2669,7 +2669,7 @@ Students must show their work for full credit.`;
                       <Upload className="w-8 h-8 text-purple-400 mb-2" />
                       <span className="text-sm font-medium text-foreground">Upload Rubric File</span>
                       <span className="text-xs text-muted-foreground mt-1">
-                        Accepts .txt, .doc, .docx, .pdf
+                        Accepts .txt, .docx, .pdf (text-based)
                       </span>
                     </label>
                   ) : (
