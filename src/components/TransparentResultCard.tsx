@@ -33,6 +33,7 @@ import {
   Lock,
   Search,
 } from "lucide-react";
+import { RubricComplianceCard, RubricComplianceData } from "@/components/RubricComplianceCard";
 
 interface QuestionBreakdown {
   question_number: number;
@@ -58,6 +59,7 @@ interface GradingResult {
   areas_for_improvement: string;
   feedback_paragraph: string;
   question_breakdown?: QuestionBreakdown[];
+  rubric_compliance?: RubricComplianceData;
 }
 
 interface TransparentResultCardProps {
@@ -243,6 +245,11 @@ export function TransparentResultCard({
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {/* ===== Rubric Compliance (audit of which criteria the AI actually used) ===== */}
+      {result.rubric_compliance && (
+        <RubricComplianceCard compliance={result.rubric_compliance} />
       )}
 
       {/* ===== Document Preview Toggle ===== */}

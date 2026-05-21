@@ -455,6 +455,14 @@ interface GradingResult {
   areas_for_improvement: string;
   feedback_paragraph: string;
   question_breakdown?: QuestionBreakdown[];
+  rubric_compliance?: {
+    status: 'custom' | 'mixed' | 'default';
+    rubric_source?: 'teacher' | 'auto-generated';
+    criteria_used: { name: string; source: 'teacher' | 'default' }[];
+    expected_criteria?: string[];
+    actual_criteria?: string[];
+    mismatches?: { extra: string[]; missing: string[] };
+  };
 }
 
 interface StudentGroup {
@@ -1880,6 +1888,7 @@ Students must show their work for full credit.`;
             strengths: data.strengths || "Not provided",
             areas_for_improvement: data.areas_for_improvement || "Not provided",
             feedback_paragraph: data.feedback_paragraph || "Not provided",
+            rubric_compliance: data.rubric_compliance,
           },
         };
       } catch (error) {

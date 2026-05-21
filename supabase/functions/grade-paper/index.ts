@@ -961,6 +961,56 @@ function normalizeGradingResult(result: Record<string, unknown>, rubric: ParsedR
     }
   }
 
+  // ============================================================
+  // RUBRIC COMPLIANCE — deterministic, server-computed audit of
+  // which criteria the AI actually graded against vs. which came
+  // from the teacher's rubric. Makes AI rubric behavior auditable.
+  // ============================================================
+  const normalize = (s: string) =>
+    String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  const expectedCriteria = rubric.criteria.map((c) => c.name);
+  const expectedNorm = expectedCriteria.map(normalize);
+
+  const aiBreakdown =
+    (result.rubric_breakdown as Array<{ criterion?: string }> | undefined) || [];
+  const actualCriteria = aiBreakdown
+    .map((b) => String(b?.criterion || "").trim())
+    .filter(Boolean);
+  const actualNorm = actualCriteria.map(normalize);
+
+  let complianceStatus: "custom" | "mixed" | "default";
+  if (rubric.source === "auto-generated") {
+    complianceStatus = "default";
+  } else {
+    const extra = actualNorm.filter((n) => !expectedNorm.includes(n));
+    const missing = expectedNorm.filter((n) => !actualNorm.includes(n));
+    complianceStatus =
+      actualNorm.length > 0 && extra.length === 0 && missing.length === 0
+        ? "custom"
+        : "mixed";
+  }
+
+  const criteriaUsedList = (actualCriteria.length > 0 ? actualCriteria : expectedCriteria).map(
+    (name) => {
+      const fromTeacher =
+        rubric.source === "teacher" && expectedNorm.includes(normalize(name));
+      return { name, source: fromTeacher ? "teacher" : "default" };
+    },
+  );
+
+  (result as any).rubric_compliance = {
+    status: complianceStatus,
+    rubric_source: rubric.source,
+    criteria_used: criteriaUsedList,
+    expected_criteria: expectedCriteria,
+    actual_criteria: actualCriteria,
+    mismatches: {
+      extra: actualCriteria.filter((c) => !expectedNorm.includes(normalize(c))),
+      missing: expectedCriteria.filter((c) => !actualNorm.includes(normalize(c))),
+    },
+  };
+
   return result;
 }
 
