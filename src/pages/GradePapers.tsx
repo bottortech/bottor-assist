@@ -83,6 +83,7 @@ import {
 } from "@/components/ScoringOptionsSection";
 import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import { TransparentResultCard } from "@/components/TransparentResultCard";
+import { RubricComplianceCard, type RubricComplianceData } from "@/components/RubricComplianceCard";
 import type { ELAGradeResponse } from "@/types/elaGrading";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
 import { supabase } from "@/integrations/supabase/client";
@@ -464,6 +465,83 @@ interface GradingResult {
     mismatches?: { extra: string[]; missing: string[] };
   };
 }
+
+/**
+ * Build RubricComplianceData for ELA results from the teacher-provided
+ * rubric text (if any) and the AI's returned criterion_breakdown.
+ * Mirrors the deterministic logic used by grade-paper on the server.
+ */
+function buildElaCompliance(
+  rubricText: string,
+  result: ELAGradeResponse,
+): RubricComplianceData | null {
+  const breakdown = result.criterion_breakdown ?? [];
+  const actualCriteria = breakdown
+    .map((b) => String(b?.criterion ?? "").trim())
+    .filter(Boolean);
+
+  const teacherProvided = !!rubricText && rubricText.trim().length > 0;
+
+  // Parse criterion names from the rubric text. We look for lines that
+  // appear to name a criterion (bullet, dash, numbered, or "Name:" forms).
+  const expectedCriteria: string[] = [];
+  if (teacherProvided) {
+    const lines = rubricText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      const m =
+        line.match(/^\s*[-*•]\s+([^:–-]{2,80})(?:\s*[:–-].*)?$/) ||
+        line.match(/^\s*\d+[.)]\s+([^:–-]{2,80})(?:\s*[:–-].*)?$/) ||
+        line.match(/^([A-Z][A-Za-z &/]{2,60})\s*[:–-]\s+/);
+      if (m && m[1]) {
+        const name = m[1].trim();
+        if (name.length >= 2 && name.length <= 80) expectedCriteria.push(name);
+      }
+    }
+  }
+
+  const normalize = (s: string) =>
+    String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const expectedNorm = expectedCriteria.map(normalize);
+  const actualNorm = actualCriteria.map(normalize);
+
+  let status: "custom" | "mixed" | "default";
+  if (!teacherProvided) {
+    status = "default";
+  } else if (expectedCriteria.length === 0) {
+    // Teacher provided rubric text we couldn't parse into criteria — treat
+    // as custom if AI returned breakdown, otherwise mixed.
+    status = actualCriteria.length > 0 ? "custom" : "mixed";
+  } else {
+    const extra = actualNorm.filter((n) => !expectedNorm.includes(n));
+    const missing = expectedNorm.filter((n) => !actualNorm.includes(n));
+    status =
+      actualNorm.length > 0 && extra.length === 0 && missing.length === 0
+        ? "custom"
+        : "mixed";
+  }
+
+  const namesForList = actualCriteria.length > 0 ? actualCriteria : expectedCriteria;
+  const criteriaUsed = namesForList.map((name) => {
+    const fromTeacher =
+      teacherProvided &&
+      (expectedNorm.length === 0 || expectedNorm.includes(normalize(name)));
+    return { name, source: (fromTeacher ? "teacher" : "default") as "teacher" | "default" };
+  });
+
+  return {
+    status,
+    rubric_source: teacherProvided ? "teacher" : "auto-generated",
+    criteria_used: criteriaUsed,
+    expected_criteria: expectedCriteria,
+    actual_criteria: actualCriteria,
+    mismatches: {
+      extra: actualCriteria.filter((c) => !expectedNorm.includes(normalize(c))),
+      missing: expectedCriteria.filter((c) => !actualNorm.includes(normalize(c))),
+    },
+  };
+}
+
+
 
 interface StudentGroup {
   studentName: string;
@@ -3211,12 +3289,19 @@ Students must show their work for full credit.`;
             )}
 
             {/* ELA-Specific Results Display */}
-            {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (
-              <ELAResultsDisplay
-                result={elaResults.get(currentGroup.studentName)!}
-                onCopy={handleCopy}
-              />
-            )}
+            {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (() => {
+              const elaResult = elaResults.get(currentGroup.studentName)!;
+              const compliance = buildElaCompliance(elaRubricText, elaResult);
+              return (
+                <>
+                  {compliance && <RubricComplianceCard compliance={compliance} />}
+                  <ELAResultsDisplay
+                    result={elaResult}
+                    onCopy={handleCopy}
+                  />
+                </>
+              );
+            })()}
 
             {/* Math Results — Transparent Evidence-Based View */}
             {gradingSubject === "math" && (
