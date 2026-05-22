@@ -3397,7 +3397,10 @@ Students must show their work for full credit.`;
             {/* ELA-Specific Results Display */}
             {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (() => {
               const elaResult = elaResults.get(currentGroup.studentName)!;
-              const compliance = buildElaCompliance(elaRubricText, elaResult);
+              const baseCompliance = buildElaCompliance(elaRubricText, elaResult);
+              const compliance = baseCompliance
+                ? { ...baseCompliance, consistency_check: (elaResult as any).consistency_check }
+                : null;
               return (
                 <>
                   {compliance && <RubricComplianceCard compliance={compliance} />}
