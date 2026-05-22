@@ -430,8 +430,6 @@ function parseRubricText(text: string): ParsedRubric | null {
   };
 }
 
-  return null;
-}
 
 /**
  * Analyze rubric text to determine if "show your work" is required
