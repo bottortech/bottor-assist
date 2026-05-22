@@ -378,24 +378,24 @@ function normalizeELAResult(
     possible,
     strengths: strengths.slice(0, 5), // Max 5 strengths
     areas_for_improvement: areasForImprovement.slice(0, 5), // Max 5 areas
-    next_step: typeof result.next_step === 'string' 
-      ? result.next_step 
+    next_step: typeof result.next_step === 'string'
+      ? result.next_step
       : "Continue practicing your writing skills.",
-    confidence: typeof result.confidence === 'number' 
+    confidence: typeof result.confidence === 'number'
       ? Math.min(100, Math.max(0, result.confidence))
       : 70,
-    criterion_breakdown: Array.isArray(result.criterion_breakdown) 
-      ? result.criterion_breakdown 
+    criterion_breakdown: breakdown.length > 0 ? breakdown : undefined,
+    teacher_notes: typeof result.teacher_notes === 'string'
+      ? result.teacher_notes
       : undefined,
-    teacher_notes: typeof result.teacher_notes === 'string' 
-      ? result.teacher_notes 
-      : undefined,
-    rubric_used: rubricText?.trim() 
+    consistency_check: {
+      passed: consistency.adjustments.length === 0,
+      adjustments: consistency.adjustments,
+    },
+    rubric_used: teacherProvided
       ? {
-          scale: typeof result.possible === 'number' ? result.possible : 100,
-          criteria_count: Array.isArray(result.criterion_breakdown) 
-            ? result.criterion_breakdown.length 
-            : 6,
+          scale: possible,
+          criteria_count: breakdown.length || expectedCriteriaNames.length,
           source: "teacher",
         }
       : {
@@ -405,3 +405,121 @@ function normalizeELAResult(
         },
   };
 }
+
+// =============================================================================
+// Shared validators (also inlined in grade-paper)
+// =============================================================================
+
+function normalizeName(s: string): string {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Lightweight rubric-criterion-name extractor. Mirrors the client-side
+ * parser in src/lib/rubricParser.ts but only extracts names for the
+ * validator. Conservative: returns [] if it can't find structured criteria.
+ */
+function extractRubricCriterionNames(text: string): string[] {
+  if (!text?.trim()) return [];
+  const META = new Set([
+    "grade level","format","subject","length","date","period","class","teacher",
+    "student","name","assignment","prompt","instructions","due date","course",
+    "standard","objective","materials","total","total points","total score",
+    "score","points","points possible","possible points","out of","grade","overall",
+  ]);
+  const isMeta = (n: string) => {
+    const nn = normalizeName(n);
+    for (const m of META) if (nn === m || nn.startsWith(m + " ")) return true;
+    return false;
+  };
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const patterns: RegExp[] = [
+    /^([A-Za-z][A-Za-z0-9 &\/\-]{1,80}?)\s*[:\-–(]\s*(\d{1,3})\s*(pts?|points?|%)/i,
+    /^(\d{1,3})\s*(pts?|points?)\s*[:\-–]\s*([A-Za-z][A-Za-z0-9 &\/\-]{1,80})/i,
+  ];
+  for (const raw of lines) {
+    const stripped = raw.replace(/^[-*•\d.)\s]+/, "").trim();
+    for (const p of patterns) {
+      const m = stripped.match(p);
+      if (!m) continue;
+      const rawName = /^\d/.test(m[1]) ? m[3] : m[1];
+      const name = String(rawName || "").trim();
+      if (!name || name.length < 2 || name.length > 90) break;
+      if (isMeta(name)) break;
+      const key = normalizeName(name);
+      if (seen.has(key)) break;
+      seen.add(key);
+      names.push(name);
+      break;
+    }
+  }
+  return names;
+}
+
+const TOPIC_SYNONYMS: Record<string, string[]> = {
+  conventions: ["comma","semicolon","grammar","spelling","punctuation","capitalization","run-on","run on","splice","apostrophe","tense","subject-verb","verb agreement","mechanics"],
+  organization: ["transition","structure","flow","introduction","conclusion","paragraph","sequence","order","cohesion"],
+  ideas: ["thesis","claim","evidence","support","development","detail","focus","argument"],
+  content: ["thesis","claim","evidence","support","development","detail","focus","argument"],
+  thesis: ["thesis","claim","central claim"],
+  evidence: ["quote","citation","textual evidence","support","reference"],
+  analysis: ["analysis","reasoning","explanation","interpretation","insight"],
+  voice: ["tone","audience","engagement","personality"],
+  word: ["vocabulary","word choice","diction","repetition","precise","language"],
+  fluency: ["sentence variety","sentence structure","rhythm","choppy"],
+  accuracy: ["incorrect","wrong","error","mistake","miscalculation","calculation error"],
+  work: ["steps","setup","process","method","show your work","reasoning shown"],
+  completeness: ["missing","skipped","incomplete","unfinished"],
+};
+
+function topicsForCriterion(name: string): string[] {
+  const n = normalizeName(name);
+  const out = new Set<string>();
+  if (n) out.add(n);
+  for (const key of Object.keys(TOPIC_SYNONYMS)) {
+    if (n.includes(key)) TOPIC_SYNONYMS[key].forEach((s) => out.add(s.toLowerCase()));
+  }
+  // Each word of the criterion name (>=4 chars) as a fallback signal
+  n.split(/\s+/).filter((w) => w.length >= 4).forEach((w) => out.add(w));
+  return Array.from(out);
+}
+
+interface ConsistencyAdjustment {
+  criterion: string;
+  matched_note: string;
+  original_earned: number;
+  adjusted_earned: number;
+}
+
+function runConsistencyCheck(
+  breakdown: any[],
+  areas: string[],
+): { correctedBreakdown: any[]; adjustments: ConsistencyAdjustment[] } {
+  const adjustments: ConsistencyAdjustment[] = [];
+  const corrected = (breakdown || []).map((item) => {
+    const earnedField = "earned_points" in item ? "earned_points" : "earned";
+    const possibleField = "possible_points" in item ? "possible_points" : "possible";
+    const earned = Number(item[earnedField]) || 0;
+    const possible = Number(item[possibleField]) || 0;
+    if (possible <= 0 || earned < possible) return item;
+    const name = String(item.criterion || "");
+    const topics = topicsForCriterion(name);
+    const flagged = (areas || []).find((a) => {
+      const text = String(a).toLowerCase();
+      return topics.some((t) => t.length >= 3 && text.includes(t));
+    });
+    if (!flagged) return item;
+    const adjustedEarned = Math.max(0, earned - 1);
+    adjustments.push({
+      criterion: name,
+      matched_note: String(flagged),
+      original_earned: earned,
+      adjusted_earned: adjustedEarned,
+    });
+    return { ...item, [earnedField]: adjustedEarned };
+  });
+  return { correctedBreakdown: corrected, adjustments };
+}
+
