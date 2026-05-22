@@ -4,8 +4,9 @@ import {
   normalizeToPoints,
   formatParsedRubricForGrading,
 } from "@/lib/rubricParser";
+import { fixtures } from "./fixtures/rubrics";
 
-describe("shared rubricParser", () => {
+describe("shared rubricParser — targeted cases", () => {
   it("parses the Maya Chen 100-pt rubric (points only, total 100)", () => {
     const text = `Rubric
 Total Points: 100
@@ -24,18 +25,6 @@ Total Points: 100
     expect(formatted).not.toMatch(/%/);
   });
 
-  it("handles a 50-point rubric end-to-end", () => {
-    const text = `Rubric — Total: 50 points
-- Accuracy: 25 pts
-- Reasoning: 15 pts
-- Presentation: 10 pts`;
-    const parsed = parseRubricCriteria(text);
-    expect(parsed.totalPoints).toBe(50);
-    expect(parsed.criteria).toHaveLength(3);
-    const formatted = formatParsedRubricForGrading(parsed);
-    expect(formatted).toContain("Total Points: 50");
-  });
-
   it("normalizes percentages into points against the total", () => {
     const text = `Rubric
 Total Points: 100
@@ -50,54 +39,69 @@ Total Points: 100
     expect(formatted).not.toMatch(/%/);
   });
 
-  it("supports decimal weights (12.5% / 22.5%)", () => {
-    const text = `Rubric
-- Ideas: 12.5%
-- Voice: 22.5%
-- Content: 65%`;
-    const parsed = parseRubricCriteria(text);
-    expect(parsed.criteria).toHaveLength(3);
-    expect(parsed.criteria[0].weight).toBeCloseTo(12.5);
-    expect(parsed.criteria[1].weight).toBeCloseTo(22.5);
+  it("never serializes percentages to the model prompt", () => {
+    for (const f of fixtures) {
+      if (f.expected.status !== "valid") continue;
+      const formatted = formatParsedRubricForGrading(parseRubricCriteria(f.input));
+      expect(formatted, `fixture ${f.id}`).not.toMatch(/\d+%/);
+    }
   });
+});
 
-  it("detects bonus / extra-credit lines and excludes them from total", () => {
-    const text = `Rubric
-- Content: 80 pts
-- Style: 20 pts
-- Bonus: 10 pts — Creative use of imagery`;
-    const parsed = parseRubricCriteria(text);
-    const scoring = parsed.criteria.filter((c) => !c.isBonus);
-    const bonus = parsed.criteria.filter((c) => c.isBonus);
-    expect(scoring).toHaveLength(2);
-    expect(bonus).toHaveLength(1);
-    expect(parsed.totalPoints).toBe(100); // does not include bonus
-    expect(parsed.notices.some((n) => n.kind === "bonus_detected")).toBe(true);
-    const formatted = formatParsedRubricForGrading(parsed);
-    expect(formatted).toContain("Bonus opportunities");
-  });
+describe("shared rubricParser — fixtures", () => {
+  for (const fixture of fixtures) {
+    it(`[${fixture.id}] ${fixture.description}`, () => {
+      const parsed = parseRubricCriteria(fixture.input);
+      const { expected } = fixture;
 
-  it("flags ambiguous mapping for 5-level rubrics", () => {
-    const text = `Rubric — Levels: 5 = Mastery, 4 = Exceeds, 3 = Meets, 2 = Approaching, 1 = Beginning
-- Ideas: 25 pts
-- Voice: 25 pts
-- Conventions: 25 pts
-- Organization: 25 pts`;
-    const parsed = parseRubricCriteria(text);
-    expect(parsed.hasPerformanceLevels).toBe(true);
-    expect(parsed.levelMappingAmbiguous).toBe(true);
-    expect(parsed.notices.some((n) => n.kind === "level_mapping_ambiguous")).toBe(true);
-  });
+      expect(parsed.status).toBe(expected.status);
 
-  it("supports 2-criterion and ~10-criterion rubrics", () => {
-    const two = parseRubricCriteria(`- Ideas: 50 pts\n- Style: 50 pts`);
-    expect(two.criteria).toHaveLength(2);
-    expect(two.totalPoints).toBe(100);
+      // criteria names + bonus flags
+      expect(parsed.criteria.map((c) => c.name)).toEqual(
+        expected.criteria.map((c) => c.name)
+      );
+      expect(parsed.criteria.length).toBe(expected.criteria.length);
 
-    const ten = parseRubricCriteria(
-      Array.from({ length: 10 }, (_, i) => `- Criterion${i + 1} item: 10 pts`).join("\n"),
-    );
-    expect(ten.criteria).toHaveLength(10);
-    expect(ten.totalPoints).toBe(100);
-  });
+      for (let i = 0; i < expected.criteria.length; i++) {
+        const got = parsed.criteria[i];
+        const want = expected.criteria[i];
+        if (typeof want.points === "number") {
+          expect(got.points, `${fixture.id} crit ${i} points`).toBe(want.points);
+        }
+        if (typeof want.weight === "number") {
+          expect(got.weight, `${fixture.id} crit ${i} weight`).toBeCloseTo(
+            want.weight,
+            2
+          );
+        }
+        expect(Boolean(got.isBonus), `${fixture.id} crit ${i} isBonus`).toBe(
+          Boolean(want.isBonus)
+        );
+      }
+
+      // totals
+      expect(parsed.totalPoints).toBe(expected.totalPoints);
+      if (expected.totalSource) {
+        expect(parsed.totalSource).toBe(expected.totalSource);
+      }
+      if (typeof expected.hasPerformanceLevels === "boolean") {
+        expect(parsed.hasPerformanceLevels).toBe(expected.hasPerformanceLevels);
+      }
+      if (typeof expected.levelMappingAmbiguous === "boolean") {
+        expect(parsed.levelMappingAmbiguous).toBe(expected.levelMappingAmbiguous);
+      }
+      if (expected.noticeKinds) {
+        const got = parsed.notices.map((n) => n.kind);
+        for (const kind of expected.noticeKinds) {
+          expect(got, `${fixture.id} missing notice ${kind}`).toContain(kind);
+        }
+      }
+
+      // Unparseable inputs must fail gracefully — never partial.
+      if (expected.status !== "valid") {
+        expect(parsed.criteria).toHaveLength(0);
+        expect(parsed.totalSource).toBe("unknown");
+      }
+    });
+  }
 });
