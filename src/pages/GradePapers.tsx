@@ -1973,6 +1973,7 @@ Students must show their work for full credit.`;
             grade_level: form.grade_level || undefined,
             assignment_type: "Writing",
             assignment_doc_text: assignmentContextCombined || undefined,
+            source_material_filenames: assignmentContextFileNames.length ? assignmentContextFileNames : undefined,
           },
         });
 
