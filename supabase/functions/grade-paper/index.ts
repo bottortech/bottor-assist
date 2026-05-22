@@ -205,6 +205,14 @@ serve(async (req) => {
       // If we detect a weighted 100-point rubric with 4-level performance descriptors,
       // enforce: 4=100%, 3=75%, 2=50%, 1=25% for each category weight.
       gradingResult = forceCorrectPerformanceLevelMapping(gradingResult, parsedRubric, rubric);
+
+      // RUBRIC FIDELITY: strip any criterion in the AI response whose name
+      // doesn't appear in the teacher-provided rubric. Then re-sync totals.
+      gradingResult = enforceCriterionWhitelist(gradingResult, parsedRubric);
+
+      // SELF-CONSISTENCY: detect full-marks-with-improvement contradictions
+      // and auto-deduct 1 point on the affected criterion.
+      gradingResult = runConsistencyCheckOnResult(gradingResult, parsedRubric);
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
       // Fallback result with default scoring
@@ -221,8 +229,10 @@ serve(async (req) => {
         feedback_paragraph: "Please review this work and provide personalized feedback.",
         draft_feedback: "Please review this work and provide personalized feedback.",
         teacher_notes: ["AI response could not be parsed. Manual grading recommended."],
+        consistency_check: { passed: true, adjustments: [] },
       };
     }
+
 
     console.log("[grade-paper] Grading complete, score:", gradingResult.score_suggestion);
 
