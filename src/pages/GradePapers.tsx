@@ -2409,18 +2409,69 @@ Students must show their work for full credit.`;
         {/* One-time onboarding hint (dismissible) */}
         <OnboardingHint />
 
-        {/* Detected Subject Badge (shown when subject auto-detected) */}
-        {detectedSubjectResult && detectedSubjectResult.subject !== 'General' && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Detected subject:</span>
-            <Badge variant="outline" className="font-medium">
-              {detectedSubjectResult.subject}
-            </Badge>
-            {detectedSubjectResult.confidence.level === 'high' && (
-              <CheckCircle2 className="w-4 h-4 text-primary" />
-            )}
-          </div>
-        )}
+        {/* ===== SUBJECT SELECTOR (top of flow) ===== */}
+        <Card className="border border-border bg-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              Subject
+              {userSelectedSubject === null && detectedSubjectResult && detectedSubjectResult.subject !== 'General' && (
+                <Badge variant="outline" className="ml-2 text-xs font-normal">
+                  Auto-detected: {detectedSubjectResult.subject}
+                </Badge>
+              )}
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Choose the subject so Bottor can tailor the grading experience. You can change this anytime.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setUserSelectedSubject("ela")}
+                className={`text-left rounded-[10px] border p-4 transition-all ${
+                  gradingSubject === "ela"
+                    ? "border-purple-400 bg-purple-50/60 dark:bg-purple-900/20 ring-2 ring-purple-300/60"
+                    : "border-border hover:border-purple-300 hover:bg-purple-50/30 dark:hover:bg-purple-900/10"
+                }`}
+                aria-pressed={gradingSubject === "ela"}
+              >
+                <div className="flex items-center gap-2">
+                  <PenLine className="w-4 h-4 text-purple-500" />
+                  <span className="font-medium text-sm">ELA / Writing</span>
+                  {gradingSubject === "ela" && <CheckCircle2 className="w-4 h-4 text-purple-500 ml-auto" />}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  Essays, paragraphs, short responses. Purple ELA rubric flow with feedback-only or scored grading.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserSelectedSubject("math")}
+                className={`text-left rounded-[10px] border p-4 transition-all ${
+                  gradingSubject === "math"
+                    ? "border-primary/60 bg-primary/5 ring-2 ring-primary/30"
+                    : "border-border hover:border-primary/40 hover:bg-primary/5"
+                }`}
+                aria-pressed={gradingSubject === "math"}
+              >
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  <span className="font-medium text-sm">General Feedback</span>
+                  {gradingSubject === "math" && <CheckCircle2 className="w-4 h-4 text-primary ml-auto" />}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  Math, worksheets, mixed assignments. Use rubrics, answer keys, or auto-scoring.
+                </p>
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-3">
+              Coming soon: Math, Science, Social Studies
+            </p>
+          </CardContent>
+        </Card>
+
 
         {/* ===== STEP 1 · ASSIGNMENT CONTEXT (OPTIONAL) ===== */}
         <Collapsible open={assignmentContextOpen} onOpenChange={handleAssignmentContextOpenChange}>
