@@ -110,7 +110,12 @@ serve(async (req) => {
       assignment_doc_text,
       auto_score_settings,
       quick_rubric_categories,
+      dry_run,
     } = body;
+
+    if (dry_run) {
+      console.log("[grade-paper] DRY RUN — response will not be persisted by caller");
+    }
 
     if (!student_work?.trim()) {
       return new Response(JSON.stringify({ error: "No student work provided" }), {
