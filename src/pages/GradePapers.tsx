@@ -1118,11 +1118,12 @@ export default function GradePapers() {
   const [rubricLocked, setRubricLocked] = useState(false);
   const [detectedRubricSource, setDetectedRubricSource] = useState("");
 
-  // Auto-detected subject state (replaces manual selection)
+  // Subject selection: user-selected wins over auto-detection.
+  // null = no explicit choice yet → fall back to detection (default "math" / General Feedback).
   const [detectedSubjectResult, setDetectedSubjectResult] = useState<SubjectDetectionResult | null>(null);
-  const gradingSubject: GradingSubject = detectedSubjectResult 
-    ? getGradingPipeline(detectedSubjectResult.subject) 
-    : "math";
+  const [userSelectedSubject, setUserSelectedSubject] = useState<GradingSubject | null>(null);
+  const gradingSubject: GradingSubject = userSelectedSubject
+    ?? (detectedSubjectResult ? getGradingPipeline(detectedSubjectResult.subject) : "math");
   
   // ELA-specific state
   const [elaRubricText, setElaRubricText] = useState("");
