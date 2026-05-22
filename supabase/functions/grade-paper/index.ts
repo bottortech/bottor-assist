@@ -587,10 +587,13 @@ HOLISTIC READING (CRITICAL — no fragmentary credit):
 - A response that begins with a misreading and stumbles toward the right answer should reflect BOTH — credit the partial understanding, but score the misreading honestly.
 - Do not cherry-pick moments of partial understanding while ignoring fundamental errors elsewhere.
 ${params.assignmentDocText ? `
-FUNDAMENTAL MISREAD CHECK (run BEFORE assigning criterion scores):
-- Identify the central concept/metaphor/argument of the ASSIGNMENT CONTEXT / source material.
-- Determine whether the student's central claim aligns with that meaning.
-- If the response contradicts the source (e.g., interpreting a story about sentimental value as a story about monetary value), flag this explicitly at the top of teacher_notes as "FUNDAMENTAL MISREAD: <description>" and reflect it in the relevant Analysis/Interpretation criterion score.` : ""}
+FUNDAMENTAL MISREAD VALIDATION (MANDATORY — run BEFORE assigning criterion scores):
+- Before assigning scores, identify the student's central interpretation of the source material. If this central interpretation contradicts the actual meaning of the source, flag it explicitly and reduce Analysis credit accordingly. A correct observation in one paragraph does not redeem a misinterpretation that frames the rest of the response.
+- Identify the central concept/metaphor/argument of the ASSIGNMENT CONTEXT / source material, then identify what the student is mainly arguing the source means or shows across the whole response.
+- Flag fundamental contradictions explicitly, such as interpreting symbolic/sentimental value as monetary value, interpreting a tragic character arc as triumphant, or interpreting satire literally.
+- If the student's central interpretation contradicts the source, begin teacher_notes with "FUNDAMENTAL MISREAD: <description>" and do NOT state that the student accurately identifies the central theme.
+- The relevant Analysis/Reasoning/Interpretation criterion cannot exceed 50% of its possible points when a fundamental misread is present. If the rubric uses a different label, apply this cap to the closest analysis, reading, ideas, or content criterion.
+- A partial rescue elsewhere in the response may be credited in strengths, but it cannot redeem the central misread or remove the Analysis cap.` : ""}
 
 ${
   hasAnswerKey
@@ -747,9 +750,10 @@ TASK:
 Grade this student work using the rubric above. You MUST:
 1. Evaluate each criterion and award points based on evidence in the student work
 ${hasAnswerKey ? "2. Cross-reference answers against the ANSWER KEY for correctness validation" : "2. Evaluate based on rubric criteria and student reasoning"}
-3. Calculate total earned points (sum of all criterion scores)
-4. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
-5. Determine confidence level based on clarity of student work and rubric alignment
+3. When assignment context is present, identify the student's central interpretation before scoring and cap Analysis/Reasoning/Interpretation at 50% if that interpretation fundamentally contradicts the source
+4. Calculate total earned points (sum of all criterion scores)
+5. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
+6. Determine confidence level based on clarity of student work and rubric alignment
 ${shouldEnforceWorkShown ? `6. FOR EACH MATH QUESTION: Check if work is shown. If no work visible but answer correct, apply rubric's "no work" penalty (typically max 60% of question points)` : ""}
 
 OUTPUT FORMAT (STRICT JSON):
