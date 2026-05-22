@@ -67,7 +67,12 @@ serve(async (req) => {
       grade_level,
       assignment_type,
       assignment_doc_text,
+      dry_run,
     } = body;
+
+    if (dry_run) {
+      console.log("[grade-ela] DRY RUN — response will not be persisted by caller");
+    }
 
     if (!student_work?.trim()) {
       return new Response(JSON.stringify({ error: "No student work provided" }), {
