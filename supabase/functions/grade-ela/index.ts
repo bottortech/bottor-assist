@@ -70,8 +70,10 @@ serve(async (req) => {
       grade_level,
       assignment_type,
       assignment_doc_text,
+      source_material_filenames,
       dry_run,
     } = body;
+
 
     if (dry_run) {
       console.log("[grade-ela] DRY RUN — response will not be persisted by caller");
