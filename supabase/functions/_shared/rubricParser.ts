@@ -348,15 +348,20 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
     new RegExp(`max(?:imum)?\\s*(?:score|points?)?\\s*[:=]?\\s*(${NUM})`, "i"),
   ];
   let explicitTotal: number | null = null;
-  for (const p of totalPatterns) {
-    const m = sourceText.match(p);
-    if (m) {
-      const v = parseNum(m[1]);
-      if (v > 0 && v <= 1000) {
-        explicitTotal = Math.round(v);
-        break;
+  // Search both the isolated rubric block AND the full raw text, since
+  // teachers often put "Total Points: 100" in document metadata above the rubric section.
+  for (const haystack of [sourceText, rawText]) {
+    for (const p of totalPatterns) {
+      const m = haystack.match(p);
+      if (m) {
+        const v = parseNum(m[1]);
+        if (v > 0 && v <= 1000) {
+          explicitTotal = Math.round(v);
+          break;
+        }
       }
     }
+    if (explicitTotal) break;
   }
 
   // Sums (exclude bonus)
