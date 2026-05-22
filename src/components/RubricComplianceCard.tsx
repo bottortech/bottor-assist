@@ -27,7 +27,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ChevronDown, ShieldCheck, AlertTriangle, ShieldAlert } from "lucide-react";
+import { ChevronDown, ShieldCheck, AlertTriangle, ShieldAlert, CheckCircle2 } from "lucide-react";
+
+export interface ConsistencyAdjustment {
+  criterion: string;
+  matched_note: string;
+  original_earned: number;
+  adjusted_earned: number;
+}
+
+export interface ConsistencyCheckData {
+  passed: boolean;
+  adjustments: ConsistencyAdjustment[];
+}
 
 export interface RubricComplianceData {
   status: "custom" | "mixed" | "default";
@@ -36,6 +48,7 @@ export interface RubricComplianceData {
   expected_criteria?: string[];
   actual_criteria?: string[];
   mismatches?: { extra: string[]; missing: string[] };
+  consistency_check?: ConsistencyCheckData;
 }
 
 interface Props {
