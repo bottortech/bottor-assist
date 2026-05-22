@@ -117,4 +117,13 @@ export interface ELAGradeResponse {
     criteria_count: number;
     source: string;
   };
+  consistency_check?: {
+    passed: boolean;
+    adjustments: {
+      criterion: string;
+      matched_note: string;
+      original_earned: number;
+      adjusted_earned: number;
+    }[];
+  };
 }
