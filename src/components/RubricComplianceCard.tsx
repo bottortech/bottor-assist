@@ -133,6 +133,37 @@ export function RubricComplianceCard({ compliance }: Props) {
                 "No custom rubric was detected, so Bottor's default fallback rubric was used. Upload or paste a rubric to grade against your own criteria."}
             </p>
 
+            {/* Self-consistency check banner */}
+            {compliance.consistency_check && (
+              compliance.consistency_check.passed ? (
+                <div className="flex items-start gap-2 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-3">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                  <p className="text-xs text-emerald-800 dark:text-emerald-200">
+                    ✓ Consistency check passed — no criterion received full marks with a related improvement note.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                    <p className="text-xs font-medium text-amber-900 dark:text-amber-200">
+                      ⚠️ Score auto-adjusted for internal consistency
+                    </p>
+                  </div>
+                  <ul className="space-y-1 pl-6">
+                    {compliance.consistency_check.adjustments.map((a, i) => (
+                      <li key={i} className="text-xs text-amber-900 dark:text-amber-200">
+                        <span className="font-medium">{a.criterion}</span>: {a.original_earned} → {a.adjusted_earned}
+                        <span className="block text-amber-700 dark:text-amber-300/80 italic">
+                          flagged note: "{a.matched_note}"
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            )}
+
             {/* Criteria used table */}
             <div>
               <h4 className="text-sm font-semibold mb-2">Criteria Used</h4>
