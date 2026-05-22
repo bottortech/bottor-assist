@@ -81,6 +81,15 @@ interface GradeRequest {
     usePointsPerQuestion: boolean;
   };
   quick_rubric_categories?: string;
+  /**
+   * When true, grading runs normally and the full response is returned, but
+   * the caller MUST treat the run as ephemeral: no writes to `submissions`,
+   * `submission_batches`, or any other persistent table; no billing/usage
+   * events. The response will include `dry_run: true` so callers can assert.
+   * This edge function itself does not persist anything — persistence is
+   * caller-side — so the flag is informational and echoed back.
+   */
+  dry_run?: boolean;
 }
 
 serve(async (req) => {
