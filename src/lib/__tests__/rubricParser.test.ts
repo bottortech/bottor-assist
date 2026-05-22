@@ -90,12 +90,12 @@ Total Points: 100
   });
 
   it("supports 2-criterion and ~10-criterion rubrics", () => {
-    const two = parseRubricCriteria(`- A: 50 pts\n- B: 50 pts`);
+    const two = parseRubricCriteria(`- Ideas: 50 pts\n- Style: 50 pts`);
     expect(two.criteria).toHaveLength(2);
     expect(two.totalPoints).toBe(100);
 
     const ten = parseRubricCriteria(
-      Array.from({ length: 10 }, (_, i) => `- Criterion ${i + 1}: 10 pts`).join("\n"),
+      Array.from({ length: 10 }, (_, i) => `- Criterion${i + 1} item: 10 pts`).join("\n"),
     );
     expect(ten.criteria).toHaveLength(10);
     expect(ten.totalPoints).toBe(100);
