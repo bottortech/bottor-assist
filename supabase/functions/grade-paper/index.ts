@@ -15,6 +15,11 @@
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import {
+  parseRubricCriteria as sharedParseRubric,
+  normalizeToPoints as sharedNormalize,
+  formatParsedRubricForGrading as sharedFormatRubric,
+} from "../_shared/rubricParser.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -388,181 +393,43 @@ function parseAutoScoreSettings(settings: {
 }
 
 /**
- * Attempt to parse point values from rubric text
- * Uses STRICT priority: explicit total > sum of criteria > fallback
- * Returns null if no clear point structure is found
+ * Adapter around the canonical shared rubric parser.
+ * Returns this function's internal `ParsedRubric` shape (criterion.guidance).
  *
- * IMPORTANT: Distinguishes between:
- * - Category weights (e.g., "Accuracy – 40 points") → actual point allocations
- * - Performance levels (e.g., "4 = Excellent, 3 = Proficient") → descriptors, NOT points
+ * NOTE: The single source of truth is `supabase/functions/_shared/rubricParser.ts`.
+ * Do not re-introduce a bespoke parser here.
  */
 function parseRubricText(text: string): ParsedRubric | null {
-  let explicitTotal: number | null = null;
-  let hasPerformanceLevels = false;
+  if (!text?.trim()) return null;
 
-  // Detect performance level patterns (these are descriptors, NOT points)
-  // Common patterns: "4 = Excellent", "4 - Exceeds", "Level 4:", "Score 4:"
-  const performanceLevelPatterns = [
-    /[1-5]\s*[=\-–:]\s*(?:excellent|exceeds|proficient|meets|developing|emerging|beginning|unsatisfactory|poor|advanced|mastery|competent|novice)/i,
-    /(?:level|score|rating)\s*[1-5]/i,
-    /(?:excellent|proficient|developing|beginning)\s*[=\-–:]\s*[1-5]/i,
-  ];
-
-  for (const pattern of performanceLevelPatterns) {
-    if (pattern.test(text)) {
-      hasPerformanceLevels = true;
-      console.log(`[grade-paper] Detected performance levels (treated as descriptors, not points)`);
-      break;
-    }
-  }
-
-  // (A) PRIORITY: Look for EXPLICIT total patterns FIRST
-  // These are the most authoritative and should NEVER be guessed
-  const explicitTotalPatterns = [
-    // "Total Points: 20" or "Total Points = 20" - HIGHEST priority
-    /total\s*points?\s*[:=]\s*(\d+)/i,
-    // "Total: 20 points" or "Total: 20 pts"
-    /total\s*[:=]\s*(\d+)\s*(?:pts?|points?)/i,
-    // "(20 points total)" or "20 points total"
-    /(\d+)\s*(?:pts?|points?)\s*total/i,
-    // "out of 20" at end of line or "/20 points"
-    /(?:out of|\/)\s*(\d+)\s*(?:pts?|points?)?(?:\s|$|\.)/i,
-    // "Maximum: 20 points" or "Max Score: 20"
-    /max(?:imum)?\s*(?:score|points?)?\s*[:=]?\s*(\d+)/i,
-    // "__/20" scoring format often in rubrics
-    /__\/(\d+)/,
-  ];
-
-  for (const pattern of explicitTotalPatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      const val = parseInt(match[1], 10);
-      if (val > 0 && val <= 1000) {
-        explicitTotal = val;
-        console.log(`[grade-paper] Detected explicit total: ${val} from pattern: ${pattern}`);
-        break;
-      }
-    }
-  }
-
-  // (B) Parse individual criteria/items with EXPLICIT point weights
-  // Pattern matches: "Accuracy – 40 points", "Work Shown (30 pts)", "Clarity: 20 points"
-  const categoryPattern = /([A-Za-z][A-Za-z\s\/\-–]+?)(?:[\-–:]|\s*[\(\[])\s*(\d+)\s*(?:pts?|points?)(?:[\)\]])?/gi;
-  const criteria: RubricCriterion[] = [];
-  let match;
-
-  while ((match = categoryPattern.exec(text)) !== null) {
-    const name = match[1].trim();
-    const points = parseInt(match[2], 10);
-
-    // Filter out obvious non-criteria matches
-    const lowerName = name.toLowerCase();
-    const isExcluded = ["total", "maximum", "max", "out of", "score", "level", "rating"].some(
-      (ex) => lowerName === ex || lowerName.startsWith(ex + " ") || lowerName.endsWith(" " + ex),
-    );
-
-    // Only accept criteria with significant point values (not small numbers that might be performance levels)
-    // If performance levels detected, be stricter about what counts as a category weight
-    const minPoints = hasPerformanceLevels ? 10 : 1;
-    const maxPoints = hasPerformanceLevels ? 100 : 100;
-
-    if (!isExcluded && name.length > 2 && name.length < 50 && points >= minPoints && points <= maxPoints) {
-      criteria.push({
-        name,
-        points,
-        guidance: `Teacher rubric criterion: ${name} (${points} points)`,
-      });
-    }
-  }
-
-  // Calculate the sum of criteria points
-  const criteriaSum = criteria.reduce((sum, c) => sum + c.points, 0);
-
-  // SAFEGUARD: Common performance level counts that should NEVER be used as totalPoints
-  // when explicit category weights exist
-  const performanceLevelCounts = [3, 4, 5, 6];
-  const hasCategoryWeights = criteria.length >= 2 && criteriaSum >= 10;
-
-  // Determine final total points
-  let finalTotal: number;
-  let scoringMode: "weighted-100" | "explicit-total" | "criteria-sum" = "criteria-sum";
-
-  // Check for weighted-100 first (highest priority for category-based rubrics)
-  if (criteriaSum === 100 && criteria.length >= 2) {
-    finalTotal = 100;
-    scoringMode = "weighted-100";
-    console.log(`[grade-paper] Rubric criteria sum to 100 — using 100-point scale`);
-  }
-  // SAFEGUARD: If explicit total matches a performance level count AND we have category weights
-  else if (
-    explicitTotal &&
-    hasPerformanceLevels &&
-    hasCategoryWeights &&
-    performanceLevelCounts.includes(explicitTotal)
-  ) {
-    // Explicit total looks like a performance level count - use category sum instead
-    finalTotal = criteriaSum;
-    scoringMode = "criteria-sum";
-    console.log(
-      `[grade-paper] SAFEGUARD: Ignored explicit total ${explicitTotal} (looks like performance level count), using criteria sum ${criteriaSum}`,
-    );
-  } else if (explicitTotal) {
-    finalTotal = explicitTotal;
-    scoringMode = "explicit-total";
-  } else if (criteriaSum > 0) {
-    finalTotal = criteriaSum;
-  } else {
-    finalTotal = 0;
-  }
-
-  // If we found criteria with explicit weights
-  if (criteria.length > 0 && finalTotal > 0) {
-    // Add metadata about performance levels if detected
-    const updatedCriteria = criteria.map((c) => ({
-      ...c,
-      guidance: hasPerformanceLevels
-        ? `${c.guidance}. Use performance level descriptors for qualitative assessment, then convert to proportional score within this ${c.points}-point category.`
-        : c.guidance,
-    }));
-
-    console.log(
-      `[grade-paper] Parsed ${criteria.length} criteria, total: ${finalTotal} points, mode: ${scoringMode}, performance levels: ${hasPerformanceLevels}`,
-    );
-
-    return {
-      totalPoints: finalTotal,
-      criteria: updatedCriteria,
-      source: "teacher",
-    };
-  }
-
-  // If we found an explicit total but no parseable criteria
-  if (explicitTotal) {
-    return {
-      totalPoints: explicitTotal,
-      criteria: [
-        {
-          name: "Overall Assessment",
-          points: explicitTotal,
-          guidance: hasPerformanceLevels
-            ? "Evaluate based on teacher's rubric criteria. Use performance level descriptors for qualitative assessment, then convert to proportional score."
-            : "Evaluate based on teacher's rubric criteria in the text",
-        },
-      ],
-      source: "teacher",
-    };
-  }
-
-  // Check for presence of rubric keywords without parseable points
-  const hasRubricKeywords = /rubric|criteria|grading|scoring|points/i.test(text);
-  if (hasRubricKeywords) {
-    // Rubric text exists but couldn't parse points - return null to force manual input
-    console.log(`[grade-paper] Rubric keywords found but no points could be parsed`);
+  const parsed = sharedNormalize(sharedParseRubric(text));
+  if (parsed.status !== "valid" || parsed.criteria.length === 0) {
     return null;
   }
 
-  return null;
+  const scoring = parsed.criteria.filter((c) => !c.isBonus);
+  if (scoring.length === 0) return null;
+
+  const criteria: RubricCriterion[] = scoring.map((c) => ({
+    name: c.name,
+    points: c.points ?? 0,
+    guidance: c.description || `Teacher rubric criterion: ${c.name}`,
+  }));
+
+  const total =
+    parsed.totalPoints ?? criteria.reduce((s, c) => s + c.points, 0);
+
+  console.log(
+    `[grade-paper] Parsed ${criteria.length} criteria via shared parser, total: ${total} (${parsed.totalSource})`,
+  );
+
+  return {
+    totalPoints: total,
+    criteria,
+    source: "teacher",
+  };
 }
+
 
 /**
  * Analyze rubric text to determine if "show your work" is required
@@ -639,9 +506,22 @@ function buildScoringPrompts(params: {
   enhancedMode?: boolean;
   rubricRawText?: string; // Original rubric text for work requirement detection
 }): { systemPrompt: string; userPrompt: string } {
-  const rubricText = params.parsedRubric.criteria
-    .map((c) => `- ${c.name}: ${c.points} points (${c.guidance})`)
-    .join("\n");
+  // Serialize via the shared formatter when we have raw teacher rubric text
+  // so the model sees the canonical points-only format (incl. bonus block).
+  // Fall back to internal criteria list (auto-generated / quick-rubric / answer-key paths).
+  const isTeacherRubric = params.parsedRubric.source === "teacher";
+  let rubricText: string;
+  if (isTeacherRubric && params.rubricRawText?.trim()) {
+    const sharedFormatted = sharedFormatRubric(sharedParseRubric(params.rubricRawText));
+    rubricText = sharedFormatted || params.parsedRubric.criteria
+      .map((c) => `- ${c.name}: ${c.points} points (${c.guidance})`)
+      .join("\n");
+  } else {
+    rubricText = params.parsedRubric.criteria
+      .map((c) => `- ${c.name}: ${c.points} points (${c.guidance})`)
+      .join("\n");
+  }
+  console.log(`[grade-paper] Serialized rubric for model:\n${rubricText}`);
 
   const isAutoGenerated = params.parsedRubric.source === "auto-generated";
   const hasAnswerKey = !!params.answerKey?.trim();

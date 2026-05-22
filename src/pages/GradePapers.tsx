@@ -549,6 +549,16 @@ function ParsedRubricPreview({
   if (parsed.status === "empty") return null;
 
   const valid = parsed.status === "valid";
+  const scoring = parsed.criteria.filter((c) => !c.isBonus);
+  const bonus = parsed.criteria.filter((c) => c.isBonus);
+
+  const totalSourceLabel = {
+    explicit: "from explicit total",
+    summed: "summed from criteria",
+    "weighted-100": "weighted to 100",
+    unknown: "",
+  }[parsed.totalSource];
+
   return (
     <Card className={`border ${valid ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5"}`}>
       <CardContent className="p-4 space-y-3">
@@ -557,7 +567,9 @@ function ParsedRubricPreview({
             {valid ? <CheckCircle2 className="w-4 h-4 text-primary mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-destructive mt-0.5" />}
             <div>
               <p className="text-sm font-medium">
-                {valid ? `We extracted ${parsed.criteria.length} rubric criteria` : "We couldn't read your rubric"}
+                {valid
+                  ? `We extracted ${scoring.length} rubric criteria${parsed.totalPoints ? ` · Total ${parsed.totalPoints} pts` : ""}${totalSourceLabel ? ` (${totalSourceLabel})` : ""}`
+                  : "We couldn't read your rubric"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {valid ? "Confirm these criteria before grading." : "Please paste the criteria directly, or upload a file with a clearly structured rubric table."}
@@ -571,21 +583,51 @@ function ParsedRubricPreview({
             </Button>
           )}
         </div>
+
+        {/* Structured parser notices (bonus, summed total, ambiguous levels, etc.) */}
+        {parsed.notices.length > 0 && (
+          <div className="rounded-md border border-amber-300/60 bg-amber-50 dark:bg-amber-900/20 p-2.5 space-y-1">
+            {parsed.notices.map((n, i) => (
+              <p key={i} className="text-xs text-amber-900 dark:text-amber-200 flex items-start gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>{n.message}</span>
+              </p>
+            ))}
+          </div>
+        )}
+
         {parsed.issues.length > 0 && (
           <div className="text-xs text-muted-foreground space-y-1">
             {parsed.issues.map((issue, index) => <p key={index}>{issue}</p>)}
           </div>
         )}
+
         {valid && (
           <div className="rounded-md border bg-background overflow-hidden">
-            {parsed.criteria.map((criterion, index) => (
+            {scoring.map((criterion, index) => (
               <div key={`${criterion.name}-${index}`} className="grid grid-cols-[1fr_auto] gap-3 p-3 text-sm border-b last:border-b-0">
                 <div>
                   <p className="font-medium">{criterion.name}</p>
                   {criterion.description && <p className="text-xs text-muted-foreground mt-0.5">{criterion.description}</p>}
                 </div>
                 <Badge variant="outline" className="h-fit">
-                  {criterion.points ? `${criterion.points} pts` : `${criterion.weight}%`}
+                  {criterion.points
+                    ? `${criterion.points} pts${criterion.weight ? ` (${criterion.weight}%)` : ""}`
+                    : `${criterion.weight}%`}
+                </Badge>
+              </div>
+            ))}
+            {bonus.map((criterion, index) => (
+              <div
+                key={`bonus-${criterion.name}-${index}`}
+                className="grid grid-cols-[1fr_auto] gap-3 p-3 text-sm border-b last:border-b-0 bg-amber-50/40 dark:bg-amber-900/10"
+              >
+                <div>
+                  <p className="font-medium">{criterion.name} <span className="text-xs text-amber-700">(bonus)</span></p>
+                  {criterion.description && <p className="text-xs text-muted-foreground mt-0.5">{criterion.description}</p>}
+                </div>
+                <Badge variant="outline" className="h-fit">
+                  +{criterion.points ?? criterion.weight ?? 0} pts
                 </Badge>
               </div>
             ))}
