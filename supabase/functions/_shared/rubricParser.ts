@@ -285,11 +285,17 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
   let hasPointsUnit = false;
   let hasPercentUnit = false;
 
+  // Lines that declare the rubric total — skip so they're not parsed as criteria.
+  // Matches "Total: 50 pts", "Total Points: 100", "Rubric — Total: 50 points", etc.
+  const TOTAL_LINE = /(?:^|[\s\-—–])total\s*(?:points?)?\s*[:=]\s*\d/i;
+
   for (const line of lines) {
     const stripped = line
       .replace(/^[-*•+]\s*/, "")
       .replace(/^\d+[.)]\s*/, "")
       .trim();
+
+    if (TOTAL_LINE.test(stripped)) continue;
 
     const labelOnly = stripped.match(/^([^:]{2,50})\s*:/)?.[1];
     if (labelOnly && isMetadataLabel(labelOnly)) {
