@@ -176,7 +176,7 @@ serve(async (req) => {
 
     console.log("[grade-ela] ELA grading complete, score:", gradingResult.score);
 
-    return new Response(JSON.stringify(gradingResult), {
+    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
