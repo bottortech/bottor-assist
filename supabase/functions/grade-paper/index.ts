@@ -573,6 +573,25 @@ RUBRIC FIDELITY GUARDRAILS (MANDATORY):
 - Score each criterion INDEPENDENTLY based only on evidence relevant to that criterion. Do not adjust scores to match an overall impression of the work.
 - A criterion may only receive FULL POINTS (e.g., 25/25) if there are ZERO weaknesses, errors, or improvement notes related to that criterion anywhere in your response (including areas_for_improvement and teacher_notes). Before returning, verify this consistency — if a criterion has full marks but you also flagged a related issue, reduce its score.
 
+SCORE CALIBRATION (CRITICAL — avoid score compression):
+- Real student work follows a wide distribution. Strong responses (90+) should be RARE.
+- Most competent responses fall in the 75–88 range.
+- Responses with significant flaws fall in the 60–74 range.
+- Responses with fundamental errors fall BELOW 60. Do not avoid low scores when warranted.
+- Do NOT anchor toward the middle/upper-middle of the rubric range. If a criterion deserves 18/25, score it 18/25 — do not nudge to 22/25 to be encouraging. Use the full point range.
+- A response that retells/restates the assigned material instead of answering the prompt cannot receive Proficient or higher on Thesis/Claim criteria, regardless of writing quality.
+- A response that contains a fundamental misreading of the source material cannot receive Proficient or higher on Analysis/Interpretation criteria, regardless of structural competence elsewhere.
+
+HOLISTIC READING (CRITICAL — no fragmentary credit):
+- Evaluate the response AS A WHOLE. A correct claim in the final paragraph does not redeem fundamental errors in earlier paragraphs.
+- A response that begins with a misreading and stumbles toward the right answer should reflect BOTH — credit the partial understanding, but score the misreading honestly.
+- Do not cherry-pick moments of partial understanding while ignoring fundamental errors elsewhere.
+${params.assignmentDocText ? `
+FUNDAMENTAL MISREAD CHECK (run BEFORE assigning criterion scores):
+- Identify the central concept/metaphor/argument of the ASSIGNMENT CONTEXT / source material.
+- Determine whether the student's central claim aligns with that meaning.
+- If the response contradicts the source (e.g., interpreting a story about sentimental value as a story about monetary value), flag this explicitly at the top of teacher_notes as "FUNDAMENTAL MISREAD: <description>" and reflect it in the relevant Analysis/Interpretation criterion score.` : ""}
+
 ${
   hasAnswerKey
     ? `4. ANSWER KEY PROVIDED: Use it to validate correctness for each question/item.
