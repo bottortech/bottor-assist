@@ -155,6 +155,7 @@ serve(async (req) => {
         areas_for_improvement: ["Manual review required"],
         next_step: "Please review this writing and provide personalized feedback.",
         teacher_notes: "AI response could not be parsed. Manual grading recommended.",
+        consistency_check: { passed: true, adjustments: [] },
       };
     }
 
@@ -187,8 +188,18 @@ function buildELAPrompts(params: {
 
   // Determine rubric to use
   const rubricSection = rubricText?.trim()
-    ? `TEACHER-PROVIDED RUBRIC:\n${rubricText}\n\nUse this rubric EXACTLY as provided. Extract criteria and point values from it.`
+    ? `TEACHER-PROVIDED RUBRIC:
+${rubricText}
+
+Use this rubric EXACTLY as provided. Extract criteria and point values from it.
+
+RUBRIC FIDELITY GUARDRAILS (MANDATORY):
+- Use ONLY the criteria provided in the teacher's rubric above. Do not invent, substitute, or supplement criteria from any default framework (e.g., 6+1 Traits), even if you believe additional criteria would be relevant.
+- If the teacher's rubric has N criteria, your "criterion_breakdown" array MUST contain EXACTLY N entries with names that match the rubric's criteria.
+- Score each criterion INDEPENDENTLY based only on evidence relevant to that criterion. Do not adjust scores to match an overall impression of the work.
+- A criterion may only receive FULL POINTS (e.g., 25/25) if there are ZERO weaknesses, errors, or improvement notes related to that criterion anywhere in your response (including areas_for_improvement and teacher_notes). Before returning, verify this consistency — if a criterion has full marks but you also flagged a related issue, reduce its score.`
     : `DEFAULT WRITING RUBRIC (6+1 Traits):\n${JSON.stringify(DEFAULT_ELA_RUBRIC.criteria, null, 2)}\n\nTotal: ${DEFAULT_ELA_RUBRIC.scale} points`;
+
 
   const gradeContext = gradeLevel ? `Grade Level: ${gradeLevel}` : "";
   const assignmentContext = assignmentType ? `Assignment Type: ${assignmentType}` : "";
@@ -285,22 +296,64 @@ function normalizeELAResult(
       ? [result.strengths]
       : ["Work shows effort"];
 
-  const areasForImprovement = Array.isArray(result.areas_for_improvement)
+  let areasForImprovement = Array.isArray(result.areas_for_improvement)
     ? result.areas_for_improvement
     : typeof result.areas_for_improvement === 'string'
       ? [result.areas_for_improvement]
       : ["Continue practicing writing skills"];
 
-  // Calculate score string
-  const earned = typeof result.earned === 'number' ? result.earned : 0;
-  const possible = typeof result.possible === 'number' ? result.possible : 100;
-  const percent = typeof result.percent === 'number' 
-    ? result.percent 
-    : Math.round((earned / possible) * 100);
+  // ---- Server-side criterion-name validator ----
+  // If teacher rubric is provided and parseable, strip any criterion in the
+  // response whose normalized name doesn't appear in the rubric.
+  const expectedCriteriaNames = rubricText?.trim()
+    ? extractRubricCriterionNames(rubricText)
+    : [];
+  const teacherProvided = expectedCriteriaNames.length > 0;
+  const expectedNorm = expectedCriteriaNames.map(normalizeName);
+
+  let breakdown: any[] = Array.isArray(result.criterion_breakdown)
+    ? result.criterion_breakdown
+    : [];
+
+  if (teacherProvided && breakdown.length > 0) {
+    const before = breakdown.length;
+    const stripped: string[] = [];
+    breakdown = breakdown.filter((b: any) => {
+      const name = String(b?.criterion || "");
+      const ok = expectedNorm.includes(normalizeName(name));
+      if (!ok) stripped.push(name);
+      return ok;
+    });
+    if (stripped.length > 0) {
+      console.warn(`[grade-ela] Stripped ${stripped.length}/${before} invented criteria not in teacher rubric:`, stripped);
+    }
+  }
+
+  // ---- Self-consistency validator ----
+  // For any criterion at full marks, scan areas_for_improvement for matches.
+  // If found, deduct 1 point and surface in consistency_check.
+  const consistency = runConsistencyCheck(breakdown, areasForImprovement);
+  if (consistency.adjustments.length > 0) {
+    console.warn(`[grade-ela] Consistency adjustments:`, consistency.adjustments);
+  }
+  breakdown = consistency.correctedBreakdown;
+
+  // Recompute totals from corrected breakdown (only if breakdown is meaningful)
+  let earned = typeof result.earned === 'number' ? result.earned : 0;
+  let possible = typeof result.possible === 'number' ? result.possible : 100;
+  if (breakdown.length > 0) {
+    const sumEarned = breakdown.reduce((s: number, b: any) => s + (Number(b.earned) || 0), 0);
+    const sumPossible = breakdown.reduce((s: number, b: any) => s + (Number(b.possible) || 0), 0);
+    if (sumPossible > 0) {
+      earned = sumEarned;
+      possible = sumPossible;
+    }
+  }
+  const percent = Math.round((earned / Math.max(possible, 1)) * 100);
 
   // Determine letter grade if not provided
   let letterGrade = result.letter_grade;
-  if (!letterGrade) {
+  if (!letterGrade || consistency.adjustments.length > 0) {
     if (percent >= 93) letterGrade = "A";
     else if (percent >= 90) letterGrade = "A-";
     else if (percent >= 87) letterGrade = "B+";
@@ -315,6 +368,7 @@ function normalizeELAResult(
     else letterGrade = "F";
   }
 
+
   return {
     student_name: studentName,
     score: `${earned}/${possible} (${percent}%)`,
@@ -324,24 +378,24 @@ function normalizeELAResult(
     possible,
     strengths: strengths.slice(0, 5), // Max 5 strengths
     areas_for_improvement: areasForImprovement.slice(0, 5), // Max 5 areas
-    next_step: typeof result.next_step === 'string' 
-      ? result.next_step 
+    next_step: typeof result.next_step === 'string'
+      ? result.next_step
       : "Continue practicing your writing skills.",
-    confidence: typeof result.confidence === 'number' 
+    confidence: typeof result.confidence === 'number'
       ? Math.min(100, Math.max(0, result.confidence))
       : 70,
-    criterion_breakdown: Array.isArray(result.criterion_breakdown) 
-      ? result.criterion_breakdown 
+    criterion_breakdown: breakdown.length > 0 ? breakdown : undefined,
+    teacher_notes: typeof result.teacher_notes === 'string'
+      ? result.teacher_notes
       : undefined,
-    teacher_notes: typeof result.teacher_notes === 'string' 
-      ? result.teacher_notes 
-      : undefined,
-    rubric_used: rubricText?.trim() 
+    consistency_check: {
+      passed: consistency.adjustments.length === 0,
+      adjustments: consistency.adjustments,
+    },
+    rubric_used: teacherProvided
       ? {
-          scale: typeof result.possible === 'number' ? result.possible : 100,
-          criteria_count: Array.isArray(result.criterion_breakdown) 
-            ? result.criterion_breakdown.length 
-            : 6,
+          scale: possible,
+          criteria_count: breakdown.length || expectedCriteriaNames.length,
           source: "teacher",
         }
       : {
@@ -351,3 +405,121 @@ function normalizeELAResult(
         },
   };
 }
+
+// =============================================================================
+// Shared validators (also inlined in grade-paper)
+// =============================================================================
+
+function normalizeName(s: string): string {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Lightweight rubric-criterion-name extractor. Mirrors the client-side
+ * parser in src/lib/rubricParser.ts but only extracts names for the
+ * validator. Conservative: returns [] if it can't find structured criteria.
+ */
+function extractRubricCriterionNames(text: string): string[] {
+  if (!text?.trim()) return [];
+  const META = new Set([
+    "grade level","format","subject","length","date","period","class","teacher",
+    "student","name","assignment","prompt","instructions","due date","course",
+    "standard","objective","materials","total","total points","total score",
+    "score","points","points possible","possible points","out of","grade","overall",
+  ]);
+  const isMeta = (n: string) => {
+    const nn = normalizeName(n);
+    for (const m of META) if (nn === m || nn.startsWith(m + " ")) return true;
+    return false;
+  };
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const patterns: RegExp[] = [
+    /^([A-Za-z][A-Za-z0-9 &\/\-]{1,80}?)\s*[:\-–(]\s*(\d{1,3})\s*(pts?|points?|%)/i,
+    /^(\d{1,3})\s*(pts?|points?)\s*[:\-–]\s*([A-Za-z][A-Za-z0-9 &\/\-]{1,80})/i,
+  ];
+  for (const raw of lines) {
+    const stripped = raw.replace(/^[-*•\d.)\s]+/, "").trim();
+    for (const p of patterns) {
+      const m = stripped.match(p);
+      if (!m) continue;
+      const rawName = /^\d/.test(m[1]) ? m[3] : m[1];
+      const name = String(rawName || "").trim();
+      if (!name || name.length < 2 || name.length > 90) break;
+      if (isMeta(name)) break;
+      const key = normalizeName(name);
+      if (seen.has(key)) break;
+      seen.add(key);
+      names.push(name);
+      break;
+    }
+  }
+  return names;
+}
+
+const TOPIC_SYNONYMS: Record<string, string[]> = {
+  conventions: ["comma","semicolon","grammar","spelling","punctuation","capitalization","run-on","run on","splice","apostrophe","tense","subject-verb","verb agreement","mechanics"],
+  organization: ["transition","structure","flow","introduction","conclusion","paragraph","sequence","order","cohesion"],
+  ideas: ["thesis","claim","evidence","support","development","detail","focus","argument"],
+  content: ["thesis","claim","evidence","support","development","detail","focus","argument"],
+  thesis: ["thesis","claim","central claim"],
+  evidence: ["quote","citation","textual evidence","support","reference"],
+  analysis: ["analysis","reasoning","explanation","interpretation","insight"],
+  voice: ["tone","audience","engagement","personality"],
+  word: ["vocabulary","word choice","diction","repetition","precise","language"],
+  fluency: ["sentence variety","sentence structure","rhythm","choppy"],
+  accuracy: ["incorrect","wrong","error","mistake","miscalculation","calculation error"],
+  work: ["steps","setup","process","method","show your work","reasoning shown"],
+  completeness: ["missing","skipped","incomplete","unfinished"],
+};
+
+function topicsForCriterion(name: string): string[] {
+  const n = normalizeName(name);
+  const out = new Set<string>();
+  if (n) out.add(n);
+  for (const key of Object.keys(TOPIC_SYNONYMS)) {
+    if (n.includes(key)) TOPIC_SYNONYMS[key].forEach((s) => out.add(s.toLowerCase()));
+  }
+  // Each word of the criterion name (>=4 chars) as a fallback signal
+  n.split(/\s+/).filter((w) => w.length >= 4).forEach((w) => out.add(w));
+  return Array.from(out);
+}
+
+interface ConsistencyAdjustment {
+  criterion: string;
+  matched_note: string;
+  original_earned: number;
+  adjusted_earned: number;
+}
+
+function runConsistencyCheck(
+  breakdown: any[],
+  areas: string[],
+): { correctedBreakdown: any[]; adjustments: ConsistencyAdjustment[] } {
+  const adjustments: ConsistencyAdjustment[] = [];
+  const corrected = (breakdown || []).map((item) => {
+    const earnedField = "earned_points" in item ? "earned_points" : "earned";
+    const possibleField = "possible_points" in item ? "possible_points" : "possible";
+    const earned = Number(item[earnedField]) || 0;
+    const possible = Number(item[possibleField]) || 0;
+    if (possible <= 0 || earned < possible) return item;
+    const name = String(item.criterion || "");
+    const topics = topicsForCriterion(name);
+    const flagged = (areas || []).find((a) => {
+      const text = String(a).toLowerCase();
+      return topics.some((t) => t.length >= 3 && text.includes(t));
+    });
+    if (!flagged) return item;
+    const adjustedEarned = Math.max(0, earned - 1);
+    adjustments.push({
+      criterion: name,
+      matched_note: String(flagged),
+      original_earned: earned,
+      adjusted_earned: adjustedEarned,
+    });
+    return { ...item, [earnedField]: adjustedEarned };
+  });
+  return { correctedBreakdown: corrected, adjustments };
+}
+

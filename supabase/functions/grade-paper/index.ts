@@ -205,6 +205,14 @@ serve(async (req) => {
       // If we detect a weighted 100-point rubric with 4-level performance descriptors,
       // enforce: 4=100%, 3=75%, 2=50%, 1=25% for each category weight.
       gradingResult = forceCorrectPerformanceLevelMapping(gradingResult, parsedRubric, rubric);
+
+      // RUBRIC FIDELITY: strip any criterion in the AI response whose name
+      // doesn't appear in the teacher-provided rubric. Then re-sync totals.
+      gradingResult = enforceCriterionWhitelist(gradingResult, parsedRubric);
+
+      // SELF-CONSISTENCY: detect full-marks-with-improvement contradictions
+      // and auto-deduct 1 point on the affected criterion.
+      gradingResult = runConsistencyCheckOnResult(gradingResult, parsedRubric);
     } catch (parseError) {
       console.error("[grade-paper] Failed to parse AI response:", parseError);
       // Fallback result with default scoring
@@ -221,8 +229,10 @@ serve(async (req) => {
         feedback_paragraph: "Please review this work and provide personalized feedback.",
         draft_feedback: "Please review this work and provide personalized feedback.",
         teacher_notes: ["AI response could not be parsed. Manual grading recommended."],
+        consistency_check: { passed: true, adjustments: [] },
       };
     }
+
 
     console.log("[grade-paper] Grading complete, score:", gradingResult.score_suggestion);
 
@@ -662,6 +672,13 @@ MANDATORY RULES:
       ? "Rubric is auto-generated (default template). Be transparent about this in teacher_notes."
       : "Rubric is teacher-provided and LOCKED for scoring. Follow it exactly as the single source of truth."
   }
+
+RUBRIC FIDELITY GUARDRAILS (MANDATORY):
+- Use ONLY the criteria provided in the rubric below. Do not invent, substitute, or supplement criteria from any default framework, even if you believe additional criteria would be relevant.
+- If the rubric has N criteria, your "rubric_breakdown" array MUST contain EXACTLY N entries with names that match the rubric criteria character-for-character.
+- Score each criterion INDEPENDENTLY based only on evidence relevant to that criterion. Do not adjust scores to match an overall impression of the work.
+- A criterion may only receive FULL POINTS (e.g., 25/25) if there are ZERO weaknesses, errors, or improvement notes related to that criterion anywhere in your response (including areas_for_improvement and teacher_notes). Before returning, verify this consistency — if a criterion has full marks but you also flagged a related issue, reduce its score.
+
 ${
   hasAnswerKey
     ? `4. ANSWER KEY PROVIDED: Use it to validate correctness for each question/item.
@@ -1151,4 +1168,175 @@ function getLetterGrade(percent: number): string {
   if (percent >= 70) return "C";
   if (percent >= 60) return "D";
   return "F";
+}
+
+// =============================================================================
+// Rubric fidelity + self-consistency validators
+// =============================================================================
+
+function _normalizeName(s: string): string {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+const _TOPIC_SYNONYMS: Record<string, string[]> = {
+  conventions: ["comma","semicolon","grammar","spelling","punctuation","capitalization","run-on","run on","splice","apostrophe","tense","subject-verb","verb agreement","mechanics"],
+  organization: ["transition","structure","flow","introduction","conclusion","paragraph","sequence","order","cohesion"],
+  ideas: ["thesis","claim","evidence","support","development","detail","focus","argument"],
+  content: ["thesis","claim","evidence","support","development","detail","focus","argument"],
+  thesis: ["thesis","claim","central claim"],
+  evidence: ["quote","citation","textual evidence","support","reference"],
+  analysis: ["analysis","reasoning","explanation","interpretation","insight"],
+  voice: ["tone","audience","engagement","personality"],
+  word: ["vocabulary","word choice","diction","repetition","precise","language"],
+  fluency: ["sentence variety","sentence structure","rhythm","choppy"],
+  accuracy: ["incorrect","wrong","error","mistake","miscalculation","calculation error"],
+  work: ["steps","setup","process","method","show your work","reasoning shown"],
+  completeness: ["missing","skipped","incomplete","unfinished"],
+};
+
+function _topicsForCriterion(name: string): string[] {
+  const n = _normalizeName(name);
+  const out = new Set<string>();
+  if (n) out.add(n);
+  for (const key of Object.keys(_TOPIC_SYNONYMS)) {
+    if (n.includes(key)) _TOPIC_SYNONYMS[key].forEach((s) => out.add(s.toLowerCase()));
+  }
+  n.split(/\s+/).filter((w) => w.length >= 4).forEach((w) => out.add(w));
+  return Array.from(out);
+}
+
+/**
+ * Strip any rubric_breakdown entry whose normalized criterion name doesn't
+ * match a teacher-provided criterion. Only runs when rubric.source === "teacher".
+ * Re-syncs total_score / score_suggestion / score_percent after stripping.
+ */
+function enforceCriterionWhitelist(
+  result: Record<string, unknown>,
+  rubric: ParsedRubric,
+): Record<string, unknown> {
+  if (rubric.source !== "teacher") return result;
+  const expected = rubric.criteria.map((c) => _normalizeName(c.name));
+  if (expected.length === 0) return result;
+
+  const breakdown = (result.rubric_breakdown as Array<Record<string, unknown>> | undefined) || [];
+  if (breakdown.length === 0) return result;
+
+  const stripped: string[] = [];
+  const filtered = breakdown.filter((b) => {
+    const name = String(b?.criterion || "");
+    const ok = expected.includes(_normalizeName(name));
+    if (!ok) stripped.push(name);
+    return ok;
+  });
+  if (stripped.length === 0) return result;
+
+  console.warn(`[grade-paper] Stripped ${stripped.length} invented criteria:`, stripped);
+
+  const newEarned = filtered.reduce((s, b) => s + (Number(b.earned_points) || 0), 0);
+  const totalPossible = rubric.totalPoints;
+  const newPercent = totalPossible > 0 ? Math.round((newEarned / totalPossible) * 100) : 0;
+
+  (result as any).rubric_breakdown = filtered;
+  (result as any).total_score = newEarned;
+  (result as any).max_score = totalPossible;
+  (result as any).score_suggestion = `${newEarned}/${totalPossible}`;
+  (result as any).score_percent = newPercent;
+  (result as any).letter_grade = getLetterGrade(newPercent);
+  const ss = (result as any).suggested_score;
+  if (ss && typeof ss === "object") {
+    ss.earned_points = newEarned;
+    ss.possible_points = totalPossible;
+    ss.display = `${newEarned}/${totalPossible}`;
+    ss.percent = newPercent;
+    ss.letter_grade = getLetterGrade(newPercent);
+  }
+  (result as any).score_derivation = filtered
+    .map((b) => `${b.criterion ?? "(criterion)"}: ${Number(b.earned_points) || 0}/${Number(b.possible_points) || 0}`)
+    .join(" | ");
+
+  if (!Array.isArray((result as any).teacher_notes)) (result as any).teacher_notes = [];
+  ((result as any).teacher_notes as string[]).unshift(
+    `Removed ${stripped.length} AI-invented criterion name(s) not in your rubric: ${stripped.join(", ")}.`,
+  );
+
+  return result;
+}
+
+interface ConsistencyAdjustment {
+  criterion: string;
+  matched_note: string;
+  original_earned: number;
+  adjusted_earned: number;
+}
+
+/**
+ * For each criterion at full marks, scan areas_for_improvement for any item
+ * that mentions a related topic. If a match is found, deduct 1 point and
+ * record the adjustment under consistency_check.
+ */
+function runConsistencyCheckOnResult(
+  result: Record<string, unknown>,
+  rubric: ParsedRubric,
+): Record<string, unknown> {
+  const breakdown = (result.rubric_breakdown as Array<Record<string, unknown>> | undefined) || [];
+  const areas = (result.areas_for_improvement as string[] | undefined) || [];
+  const adjustments: ConsistencyAdjustment[] = [];
+
+  const corrected = breakdown.map((item) => {
+    const earned = Number(item.earned_points) || 0;
+    const possible = Number(item.possible_points) || 0;
+    if (possible <= 0 || earned < possible) return item;
+    const name = String(item.criterion || "");
+    const topics = _topicsForCriterion(name);
+    const flagged = areas.find((a) => {
+      const text = String(a).toLowerCase();
+      return topics.some((t) => t.length >= 3 && text.includes(t));
+    });
+    if (!flagged) return item;
+    const adjustedEarned = Math.max(0, earned - 1);
+    adjustments.push({
+      criterion: name,
+      matched_note: String(flagged),
+      original_earned: earned,
+      adjusted_earned: adjustedEarned,
+    });
+    return { ...item, earned_points: adjustedEarned };
+  });
+
+  (result as any).consistency_check = {
+    passed: adjustments.length === 0,
+    adjustments,
+  };
+
+  if (adjustments.length === 0) return result;
+
+  console.warn(`[grade-paper] Consistency adjustments:`, adjustments);
+
+  const newEarned = corrected.reduce((s, b) => s + (Number(b.earned_points) || 0), 0);
+  const totalPossible = rubric.totalPoints;
+  const newPercent = totalPossible > 0 ? Math.round((newEarned / totalPossible) * 100) : 0;
+
+  (result as any).rubric_breakdown = corrected;
+  (result as any).total_score = newEarned;
+  (result as any).max_score = totalPossible;
+  (result as any).score_suggestion = `${newEarned}/${totalPossible}`;
+  (result as any).score_percent = newPercent;
+  (result as any).letter_grade = getLetterGrade(newPercent);
+  const ss = (result as any).suggested_score;
+  if (ss && typeof ss === "object") {
+    ss.earned_points = newEarned;
+    ss.display = `${newEarned}/${totalPossible}`;
+    ss.percent = newPercent;
+    ss.letter_grade = getLetterGrade(newPercent);
+  }
+  (result as any).score_derivation = corrected
+    .map((b) => `${b.criterion ?? "(criterion)"}: ${Number(b.earned_points) || 0}/${Number(b.possible_points) || 0}`)
+    .join(" | ");
+
+  if (!Array.isArray((result as any).teacher_notes)) (result as any).teacher_notes = [];
+  ((result as any).teacher_notes as string[]).unshift(
+    `Auto-adjusted ${adjustments.length} criterion score(s) for self-consistency (full marks with related improvement note).`,
+  );
+
+  return result;
 }

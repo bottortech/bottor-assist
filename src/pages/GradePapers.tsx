@@ -465,6 +465,14 @@ interface GradingResult {
     expected_criteria?: string[];
     actual_criteria?: string[];
     mismatches?: { extra: string[]; missing: string[] };
+    consistency_check?: {
+      passed: boolean;
+      adjustments: { criterion: string; matched_note: string; original_earned: number; adjusted_earned: number }[];
+    };
+  };
+  consistency_check?: {
+    passed: boolean;
+    adjustments: { criterion: string; matched_note: string; original_earned: number; adjusted_earned: number }[];
   };
 }
 
@@ -1935,7 +1943,8 @@ Students must show their work for full credit.`;
           criterion_breakdown: data.criterion_breakdown,
           teacher_notes: data.teacher_notes,
           rubric_used: data.rubric_used,
-        };
+          ...(data.consistency_check ? { consistency_check: data.consistency_check } : {}),
+        } as ELAGradeResponse & { consistency_check?: any };
 
         newElaResults.set(group.studentName, elaResult);
 
@@ -2072,7 +2081,10 @@ Students must show their work for full credit.`;
             strengths: data.strengths || "Not provided",
             areas_for_improvement: data.areas_for_improvement || "Not provided",
             feedback_paragraph: data.feedback_paragraph || "Not provided",
-            rubric_compliance: data.rubric_compliance,
+            rubric_compliance: data.rubric_compliance
+              ? { ...data.rubric_compliance, consistency_check: data.consistency_check }
+              : undefined,
+            consistency_check: data.consistency_check,
           },
         };
       } catch (error) {
@@ -3386,7 +3398,10 @@ Students must show their work for full credit.`;
             {/* ELA-Specific Results Display */}
             {gradingSubject === "ela" && elaResults.has(currentGroup.studentName) && (() => {
               const elaResult = elaResults.get(currentGroup.studentName)!;
-              const compliance = buildElaCompliance(elaRubricText, elaResult);
+              const baseCompliance = buildElaCompliance(elaRubricText, elaResult);
+              const compliance = baseCompliance
+                ? { ...baseCompliance, consistency_check: (elaResult as any).consistency_check }
+                : null;
               return (
                 <>
                   {compliance && <RubricComplianceCard compliance={compliance} />}
