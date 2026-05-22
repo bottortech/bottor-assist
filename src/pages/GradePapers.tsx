@@ -2018,6 +2018,7 @@ Students must show their work for full credit.`;
             strengths: data.strengths?.join("; ") || "Not provided",
             areas_for_improvement: data.areas_for_improvement?.join("; ") || "Not provided",
             feedback_paragraph: data.next_step || "Not provided",
+            source_material_meta: data.source_material_meta,
           },
         };
       } catch (error) {
