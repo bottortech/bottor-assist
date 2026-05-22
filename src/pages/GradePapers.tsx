@@ -2080,7 +2080,10 @@ Students must show their work for full credit.`;
             strengths: data.strengths || "Not provided",
             areas_for_improvement: data.areas_for_improvement || "Not provided",
             feedback_paragraph: data.feedback_paragraph || "Not provided",
-            rubric_compliance: data.rubric_compliance,
+            rubric_compliance: data.rubric_compliance
+              ? { ...data.rubric_compliance, consistency_check: data.consistency_check }
+              : undefined,
+            consistency_check: data.consistency_check,
           },
         };
       } catch (error) {
