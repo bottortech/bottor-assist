@@ -474,6 +474,11 @@ interface GradingResult {
     passed: boolean;
     adjustments: { criterion: string; matched_note: string; original_earned: number; adjusted_earned: number }[];
   };
+  source_material_meta?: {
+    sourceMaterialUsed: boolean;
+    sourceMaterialCharacterCount: number;
+    sourceMaterialFileNames: string[];
+  };
 }
 
 /**
