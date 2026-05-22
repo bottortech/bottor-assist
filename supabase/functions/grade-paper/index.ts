@@ -112,8 +112,10 @@ serve(async (req) => {
       assignment_doc_text,
       auto_score_settings,
       quick_rubric_categories,
+      source_material_filenames,
       dry_run,
     } = body;
+
 
     if (dry_run) {
       console.log("[grade-paper] DRY RUN — response will not be persisted by caller");
