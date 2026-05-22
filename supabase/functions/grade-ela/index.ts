@@ -188,8 +188,18 @@ function buildELAPrompts(params: {
 
   // Determine rubric to use
   const rubricSection = rubricText?.trim()
-    ? `TEACHER-PROVIDED RUBRIC:\n${rubricText}\n\nUse this rubric EXACTLY as provided. Extract criteria and point values from it.`
+    ? `TEACHER-PROVIDED RUBRIC:
+${rubricText}
+
+Use this rubric EXACTLY as provided. Extract criteria and point values from it.
+
+RUBRIC FIDELITY GUARDRAILS (MANDATORY):
+- Use ONLY the criteria provided in the teacher's rubric above. Do not invent, substitute, or supplement criteria from any default framework (e.g., 6+1 Traits), even if you believe additional criteria would be relevant.
+- If the teacher's rubric has N criteria, your "criterion_breakdown" array MUST contain EXACTLY N entries with names that match the rubric's criteria.
+- Score each criterion INDEPENDENTLY based only on evidence relevant to that criterion. Do not adjust scores to match an overall impression of the work.
+- A criterion may only receive FULL POINTS (e.g., 25/25) if there are ZERO weaknesses, errors, or improvement notes related to that criterion anywhere in your response (including areas_for_improvement and teacher_notes). Before returning, verify this consistency — if a criterion has full marks but you also flagged a related issue, reduce its score.`
     : `DEFAULT WRITING RUBRIC (6+1 Traits):\n${JSON.stringify(DEFAULT_ELA_RUBRIC.criteria, null, 2)}\n\nTotal: ${DEFAULT_ELA_RUBRIC.scale} points`;
+
 
   const gradeContext = gradeLevel ? `Grade Level: ${gradeLevel}` : "";
   const assignmentContext = assignmentType ? `Assignment Type: ${assignmentType}` : "";
