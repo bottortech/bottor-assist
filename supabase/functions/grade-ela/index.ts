@@ -416,47 +416,16 @@ function normalizeName(s: string): string {
 }
 
 /**
- * Lightweight rubric-criterion-name extractor. Mirrors the client-side
- * parser in src/lib/rubricParser.ts but only extracts names for the
- * validator. Conservative: returns [] if it can't find structured criteria.
+ * Extract rubric criterion names via the shared canonical parser
+ * (single source of truth in supabase/functions/_shared/rubricParser.ts).
  */
 function extractRubricCriterionNames(text: string): string[] {
   if (!text?.trim()) return [];
-  const META = new Set([
-    "grade level","format","subject","length","date","period","class","teacher",
-    "student","name","assignment","prompt","instructions","due date","course",
-    "standard","objective","materials","total","total points","total score",
-    "score","points","points possible","possible points","out of","grade","overall",
-  ]);
-  const isMeta = (n: string) => {
-    const nn = normalizeName(n);
-    for (const m of META) if (nn === m || nn.startsWith(m + " ")) return true;
-    return false;
-  };
-  const names: string[] = [];
-  const seen = new Set<string>();
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const patterns: RegExp[] = [
-    /^([A-Za-z][A-Za-z0-9 &\/\-]{1,80}?)\s*[:\-–(]\s*(\d{1,3})\s*(pts?|points?|%)/i,
-    /^(\d{1,3})\s*(pts?|points?)\s*[:\-–]\s*([A-Za-z][A-Za-z0-9 &\/\-]{1,80})/i,
-  ];
-  for (const raw of lines) {
-    const stripped = raw.replace(/^[-*•\d.)\s]+/, "").trim();
-    for (const p of patterns) {
-      const m = stripped.match(p);
-      if (!m) continue;
-      const rawName = /^\d/.test(m[1]) ? m[3] : m[1];
-      const name = String(rawName || "").trim();
-      if (!name || name.length < 2 || name.length > 90) break;
-      if (isMeta(name)) break;
-      const key = normalizeName(name);
-      if (seen.has(key)) break;
-      seen.add(key);
-      names.push(name);
-      break;
-    }
-  }
-  return names;
+  const parsed = sharedParseRubric(text);
+  if (parsed.status !== "valid") return [];
+  return parsed.criteria
+    .filter((c) => !c.isBonus)
+    .map((c) => c.name);
 }
 
 const TOPIC_SYNONYMS: Record<string, string[]> = {
