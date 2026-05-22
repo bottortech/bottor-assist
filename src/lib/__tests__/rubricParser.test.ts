@@ -39,22 +39,22 @@ Total Points: 100
   it("normalizes percentages into points against the total", () => {
     const text = `Rubric
 Total Points: 100
-- A: 40%
-- B: 60%`;
+- Content: 40%
+- Style: 60%`;
     const parsed = normalizeToPoints(parseRubricCriteria(text));
     expect(parsed.criteria[0].points).toBe(40);
     expect(parsed.criteria[1].points).toBe(60);
     expect(parsed.criteria[0].weight).toBeNull();
     const formatted = formatParsedRubricForGrading(parsed);
-    expect(formatted).toMatch(/A: 40 points/);
+    expect(formatted).toMatch(/Content: 40 points/);
     expect(formatted).not.toMatch(/%/);
   });
 
   it("supports decimal weights (12.5% / 22.5%)", () => {
     const text = `Rubric
-- A: 12.5%
-- B: 22.5%
-- C: 65%`;
+- Ideas: 12.5%
+- Voice: 22.5%
+- Content: 65%`;
     const parsed = parseRubricCriteria(text);
     expect(parsed.criteria).toHaveLength(3);
     expect(parsed.criteria[0].weight).toBeCloseTo(12.5);
