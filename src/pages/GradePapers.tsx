@@ -1943,7 +1943,8 @@ Students must show their work for full credit.`;
           criterion_breakdown: data.criterion_breakdown,
           teacher_notes: data.teacher_notes,
           rubric_used: data.rubric_used,
-        };
+          ...(data.consistency_check ? { consistency_check: data.consistency_check } : {}),
+        } as ELAGradeResponse & { consistency_check?: any };
 
         newElaResults.set(group.studentName, elaResult);
 
