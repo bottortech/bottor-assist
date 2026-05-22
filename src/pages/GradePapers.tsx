@@ -85,6 +85,7 @@ import {
 import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import { TransparentResultCard } from "@/components/TransparentResultCard";
 import { RubricComplianceCard, type RubricComplianceData } from "@/components/RubricComplianceCard";
+import { SourceMaterialCard } from "@/components/SourceMaterialCard";
 import type { ELAGradeResponse } from "@/types/elaGrading";
 import { formatParsedRubricForGrading, parseRubricCriteria, rubricSignature } from "@/lib/rubricParser";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
