@@ -3516,6 +3516,7 @@ Students must show their work for full credit.`;
               return (
                 <>
                   {compliance && <RubricComplianceCard compliance={compliance} />}
+                  <SourceMaterialCard meta={currentGroup.result?.source_material_meta} />
                   <ELAResultsDisplay
                     result={elaResult}
                     onCopy={handleCopy}
@@ -3526,15 +3527,18 @@ Students must show their work for full credit.`;
 
             {/* Math Results — Transparent Evidence-Based View */}
             {gradingSubject === "math" && (
-              <TransparentResultCard
-                studentName={currentGroup.studentName}
-                extractedText={currentGroup.extractedText}
-                result={currentGroup.result}
-                isScoring={rubricDetected && gradingMode === "scoring"}
-                onUpdateResult={(field, value) => updateGroupResult(selectedGroupIndex, field, value)}
-                onCopy={handleCopy}
-                copied={copied}
-              />
+              <>
+                <SourceMaterialCard meta={currentGroup.result?.source_material_meta} />
+                <TransparentResultCard
+                  studentName={currentGroup.studentName}
+                  extractedText={currentGroup.extractedText}
+                  result={currentGroup.result}
+                  isScoring={rubricDetected && gradingMode === "scoring"}
+                  onUpdateResult={(field, value) => updateGroupResult(selectedGroupIndex, field, value)}
+                  onCopy={handleCopy}
+                  copied={copied}
+                />
+              </>
             )}
 
             {/* Action Buttons */}
