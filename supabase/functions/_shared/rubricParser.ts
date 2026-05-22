@@ -426,8 +426,12 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
     });
   }
 
-  if (hasPercentUnit && hasPointsUnit) {
-    // already covered by mixed_units notice above
+  if (hasPercentUnit && hasPointsUnit && !notices.some((n) => n.kind === "mixed_units")) {
+    notices.push({
+      kind: "mixed_units",
+      message:
+        "Your rubric mixes points and percentages — we converted percentages to points using the total.",
+    });
   }
 
   const status: ParsedRubricResult["status"] =
