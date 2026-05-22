@@ -258,20 +258,22 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
 
   // Decimal-aware: \d{1,3}(?:\.\d+)?
   const NUM = String.raw`\d{1,3}(?:\.\d+)?`;
+  // Separator class: open-paren, colon, hyphen, en-dash, em-dash.
+  const SEP = `[(:\\-–—]`;
   const patterns: RegExp[] = [
-    // "Name: 25 pts — description"  /  "Name (25 pts) — description"
+    // "Name: 25 pts — description" / "Name (25 pts) — description" / "Name — 25 pts"
     new RegExp(
-      `^(.{2,90}?)\\s*[(:\\-–]\\s*(${NUM})\\s*(pts?|points?)\\)?\\s*[:\\-–]?\\s*(.*)$`,
+      `^(.{2,90}?)\\s*${SEP}\\s*(${NUM})\\s*(pts?|points?)\\)?\\s*[:\\-–—]?\\s*(.*)$`,
       "i"
     ),
-    // "Name: 25% — description"
+    // "Name: 25% — description" / "Name — 25%"
     new RegExp(
-      `^(.{2,90}?)\\s*[(:\\-–]\\s*(${NUM})\\s*%\\)?\\s*[:\\-–]?\\s*(.*)$`,
+      `^(.{2,90}?)\\s*${SEP}\\s*(${NUM})\\s*%\\)?\\s*[:\\-–—]?\\s*(.*)$`,
       "i"
     ),
     // "25 pts: Name — description"
     new RegExp(
-      `^(${NUM})\\s*(pts?|points?)\\s*[:\\-–]\\s*(.{2,90}?)(?:\\s*[:\\-–]\\s*(.*))?$`,
+      `^(${NUM})\\s*(pts?|points?)\\s*[:\\-–—]\\s*(.{2,90}?)(?:\\s*[:\\-–—]\\s*(.*))?$`,
       "i"
     ),
     // Column-style: "Name   25 pts   description"
@@ -286,8 +288,8 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
   let hasPercentUnit = false;
 
   // Lines that declare the rubric total — skip so they're not parsed as criteria.
-  // Matches "Total: 50 pts", "Total Points: 100", "Rubric — Total: 50 points", etc.
-  const TOTAL_LINE = /(?:^|[\s\-—–])total\s*(?:points?)?\s*[:=]\s*\d/i;
+  // Matches "Total: 50 pts", "Total Points: 100", "Rubric (Total: 75 pts)", etc.
+  const TOTAL_LINE = /\btotal\s*(?:points?)?\s*[:=]\s*\d/i;
 
   for (const line of lines) {
     const stripped = line
@@ -346,15 +348,20 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
     new RegExp(`max(?:imum)?\\s*(?:score|points?)?\\s*[:=]?\\s*(${NUM})`, "i"),
   ];
   let explicitTotal: number | null = null;
-  for (const p of totalPatterns) {
-    const m = sourceText.match(p);
-    if (m) {
-      const v = parseNum(m[1]);
-      if (v > 0 && v <= 1000) {
-        explicitTotal = Math.round(v);
-        break;
+  // Search both the isolated rubric block AND the full raw text, since
+  // teachers often put "Total Points: 100" in document metadata above the rubric section.
+  for (const haystack of [sourceText, rawText]) {
+    for (const p of totalPatterns) {
+      const m = haystack.match(p);
+      if (m) {
+        const v = parseNum(m[1]);
+        if (v > 0 && v <= 1000) {
+          explicitTotal = Math.round(v);
+          break;
+        }
       }
     }
+    if (explicitTotal) break;
   }
 
   // Sums (exclude bonus)
@@ -419,8 +426,12 @@ export function parseRubricCriteria(rawText: string): ParsedRubricResult {
     });
   }
 
-  if (hasPercentUnit && hasPointsUnit) {
-    // already covered by mixed_units notice above
+  if (hasPercentUnit && hasPointsUnit && !notices.some((n) => n.kind === "mixed_units")) {
+    notices.push({
+      kind: "mixed_units",
+      message:
+        "Your rubric mixes points and percentages — we converted percentages to points using the total.",
+    });
   }
 
   const status: ParsedRubricResult["status"] =
