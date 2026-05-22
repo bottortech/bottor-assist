@@ -662,6 +662,13 @@ MANDATORY RULES:
       ? "Rubric is auto-generated (default template). Be transparent about this in teacher_notes."
       : "Rubric is teacher-provided and LOCKED for scoring. Follow it exactly as the single source of truth."
   }
+
+RUBRIC FIDELITY GUARDRAILS (MANDATORY):
+- Use ONLY the criteria provided in the rubric below. Do not invent, substitute, or supplement criteria from any default framework, even if you believe additional criteria would be relevant.
+- If the rubric has N criteria, your "rubric_breakdown" array MUST contain EXACTLY N entries with names that match the rubric criteria character-for-character.
+- Score each criterion INDEPENDENTLY based only on evidence relevant to that criterion. Do not adjust scores to match an overall impression of the work.
+- A criterion may only receive FULL POINTS (e.g., 25/25) if there are ZERO weaknesses, errors, or improvement notes related to that criterion anywhere in your response (including areas_for_improvement and teacher_notes). Before returning, verify this consistency — if a criterion has full marks but you also flagged a related issue, reduce its score.
+
 ${
   hasAnswerKey
     ? `4. ANSWER KEY PROVIDED: Use it to validate correctness for each question/item.
