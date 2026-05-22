@@ -605,7 +605,10 @@ FUNDAMENTAL MISREAD VALIDATION (MANDATORY — run BEFORE assigning criterion sco
 - Flag fundamental contradictions explicitly, such as interpreting symbolic/sentimental value as monetary value, interpreting a tragic character arc as triumphant, or interpreting satire literally.
 - If the student's central interpretation contradicts the source, begin teacher_notes with "FUNDAMENTAL MISREAD: <description>" and do NOT state that the student accurately identifies the central theme.
 - The relevant Analysis/Reasoning/Interpretation criterion cannot exceed 50% of its possible points when a fundamental misread is present. If the rubric uses a different label, apply this cap to the closest analysis, reading, ideas, or content criterion.
-- A partial rescue elsewhere in the response may be credited in strengths, but it cannot redeem the central misread or remove the Analysis cap.` : ""}
+- A partial rescue elsewhere in the response may be credited in strengths, but it cannot redeem the central misread or remove the Analysis cap.
+
+SOURCE MATERIAL ATTRIBUTION (when source material affected the grade):
+- When the source material caused you to flag a fabricated/false quote, a misinterpretation of the passage, or a response to the wrong prompt, briefly say so in plain language in BOTH teacher_notes AND areas_for_improvement (e.g., "Checked against the source: the quoted line does not appear in the passage." or "Compared to the source passage, the central interpretation contradicts the text."). Keep it to one short sentence — do not invent rubric criteria around it.` : ""}
 
 ${
   hasAnswerKey
