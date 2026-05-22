@@ -2113,6 +2113,7 @@ Students must show their work for full credit.`;
             auto_score_settings: isScoring ? effectiveAutoScoreSettings : undefined,
             quick_rubric_categories: isScoring ? quickRubricCategories : '',
             assignment_doc_text: assignmentContextCombined || undefined,
+            source_material_filenames: assignmentContextFileNames.length ? assignmentContextFileNames : undefined,
           },
         });
 
