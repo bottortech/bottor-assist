@@ -85,6 +85,7 @@ import {
 import { ELAResultsDisplay } from "@/components/ELAResultsDisplay";
 import { TransparentResultCard } from "@/components/TransparentResultCard";
 import { RubricComplianceCard, type RubricComplianceData } from "@/components/RubricComplianceCard";
+import { SourceMaterialCard } from "@/components/SourceMaterialCard";
 import type { ELAGradeResponse } from "@/types/elaGrading";
 import { formatParsedRubricForGrading, parseRubricCriteria, rubricSignature } from "@/lib/rubricParser";
 // AssignmentTypeSection removed for pilot - Bottor infers feedback style automatically
@@ -473,6 +474,11 @@ interface GradingResult {
   consistency_check?: {
     passed: boolean;
     adjustments: { criterion: string; matched_note: string; original_earned: number; adjusted_earned: number }[];
+  };
+  source_material_meta?: {
+    sourceMaterialUsed: boolean;
+    sourceMaterialCharacterCount: number;
+    sourceMaterialFileNames: string[];
   };
 }
 
@@ -2012,6 +2018,7 @@ Students must show their work for full credit.`;
             strengths: data.strengths?.join("; ") || "Not provided",
             areas_for_improvement: data.areas_for_improvement?.join("; ") || "Not provided",
             feedback_paragraph: data.next_step || "Not provided",
+            source_material_meta: data.source_material_meta,
           },
         };
       } catch (error) {
@@ -2137,6 +2144,7 @@ Students must show their work for full credit.`;
               ? { ...data.rubric_compliance, consistency_check: data.consistency_check }
               : undefined,
             consistency_check: data.consistency_check,
+            source_material_meta: data.source_material_meta,
           },
         };
       } catch (error) {
@@ -3508,6 +3516,7 @@ Students must show their work for full credit.`;
               return (
                 <>
                   {compliance && <RubricComplianceCard compliance={compliance} />}
+                  <SourceMaterialCard meta={currentGroup.result?.source_material_meta} />
                   <ELAResultsDisplay
                     result={elaResult}
                     onCopy={handleCopy}
@@ -3518,15 +3527,18 @@ Students must show their work for full credit.`;
 
             {/* Math Results — Transparent Evidence-Based View */}
             {gradingSubject === "math" && (
-              <TransparentResultCard
-                studentName={currentGroup.studentName}
-                extractedText={currentGroup.extractedText}
-                result={currentGroup.result}
-                isScoring={rubricDetected && gradingMode === "scoring"}
-                onUpdateResult={(field, value) => updateGroupResult(selectedGroupIndex, field, value)}
-                onCopy={handleCopy}
-                copied={copied}
-              />
+              <>
+                <SourceMaterialCard meta={currentGroup.result?.source_material_meta} />
+                <TransparentResultCard
+                  studentName={currentGroup.studentName}
+                  extractedText={currentGroup.extractedText}
+                  result={currentGroup.result}
+                  isScoring={rubricDetected && gradingMode === "scoring"}
+                  onUpdateResult={(field, value) => updateGroupResult(selectedGroupIndex, field, value)}
+                  onCopy={handleCopy}
+                  copied={copied}
+                />
+              </>
             )}
 
             {/* Action Buttons */}
