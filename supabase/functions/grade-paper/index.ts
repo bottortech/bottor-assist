@@ -81,6 +81,8 @@ interface GradeRequest {
     usePointsPerQuestion: boolean;
   };
   quick_rubric_categories?: string;
+  /** Optional filenames of uploaded source material, echoed back in source_material_meta. */
+  source_material_filenames?: string[];
   /**
    * When true, grading runs normally and the full response is returned, but
    * the caller MUST treat the run as ephemeral: no writes to `submissions`,
@@ -110,8 +112,10 @@ serve(async (req) => {
       assignment_doc_text,
       auto_score_settings,
       quick_rubric_categories,
+      source_material_filenames,
       dry_run,
     } = body;
+
 
     if (dry_run) {
       console.log("[grade-paper] DRY RUN — response will not be persisted by caller");
@@ -255,9 +259,17 @@ serve(async (req) => {
 
     console.log("[grade-paper] Grading complete, score:", gradingResult.score_suggestion);
 
-    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true }), {
+    const sourceMaterialMeta = {
+      sourceMaterialUsed: !!assignment_doc_text?.trim(),
+      sourceMaterialCharacterCount: assignment_doc_text?.trim()?.length ?? 0,
+      sourceMaterialFileNames: Array.isArray(source_material_filenames) ? source_material_filenames : [],
+    };
+    console.log("[grade-paper] source_material_meta:", JSON.stringify(sourceMaterialMeta));
+
+    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true, source_material_meta: sourceMaterialMeta }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error) {
     console.error("[grade-paper] Error:", error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {

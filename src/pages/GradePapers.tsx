@@ -1261,6 +1261,13 @@ export default function GradePapers() {
     return [assignmentContextExtractedText, assignmentContextText.trim()].filter(Boolean).join('\n\n');
   }, [assignmentContextExtractedText, assignmentContextText]);
 
+  const assignmentContextFileNames = useMemo(() => {
+    return assignmentContextUpload.files
+      .filter(f => f.status === 'ready')
+      .map(f => f.file.name);
+  }, [assignmentContextUpload.files]);
+
+
   // Extract just the text content from uploaded answer key files
   const answerKeyExtractedText = useMemo(() => {
     const readyFiles = answerKeyUpload.files.filter(f => f.status === 'ready');
@@ -1966,6 +1973,7 @@ Students must show their work for full credit.`;
             grade_level: form.grade_level || undefined,
             assignment_type: "Writing",
             assignment_doc_text: assignmentContextCombined || undefined,
+            source_material_filenames: assignmentContextFileNames.length ? assignmentContextFileNames : undefined,
           },
         });
 
@@ -2105,6 +2113,7 @@ Students must show their work for full credit.`;
             auto_score_settings: isScoring ? effectiveAutoScoreSettings : undefined,
             quick_rubric_categories: isScoring ? quickRubricCategories : '',
             assignment_doc_text: assignmentContextCombined || undefined,
+            source_material_filenames: assignmentContextFileNames.length ? assignmentContextFileNames : undefined,
           },
         });
 

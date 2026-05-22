@@ -42,6 +42,8 @@ interface ELAGradeRequest {
   grade_level?: string;
   assignment_type?: string;
   assignment_doc_text?: string;
+  /** Optional filenames of uploaded source material, echoed back in source_material_meta. */
+  source_material_filenames?: string[];
   /**
    * When true, grading runs normally and the full response is returned, but
    * the caller MUST treat the run as ephemeral: no writes to `submissions`,
@@ -52,6 +54,7 @@ interface ELAGradeRequest {
    */
   dry_run?: boolean;
 }
+
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -67,8 +70,10 @@ serve(async (req) => {
       grade_level,
       assignment_type,
       assignment_doc_text,
+      source_material_filenames,
       dry_run,
     } = body;
+
 
     if (dry_run) {
       console.log("[grade-ela] DRY RUN — response will not be persisted by caller");
@@ -176,9 +181,17 @@ serve(async (req) => {
 
     console.log("[grade-ela] ELA grading complete, score:", gradingResult.score);
 
-    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true }), {
+    const sourceMaterialMeta = {
+      sourceMaterialUsed: !!assignment_doc_text?.trim(),
+      sourceMaterialCharacterCount: assignment_doc_text?.trim()?.length ?? 0,
+      sourceMaterialFileNames: Array.isArray(source_material_filenames) ? source_material_filenames : [],
+    };
+    console.log("[grade-ela] source_material_meta:", JSON.stringify(sourceMaterialMeta));
+
+    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true, source_material_meta: sourceMaterialMeta }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error) {
     console.error("[grade-ela] Error:", error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {
