@@ -754,7 +754,7 @@ ${hasAnswerKey ? "2. Cross-reference answers against the ANSWER KEY for correctn
 4. Calculate total earned points (sum of all criterion scores)
 5. Calculate percent = (earned / ${params.parsedRubric.totalPoints}) × 100, rounded to whole number
 6. Determine confidence level based on clarity of student work and rubric alignment
-${shouldEnforceWorkShown ? `6. FOR EACH MATH QUESTION: Check if work is shown. If no work visible but answer correct, apply rubric's "no work" penalty (typically max 60% of question points)` : ""}
+${shouldEnforceWorkShown ? `7. FOR EACH MATH QUESTION: Check if work is shown. If no work visible but answer correct, apply rubric's "no work" penalty (typically max 60% of question points)` : ""}
 
 OUTPUT FORMAT (STRICT JSON):
 {
