@@ -181,9 +181,17 @@ serve(async (req) => {
 
     console.log("[grade-ela] ELA grading complete, score:", gradingResult.score);
 
-    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true }), {
+    const sourceMaterialMeta = {
+      sourceMaterialUsed: !!assignment_doc_text?.trim(),
+      sourceMaterialCharacterCount: assignment_doc_text?.trim()?.length ?? 0,
+      sourceMaterialFileNames: Array.isArray(source_material_filenames) ? source_material_filenames : [],
+    };
+    console.log("[grade-ela] source_material_meta:", JSON.stringify(sourceMaterialMeta));
+
+    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true, source_material_meta: sourceMaterialMeta }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error) {
     console.error("[grade-ela] Error:", error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }), {
