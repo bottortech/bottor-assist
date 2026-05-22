@@ -155,6 +155,7 @@ serve(async (req) => {
         areas_for_improvement: ["Manual review required"],
         next_step: "Please review this writing and provide personalized feedback.",
         teacher_notes: "AI response could not be parsed. Manual grading recommended.",
+        consistency_check: { passed: true, adjustments: [] },
       };
     }
 
