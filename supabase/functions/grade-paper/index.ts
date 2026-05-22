@@ -81,6 +81,8 @@ interface GradeRequest {
     usePointsPerQuestion: boolean;
   };
   quick_rubric_categories?: string;
+  /** Optional filenames of uploaded source material, echoed back in source_material_meta. */
+  source_material_filenames?: string[];
   /**
    * When true, grading runs normally and the full response is returned, but
    * the caller MUST treat the run as ephemeral: no writes to `submissions`,
