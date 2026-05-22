@@ -296,22 +296,64 @@ function normalizeELAResult(
       ? [result.strengths]
       : ["Work shows effort"];
 
-  const areasForImprovement = Array.isArray(result.areas_for_improvement)
+  let areasForImprovement = Array.isArray(result.areas_for_improvement)
     ? result.areas_for_improvement
     : typeof result.areas_for_improvement === 'string'
       ? [result.areas_for_improvement]
       : ["Continue practicing writing skills"];
 
-  // Calculate score string
-  const earned = typeof result.earned === 'number' ? result.earned : 0;
-  const possible = typeof result.possible === 'number' ? result.possible : 100;
-  const percent = typeof result.percent === 'number' 
-    ? result.percent 
-    : Math.round((earned / possible) * 100);
+  // ---- Server-side criterion-name validator ----
+  // If teacher rubric is provided and parseable, strip any criterion in the
+  // response whose normalized name doesn't appear in the rubric.
+  const expectedCriteriaNames = rubricText?.trim()
+    ? extractRubricCriterionNames(rubricText)
+    : [];
+  const teacherProvided = expectedCriteriaNames.length > 0;
+  const expectedNorm = expectedCriteriaNames.map(normalizeName);
+
+  let breakdown: any[] = Array.isArray(result.criterion_breakdown)
+    ? result.criterion_breakdown
+    : [];
+
+  if (teacherProvided && breakdown.length > 0) {
+    const before = breakdown.length;
+    const stripped: string[] = [];
+    breakdown = breakdown.filter((b: any) => {
+      const name = String(b?.criterion || "");
+      const ok = expectedNorm.includes(normalizeName(name));
+      if (!ok) stripped.push(name);
+      return ok;
+    });
+    if (stripped.length > 0) {
+      console.warn(`[grade-ela] Stripped ${stripped.length}/${before} invented criteria not in teacher rubric:`, stripped);
+    }
+  }
+
+  // ---- Self-consistency validator ----
+  // For any criterion at full marks, scan areas_for_improvement for matches.
+  // If found, deduct 1 point and surface in consistency_check.
+  const consistency = runConsistencyCheck(breakdown, areasForImprovement);
+  if (consistency.adjustments.length > 0) {
+    console.warn(`[grade-ela] Consistency adjustments:`, consistency.adjustments);
+  }
+  breakdown = consistency.correctedBreakdown;
+
+  // Recompute totals from corrected breakdown (only if breakdown is meaningful)
+  let earned = typeof result.earned === 'number' ? result.earned : 0;
+  let possible = typeof result.possible === 'number' ? result.possible : 100;
+  if (breakdown.length > 0) {
+    const sumEarned = breakdown.reduce((s: number, b: any) => s + (Number(b.earned) || 0), 0);
+    const sumPossible = breakdown.reduce((s: number, b: any) => s + (Number(b.possible) || 0), 0);
+    if (sumPossible > 0) {
+      earned = sumEarned;
+      possible = sumPossible;
+    }
+  }
+  const percent = Math.round((earned / Math.max(possible, 1)) * 100);
 
   // Determine letter grade if not provided
   let letterGrade = result.letter_grade;
-  if (!letterGrade) {
+  if (!letterGrade || consistency.adjustments.length > 0) {
     if (percent >= 93) letterGrade = "A";
     else if (percent >= 90) letterGrade = "A-";
     else if (percent >= 87) letterGrade = "B+";
@@ -325,6 +367,7 @@ function normalizeELAResult(
     else if (percent >= 60) letterGrade = "D-";
     else letterGrade = "F";
   }
+
 
   return {
     student_name: studentName,
