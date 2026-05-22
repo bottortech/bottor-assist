@@ -465,6 +465,14 @@ interface GradingResult {
     expected_criteria?: string[];
     actual_criteria?: string[];
     mismatches?: { extra: string[]; missing: string[] };
+    consistency_check?: {
+      passed: boolean;
+      adjustments: { criterion: string; matched_note: string; original_earned: number; adjusted_earned: number }[];
+    };
+  };
+  consistency_check?: {
+    passed: boolean;
+    adjustments: { criterion: string; matched_note: string; original_earned: number; adjusted_earned: number }[];
   };
 }
 
