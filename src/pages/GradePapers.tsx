@@ -2144,6 +2144,7 @@ Students must show their work for full credit.`;
               ? { ...data.rubric_compliance, consistency_check: data.consistency_check }
               : undefined,
             consistency_check: data.consistency_check,
+            source_material_meta: data.source_material_meta,
           },
         };
       } catch (error) {
