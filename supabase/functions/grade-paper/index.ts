@@ -255,7 +255,7 @@ serve(async (req) => {
 
     console.log("[grade-paper] Grading complete, score:", gradingResult.score_suggestion);
 
-    return new Response(JSON.stringify(gradingResult), {
+    return new Response(JSON.stringify({ ...gradingResult, dry_run: dry_run === true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
