@@ -1261,6 +1261,13 @@ export default function GradePapers() {
     return [assignmentContextExtractedText, assignmentContextText.trim()].filter(Boolean).join('\n\n');
   }, [assignmentContextExtractedText, assignmentContextText]);
 
+  const assignmentContextFileNames = useMemo(() => {
+    return assignmentContextUpload.files
+      .filter(f => f.status === 'ready')
+      .map(f => f.file.name);
+  }, [assignmentContextUpload.files]);
+
+
   // Extract just the text content from uploaded answer key files
   const answerKeyExtractedText = useMemo(() => {
     const readyFiles = answerKeyUpload.files.filter(f => f.status === 'ready');
